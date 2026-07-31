@@ -20,6 +20,10 @@ ENV['RINGRTC_PREBUILD_CHECKSUM'] = '1b87cf9bd2ddba747fbab0ec871c434c448d219f537d
 pod 'SignalRingRTC', git: 'https://github.com/signalapp/ringrtc', tag: 'v2.70.0', inhibit_warnings: true
 # pod 'SignalRingRTC', path: '../ringrtc', testspecs: ["Tests"]
 
+# OpenCSV wallet FFI (Rust staticlib xcframework; local sibling checkout during
+# development, mirroring the LibSignalClient `path:` flow above).
+pod 'OpenCsv', path: '../opencsv-rs/apple'
+
 pod 'GRDB.swift/SQLCipher'
 # pod 'GRDB.swift/SQLCipher', path: '../GRDB.swift'
 

@@ -1180,6 +1180,9 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                     // can update themselves later.
                     Logger.error("Failed to update thumbnails: \(error)")
                 }
+                OpenCsvAttachmentProcessor.processDownloadedAttachmentIfNeeded(
+                    attachmentId: attachmentStream.attachment.id,
+                )
             }
 
             return .success

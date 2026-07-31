@@ -33,6 +33,10 @@ public enum BuildFlags {
 
     public static let shouldUseTestIntervals = build <= .beta
 
+    /// OpenCSV payments prototype (client-side verified RWAs over
+    /// consignment attachments). OFF outside dev builds.
+    public static let openCsvPayments = build <= .dev
+
     public enum Backups {
         /// This is also controlled via remote-config.
         /// - SeeAlso ``RemoteConfig/backupsMegaphone``.
