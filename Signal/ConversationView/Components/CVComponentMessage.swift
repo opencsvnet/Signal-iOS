@@ -60,6 +60,8 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
 
     private var paymentAttachment: CVComponent?
 
+    private var openCsvPayment: CVComponent?
+
     private var archivedPaymentAttachment: CVComponent?
 
     private var undownloadableAttachment: CVComponent?
@@ -132,6 +134,8 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
             return self.genericAttachment
         case .paymentAttachment:
             return self.paymentAttachment
+        case .openCsvPayment:
+            return self.openCsvPayment
         case .archivedPaymentAttachment:
             return self.archivedPaymentAttachment
         case .undownloadableAttachment:
@@ -244,7 +248,9 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
         }
         // Payments can have body text too; only render a vanilla body text if a payment
         // isn't present.
-        if let bodyTextState = itemViewState.bodyTextState, componentState.paymentAttachment == nil {
+        if let bodyTextState = itemViewState.bodyTextState,
+           componentState.paymentAttachment == nil,
+           componentState.openCsvPayment == nil {
             bodyText = CVComponentBodyText(itemModel: itemModel, bodyTextState: bodyTextState)
         }
         if let contactShareState = componentState.contactShare {
@@ -312,6 +318,13 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
                 messageStatus: messageStatus,
             )
 
+        }
+
+        if let openCsvPayment = componentState.openCsvPayment {
+            self.openCsvPayment = CVComponentOpenCsvPayment(
+                itemModel: itemModel,
+                openCsvPayment: openCsvPayment,
+            )
         }
 
         if let archivedPaymentAttachment = componentState.archivedPaymentAttachment {
@@ -1318,7 +1331,7 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
             switch componentKey {
             case .bodyText:
                 return false
-            case .bodyMedia, .sticker, .quotedReply, .linkPreview, .viewOnce, .audioAttachment, .genericAttachment, .paymentAttachment, .archivedPaymentAttachment, .contactShare:
+            case .bodyMedia, .sticker, .quotedReply, .linkPreview, .viewOnce, .audioAttachment, .genericAttachment, .paymentAttachment, .archivedPaymentAttachment, .openCsvPayment, .contactShare:
                 return true
             case .undownloadableAttachment:
                 return false
@@ -2302,6 +2315,7 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
         var audioAttachmentView: CVComponentView?
         var genericAttachmentView: CVComponentView?
         var paymentAttachmentView: CVComponentView?
+        var openCsvPaymentView: CVComponentView?
         var undownloadableAttachmentView: CVComponentView?
         var archivedPaymentView: CVComponentView?
         var contactShareView: CVComponentView?
@@ -2324,6 +2338,7 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
                 audioAttachmentView,
                 genericAttachmentView,
                 paymentAttachmentView,
+                openCsvPaymentView,
                 undownloadableAttachmentView,
                 archivedPaymentView,
                 contactShareView,
@@ -2361,6 +2376,8 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
                 return genericAttachmentView
             case .paymentAttachment:
                 return paymentAttachmentView
+            case .openCsvPayment:
+                return openCsvPaymentView
             case .archivedPaymentAttachment:
                 return archivedPaymentView
             case .undownloadableAttachment:
@@ -2411,6 +2428,8 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
                 genericAttachmentView = subcomponentView
             case .paymentAttachment:
                 paymentAttachmentView = subcomponentView
+            case .openCsvPayment:
+                openCsvPaymentView = subcomponentView
             case .archivedPaymentAttachment:
                 archivedPaymentView = subcomponentView
             case .undownloadableAttachment:

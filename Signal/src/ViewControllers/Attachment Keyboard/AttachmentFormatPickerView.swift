@@ -14,6 +14,7 @@ protocol AttachmentFormatPickerDelegate: AnyObject {
     func didTapContact()
     func didTapLocation()
     func didTapPayment()
+    func didTapOpenCsvPayment()
     func didTapPoll()
 }
 
@@ -70,6 +71,8 @@ class AttachmentFormatPickerView: UIView {
                 delegate.didTapFile()
             case .payment:
                 delegate.didTapPayment()
+            case .openCsvPayment:
+                delegate.didTapOpenCsvPayment()
             case .contact:
                 delegate.didTapContact()
             case .location:
@@ -184,6 +187,7 @@ class AttachmentFormatPickerView: UIView {
         case contact
         case location
         case payment
+        case openCsvPayment
 
         private static var contactCases: [AttachmentType] {
             var casesToExclude: [AttachmentType] = []
@@ -193,12 +197,15 @@ class AttachmentFormatPickerView: UIView {
             if !SSKEnvironment.shared.paymentsHelperRef.arePaymentsEnabled {
                 casesToExclude.append(.payment)
             }
+            if !BuildFlags.openCsvPayments {
+                casesToExclude.append(.openCsvPayment)
+            }
 
             return cases(except: casesToExclude)
         }
 
         private static var groupCases: [AttachmentType] {
-            return cases(except: [.payment])
+            return cases(except: [.payment, .openCsvPayment])
         }
 
         private static func cases(except: [AttachmentType]) -> [AttachmentType] {
@@ -345,6 +352,9 @@ class AttachmentFormatPickerView: UIView {
                 imageName = "location-28"
             case .payment:
                 text = OWSLocalizedString("ATTACHMENT_KEYBOARD_PAYMENT", comment: "A button to select a payment from the Attachment Keyboard")
+                imageName = "payment-28"
+            case .openCsvPayment:
+                text = OWSLocalizedString("ATTACHMENT_KEYBOARD_OPENCSV_PAYMENT", comment: "A button to send an OpenCSV payment from the Attachment Keyboard")
                 imageName = "payment-28"
             case .poll:
                 text = OWSLocalizedString("ATTACHMENT_KEYBOARD_POLL", comment: "A button to select a poll from the Attachment Keyboard")

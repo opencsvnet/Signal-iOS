@@ -508,6 +508,7 @@ public class CVLoader: NSObject {
                 systemMessage: defaultDisappearingMessageTimer,
             )
         case .textOnlyMessage, .audio, .genericAttachment, .paymentAttachment, .archivedPaymentAttachment,
+             .openCsvPayment,
              .undownloadableAttachment,
              .contactShare, .bodyMedia, .viewOnce, .stickerMessage, .quoteOnlyMessage,
              .giftBadge, .poll, .releaseNotesMessage:

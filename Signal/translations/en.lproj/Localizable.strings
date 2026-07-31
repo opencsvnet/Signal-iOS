@@ -451,6 +451,9 @@
 /* A button to select a payment from the Attachment Keyboard */
 "ATTACHMENT_KEYBOARD_PAYMENT" = "Payment";
 
+/* A button to send an OpenCSV payment from the Attachment Keyboard */
+"ATTACHMENT_KEYBOARD_OPENCSV_PAYMENT" = "OpenCSV";
+
 /* A button to open the photo picker from the Attachment Keyboard */
 "ATTACHMENT_KEYBOARD_PHOTOS" = "Photos";
 
@@ -6681,6 +6684,54 @@
 
 /* Title for sheet shown when tapping oversized text that has expired and is unavailable for download */
 "OVERSIZE_TEXT_UNAVAILABLE_SHEET_TITLE" = "Complete Message Not Available";
+
+/* Placeholder shown in an OpenCSV payment bubble when no verified amount is available. */
+"OPENCSV_PAYMENT_AMOUNT_UNKNOWN" = "OpenCSV payment";
+
+/* Status shown in an OpenCSV payment bubble when the proof failed verification. */
+"OPENCSV_PAYMENT_STATUS_FAILED" = "verification failed";
+
+/* Status shown in an OpenCSV payment bubble while the proof has not been verified yet. */
+"OPENCSV_PAYMENT_STATUS_PENDING" = "verifying…";
+
+/* Status shown in an OpenCSV payment bubble when the proof verified. */
+"OPENCSV_PAYMENT_STATUS_VERIFIED" = "verified";
+
+/* Title of an OpenCSV payment bubble in the conversation view. */
+"OPENCSV_PAYMENT_TITLE" = "OpenCSV payment";
+
+/* Placeholder for the amount field in the OpenCSV send sheet. */
+"OPENCSV_SEND_AMOUNT_PLACEHOLDER" = "Amount (base units)";
+
+/* Placeholder for the anchor server URL field in the OpenCSV send sheet. */
+"OPENCSV_SEND_ANCHOR_SERVER_PLACEHOLDER" = "Anchor server URL (http://host:port)";
+
+/* Button that proves and sends an OpenCSV payment. */
+"OPENCSV_SEND_BUTTON" = "Prove & Send";
+
+/* Error shown when the OpenCSV amount field is not a positive integer. */
+"OPENCSV_SEND_ERROR_BAD_AMOUNT" = "Enter a positive whole amount.";
+
+/* Error shown when the OpenCSV recipient key field is empty. */
+"OPENCSV_SEND_ERROR_NO_RECIPIENT" = "Enter the recipient's owner key.";
+
+/* Confirmation that the wallet's receiving key was copied. */
+"OPENCSV_SEND_KEY_COPIED" = "Receiving key copied.";
+
+/* Shown in the OpenCSV send sheet when the wallet is empty. */
+"OPENCSV_SEND_NO_BALANCE" = "No balance";
+
+/* Placeholder for the recipient owner key field in the OpenCSV send sheet. */
+"OPENCSV_SEND_RECIPIENT_PLACEHOLDER" = "Recipient owner key (hex)";
+
+/* Status shown while the OpenCSV wallet is loading. */
+"OPENCSV_SEND_STATUS_LOADING" = "Loading wallet…";
+
+/* Status shown while an OpenCSV payment proof is being generated. */
+"OPENCSV_SEND_STATUS_PROVING" = "Proving… (about a second)";
+
+/* Title of the OpenCSV payment send sheet. */
+"OPENCSV_SEND_TITLE" = "OpenCSV Payment";
 
 /* Header title for bank payment details screen */
 "PAYMENT_DETAILS_BANK_TITLE" = "Bank Transfer";

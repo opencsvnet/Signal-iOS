@@ -536,6 +536,14 @@ extension ConversationViewController: ConversationInputToolbarDelegate {
         )
     }
 
+    public func openCsvPaymentButtonPressed() {
+        AssertIsOnMainThread()
+
+        dismissKeyBoard()
+        let sheet = OpenCsvSendPaymentSheet(thread: thread)
+        present(OWSNavigationController(rootViewController: sheet), animated: true)
+    }
+
     public func pollButtonPressed() {
         AssertIsOnMainThread()
 

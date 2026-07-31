@@ -273,7 +273,7 @@ extension CVItemViewModelImpl {
             return false
         case .textOnlyMessage, .audio, .genericAttachment, .contactShare, .bodyMedia, .viewOnce, .stickerMessage, .quoteOnlyMessage:
             return !hasUnloadedAttachments
-        case .paymentAttachment, .archivedPaymentAttachment, .undownloadableAttachment:
+        case .paymentAttachment, .archivedPaymentAttachment, .openCsvPayment, .undownloadableAttachment:
             return false
         case .poll:
             return false

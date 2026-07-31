@@ -59,6 +59,8 @@ protocol ConversationInputToolbarDelegate: AnyObject {
 
     func paymentButtonPressed()
 
+    func openCsvPaymentButtonPressed()
+
     func pollButtonPressed()
 
     func didSelectRecentPhoto(asset: PHAsset, attachment: PreviewableAttachment, attachmentLimits: OutgoingAttachmentLimits)
@@ -3345,6 +3347,10 @@ extension ConversationInputToolbar: AttachmentKeyboardDelegate {
 
     func didTapPayment() {
         inputToolbarDelegate?.paymentButtonPressed()
+    }
+
+    func didTapOpenCsvPayment() {
+        inputToolbarDelegate?.openCsvPaymentButtonPressed()
     }
 
     func didTapPoll() {

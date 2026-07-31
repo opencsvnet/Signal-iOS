@@ -15,6 +15,7 @@ protocol AttachmentKeyboardDelegate: AnyObject {
     func didTapContact()
     func didTapLocation()
     func didTapPayment()
+    func didTapOpenCsvPayment()
     func didTapPoll()
     var isGroup: Bool { get }
 }
@@ -164,6 +165,10 @@ extension AttachmentKeyboard: AttachmentFormatPickerDelegate {
 
     func didTapPayment() {
         delegate?.didTapPayment()
+    }
+
+    func didTapOpenCsvPayment() {
+        delegate?.didTapOpenCsvPayment()
     }
 
     func didTapPoll() {

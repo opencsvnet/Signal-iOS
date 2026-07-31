@@ -1,0 +1,180 @@
+//
+// Copyright 2026 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+import Foundation
+import SignalServiceKit
+public import SignalUI
+
+/// Renders an OpenCSV consignment attachment as a payment bubble:
+/// an amount line (`+100 USD`) and the client-side verification status.
+/// Modeled on `CVComponentPaymentAttachment`.
+public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
+
+    public var componentKey: CVComponentKey { .openCsvPayment }
+
+    private let openCsvPayment: CVComponentState.OpenCsvPayment
+
+    init(itemModel: CVItemModel, openCsvPayment: CVComponentState.OpenCsvPayment) {
+        self.openCsvPayment = openCsvPayment
+        super.init(itemModel: itemModel)
+    }
+
+    public func buildComponentView(componentDelegate: CVComponentDelegate) -> CVComponentView {
+        CVComponentViewOpenCsvPayment()
+    }
+
+    public func configureForRendering(
+        componentView componentViewParam: CVComponentView,
+        cellMeasurement: CVCellMeasurement,
+        componentDelegate: CVComponentDelegate,
+    ) {
+        guard let componentView = componentViewParam as? CVComponentViewOpenCsvPayment else {
+            owsFailDebug("Unexpected componentView.")
+            componentViewParam.reset()
+            return
+        }
+
+        titleLabelConfig.applyForRendering(label: componentView.titleLabel)
+        amountLabelConfig.applyForRendering(label: componentView.amountLabel)
+        statusLabelConfig.applyForRendering(label: componentView.statusLabel)
+
+        componentView.vStackView.configure(
+            config: vStackConfig,
+            cellMeasurement: cellMeasurement,
+            measurementKey: .measurementKey_vStack,
+            subviews: [
+                componentView.titleLabel,
+                componentView.amountLabel,
+                componentView.statusLabel,
+            ],
+        )
+    }
+
+    private var amountText: String {
+        guard let verdict = openCsvPayment.verdict, verdict.isVerified else {
+            return OWSLocalizedString(
+                "OPENCSV_PAYMENT_AMOUNT_UNKNOWN",
+                comment: "Placeholder shown in an OpenCSV payment bubble when no verified amount is available.",
+            )
+        }
+        let currency = verdict.currency ?? ""
+        let sign = itemModel.interaction.interactionType == .incomingMessage ? "+" : ""
+        return "\(sign)\(verdict.amount) \(currency)".ows_stripped()
+    }
+
+    private var statusText: String {
+        guard let verdict = openCsvPayment.verdict else {
+            return OWSLocalizedString(
+                "OPENCSV_PAYMENT_STATUS_PENDING",
+                comment: "Status shown in an OpenCSV payment bubble while the proof has not been verified yet.",
+            )
+        }
+        if verdict.isVerified {
+            return OWSLocalizedString(
+                "OPENCSV_PAYMENT_STATUS_VERIFIED",
+                comment: "Status shown in an OpenCSV payment bubble when the proof verified.",
+            )
+        }
+        return OWSLocalizedString(
+            "OPENCSV_PAYMENT_STATUS_FAILED",
+            comment: "Status shown in an OpenCSV payment bubble when the proof failed verification.",
+        )
+    }
+
+    private var vStackConfig: CVStackViewConfig {
+        CVStackViewConfig(
+            axis: .vertical,
+            alignment: .leading,
+            spacing: 4,
+            layoutMargins: UIEdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4),
+        )
+    }
+
+    private var titleLabelConfig: CVLabelConfig {
+        CVLabelConfig.unstyledText(
+            OWSLocalizedString(
+                "OPENCSV_PAYMENT_TITLE",
+                comment: "Title of an OpenCSV payment bubble in the conversation view.",
+            ),
+            font: .dynamicTypeCaption1,
+            textColor: conversationStyle.bubbleSecondaryTextColor(isIncoming: isIncoming),
+        )
+    }
+
+    private var amountLabelConfig: CVLabelConfig {
+        CVLabelConfig.unstyledText(
+            amountText,
+            font: UIFont.dynamicTypeLargeTitle1Clamped.withSize(28),
+            textColor: conversationStyle.bubbleTextColor(isIncoming: isIncoming),
+        )
+    }
+
+    private var statusLabelConfig: CVLabelConfig {
+        CVLabelConfig.unstyledText(
+            statusText,
+            font: .dynamicTypeFootnote,
+            textColor: conversationStyle.bubbleSecondaryTextColor(isIncoming: isIncoming),
+        )
+    }
+
+    public func measure(
+        maxWidth: CGFloat,
+        measurementBuilder: CVCellMeasurement.Builder,
+    ) -> CGSize {
+        owsAssertDebug(maxWidth > 0)
+
+        let maxLabelWidth = max(0, maxWidth - vStackConfig.layoutMargins.totalWidth)
+        let titleSize = CVText.measureLabel(config: titleLabelConfig, maxWidth: maxLabelWidth)
+        let amountSize = CVText.measureLabel(config: amountLabelConfig, maxWidth: maxLabelWidth)
+        let statusSize = CVText.measureLabel(config: statusLabelConfig, maxWidth: maxLabelWidth)
+
+        let measurement = ManualStackView.measure(
+            config: vStackConfig,
+            measurementBuilder: measurementBuilder,
+            measurementKey: .measurementKey_vStack,
+            subviewInfos: [
+                titleSize.asManualSubviewInfo(),
+                amountSize.asManualSubviewInfo(),
+                statusSize.asManualSubviewInfo(),
+            ],
+        )
+        return measurement.measuredSize
+    }
+
+    // MARK: - CVComponentView
+
+    public class CVComponentViewOpenCsvPayment: NSObject, CVComponentView {
+
+        fileprivate let vStackView = ManualStackView(name: "OpenCsvPayment.vStackView")
+        fileprivate let titleLabel = CVLabel()
+        fileprivate let amountLabel = CVLabel()
+        fileprivate let statusLabel = CVLabel()
+
+        public var isDedicatedCellView = true
+
+        public var rootView: UIView {
+            vStackView
+        }
+
+        public func setIsCellVisible(_ isCellVisible: Bool) {}
+
+        public func reset() {
+            vStackView.reset()
+            titleLabel.text = nil
+            amountLabel.text = nil
+            statusLabel.text = nil
+        }
+    }
+}
+
+private extension String {
+    static let measurementKey_vStack = "CVComponentOpenCsvPayment.measurementKey_vStack"
+}
+
+extension CVComponentOpenCsvPayment: CVAccessibilityComponent {
+    public var accessibilityDescription: String {
+        "\(amountText), \(statusText)"
+    }
+}

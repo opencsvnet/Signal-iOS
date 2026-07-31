@@ -249,6 +249,13 @@ public struct CVComponentState: Equatable {
 
     var paymentAttachment: PaymentAttachment?
 
+    public struct OpenCsvPayment: Equatable {
+        let attachment: CVAttachment
+        let verdict: OpenCsvVerdictRecord?
+    }
+
+    var openCsvPayment: OpenCsvPayment?
+
     public struct ArchivedPaymentAttachment: Equatable {
         let amount: String?
         let fee: String?
@@ -573,6 +580,7 @@ public struct CVComponentState: Equatable {
         genericAttachment: GenericAttachment?,
         paymentAttachment: PaymentAttachment?,
         archivedPaymentAttachment: ArchivedPaymentAttachment?,
+        openCsvPayment: OpenCsvPayment?,
         audioAttachment: AudioAttachment?,
         viewOnce: ViewOnce?,
         quotedReply: QuotedReply?,
@@ -606,6 +614,7 @@ public struct CVComponentState: Equatable {
         self.genericAttachment = genericAttachment
         self.paymentAttachment = paymentAttachment
         self.archivedPaymentAttachment = archivedPaymentAttachment
+        self.openCsvPayment = openCsvPayment
         self.audioAttachment = audioAttachment
         self.viewOnce = viewOnce
         self.quotedReply = quotedReply
@@ -643,6 +652,7 @@ public struct CVComponentState: Equatable {
             lhs.genericAttachment == rhs.genericAttachment &&
             lhs.paymentAttachment == rhs.paymentAttachment &&
             lhs.archivedPaymentAttachment == rhs.archivedPaymentAttachment &&
+            lhs.openCsvPayment == rhs.openCsvPayment &&
             lhs.audioAttachment == rhs.audioAttachment &&
             lhs.viewOnce == rhs.viewOnce &&
             lhs.quotedReply == rhs.quotedReply &&
@@ -711,6 +721,7 @@ public struct CVComponentState: Equatable {
         var genericAttachment: GenericAttachment?
         var paymentAttachment: PaymentAttachment?
         var archivedPaymentAttachment: ArchivedPaymentAttachment?
+        var openCsvPayment: OpenCsvPayment?
         var audioAttachment: AudioAttachment?
         var viewOnce: ViewOnce?
         var quotedReply: QuotedReply?
@@ -759,6 +770,7 @@ public struct CVComponentState: Equatable {
                 genericAttachment: genericAttachment,
                 paymentAttachment: paymentAttachment,
                 archivedPaymentAttachment: archivedPaymentAttachment,
+                openCsvPayment: openCsvPayment,
                 audioAttachment: audioAttachment,
                 viewOnce: viewOnce,
                 quotedReply: quotedReply,
@@ -842,6 +854,9 @@ public struct CVComponentState: Equatable {
             if paymentAttachment != nil {
                 return .paymentAttachment
             }
+            if openCsvPayment != nil {
+                return .openCsvPayment
+            }
             if archivedPaymentAttachment != nil {
                 return .archivedPaymentAttachment
             }
@@ -891,6 +906,9 @@ public struct CVComponentState: Equatable {
         }
         if paymentAttachment != nil {
             result.insert(.paymentAttachment)
+        }
+        if openCsvPayment != nil {
+            result.insert(.openCsvPayment)
         }
         if archivedPaymentAttachment != nil {
             result.insert(.archivedPaymentAttachment)
@@ -1044,7 +1062,7 @@ public struct CVComponentState: Equatable {
             case .quotedReply:
                 // Quoted replies are never forwarded.
                 break
-            case .paymentAttachment, .archivedPaymentAttachment:
+            case .paymentAttachment, .archivedPaymentAttachment, .openCsvPayment:
                 // Payments can't be forwarded.
                 break
             case .poll:
@@ -1889,6 +1907,23 @@ private extension CVComponentState.Builder {
                 message: message,
                 tx: transaction,
             )
+            if
+                BuildFlags.openCsvPayments,
+                OpenCsvAttachmentDetector.isConsignment(
+                    sourceFilename: referencedAttachment.reference.sourceFilename,
+                    mimeType: referencedAttachment.attachment.mimeType,
+                    bodyText: message.body,
+                )
+            {
+                self.openCsvPayment = .init(
+                    attachment: cvAttachment,
+                    verdict: OpenCsvPayments.shared.verdict(
+                        attachmentId: referencedAttachment.attachment.id,
+                        tx: transaction,
+                    ),
+                )
+                return
+            }
             self.genericAttachment = .init(attachment: cvAttachment)
             return
         }
