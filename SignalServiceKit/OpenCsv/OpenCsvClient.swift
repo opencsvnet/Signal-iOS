@@ -54,10 +54,13 @@ public struct OpenCsvVerdict: Codable, Equatable {
     }
 }
 
-/// Result of a `prove*` call: publish `anchorRecordHex`, then finalize.
+/// Result of a `prove*` call: publish `anchorRecordHex` under `ctxHex`,
+/// then finalize. On real chains the anchoring service supplies the
+/// context instead — see `OpenCsvWallet.rebind`.
 public struct OpenCsvProved: Codable, Equatable {
     public let pendingId: UInt64
     public let anchorRecordHex: String
+    public let ctxHex: String
     public let spends: [String]
 }
 
@@ -172,6 +175,17 @@ public final class OpenCsvWallet {
                 }
             }
         })
+    }
+
+    /// Rebuild a pending transaction's anchor record under a context the
+    /// anchoring service reserved, without re-proving. Throws if that
+    /// context would make the record misparse — reserve another and retry.
+    public func rebind(pendingId: UInt64, ctxHex: String) throws -> String {
+        struct Rebound: Codable { let anchorRecordHex: String }
+        let rebound: Rebound = try Self.take(ctxHex.withCString {
+            opencsv_pending_rebind(handle, pendingId, $0)
+        })
+        return rebound.anchorRecordHex
     }
 
     /// Build the consignment blob once the anchor record has been published.

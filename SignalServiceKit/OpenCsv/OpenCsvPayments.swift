@@ -214,7 +214,16 @@ public actor OpenCsvPayments {
             toOwnerHex: toOwnerHex,
             amounts: amounts,
         )
-        let anchorRef = try await provider.publishAnchor(recordHex: proved.anchorRecordHex)
+        // Real chains own the transaction context: reserve one, rebind the
+        // (already proved) record to it, and publish. Demo chains return
+        // nil and keep the context the prover drew.
+        var recordHex = proved.anchorRecordHex
+        var ctxHex = proved.ctxHex
+        if let reserved = try await provider.reserveContext() {
+            recordHex = try wallet.rebind(pendingId: proved.pendingId, ctxHex: reserved)
+            ctxHex = reserved
+        }
+        let anchorRef = try await provider.publishAnchor(recordHex: recordHex, ctxHex: ctxHex)
         let (blob, spends) = try wallet.finalize(pendingId: proved.pendingId, anchorRef: anchorRef)
 
         // Ingest our own consignment to credit the change output, against

@@ -6737,7 +6737,7 @@
 "OPENCSV_SEND_STATUS_LOADING" = "Loading wallet…";
 
 /* Status shown while an OpenCSV payment proof is being generated. */
-"OPENCSV_SEND_STATUS_PROVING" = "Proving… (about a second)";
+"OPENCSV_SEND_STATUS_PROVING" = "Proving & anchoring… (Bitcoin backends wait for a block)";
 
 /* Title of the OpenCSV payment send sheet. */
 "OPENCSV_SEND_TITLE" = "OpenCSV Payment";
