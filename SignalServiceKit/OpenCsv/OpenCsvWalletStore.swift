@@ -5,24 +5,57 @@
 
 import Foundation
 
+/// Which side of a payment this wallet is on.
+public enum OpenCsvPaymentDirection: String, Codable {
+    /// Credits coins we own.
+    case incoming
+    /// We sent it; `amount` is what went to the recipient, not the change.
+    case outgoing
+    /// It verifies, but pays neither us nor (as far as we can tell) the
+    /// other party in this chat — e.g. a consignment forwarded into the
+    /// conversation. Rendering it as a credit would be a lie.
+    case thirdParty
+}
+
 /// A stored verification verdict for one consignment attachment, keyed by
 /// attachment id. What the conversation cell renders.
 public struct OpenCsvVerdictRecord: Codable, Equatable {
     public let status: String
     public let reason: String?
+    /// The amount to display: credited for `incoming`, sent for `outgoing`.
     public let amount: UInt64
     public let currency: String?
     public let assetId: String?
+    public let direction: OpenCsvPaymentDirection
     public let verifiedAt: Date
 
     public var isVerified: Bool { status == "verified" }
 
+    /// A verdict for a consignment someone sent us.
+    ///
+    /// A verified consignment that credits none of our coins is
+    /// `thirdParty`, not a zero-value credit.
     public init(verdict: OpenCsvVerdict, date: Date) {
+        let credits = verdict.credits ?? []
         self.status = verdict.status
         self.reason = verdict.reason
-        self.amount = (verdict.credits ?? []).reduce(0) { $0 + $1.amount }
-        self.currency = verdict.credits?.first?.currency
-        self.assetId = verdict.credits?.first?.assetId
+        self.amount = credits.reduce(0) { $0 + $1.amount }
+        self.currency = credits.first?.currency
+        self.assetId = credits.first?.assetId
+        self.direction = credits.isEmpty ? .thirdParty : .incoming
+        self.verifiedAt = date
+    }
+
+    /// A verdict for a consignment we sent. The amount is what the
+    /// recipient receives — the self-ingest only ever credits our change,
+    /// so deriving it from credits would show the wrong number.
+    public init(sentAmount: UInt64, currency: String?, assetId: String?, date: Date) {
+        self.status = "verified"
+        self.reason = nil
+        self.amount = sentAmount
+        self.currency = currency
+        self.assetId = assetId
+        self.direction = .outgoing
         self.verifiedAt = date
     }
 }
@@ -48,6 +81,7 @@ public struct OpenCsvWalletStore {
     private static let keychainKey = "walletSecrets"
 
     private static let anchorServerUrlKey = "anchorServerUrl"
+    private static let pendingDeliveriesKey = "pendingDeliveries"
     private static let replayOrderKey = "replayOrder"
     private static let spentCoinIdsKey = "spentCoinIds"
     private static let lastSnapshotKey = "lastSnapshot"
@@ -118,12 +152,22 @@ public struct OpenCsvWalletStore {
     }
 
     /// Record one of our own outgoing consignments (replayed to re-credit
-    /// change outputs) and the coins it spent.
-    public func recordOutgoing(blob: Data, spends: [String], tx: DBWriteTransaction) {
+    /// change outputs) and the coins it spent. Returns the replay entry the
+    /// blob is stored under, so a pending delivery can reference it instead
+    /// of keeping a second copy.
+    @discardableResult
+    public func recordOutgoing(blob: Data, spends: [String], tx: DBWriteTransaction) throws -> String {
         let ordinal = keyValueStore.getUInt64(Self.outgoingOrdinalKey, defaultValue: 0, transaction: tx) + 1
         keyValueStore.setUInt64(ordinal, key: Self.outgoingOrdinalKey, transaction: tx)
-        appendReplayEntry("o:\(ordinal)", blob: blob, tx: tx)
-        addSpentCoinIds(spends, tx: tx)
+        let entry = "o:\(ordinal)"
+        appendReplayEntry(entry, blob: blob, tx: tx)
+        try addSpentCoinIds(spends, tx: tx)
+        return entry
+    }
+
+    /// The consignment bytes stored under a replay entry.
+    public func blob(forReplayEntry entry: String, tx: DBReadTransaction) -> Data? {
+        keyValueStore.getData(Self.blobKey(entry), transaction: tx)
     }
 
     /// Replay entries in ingestion order, with their blobs.
@@ -146,23 +190,150 @@ public struct OpenCsvWalletStore {
         }
     }
 
+    // MARK: - Pending deliveries
+
+    /// Attempts after which a delivery stops being retried automatically.
+    /// It is *kept*, not discarded: the consignment is the only copy of a
+    /// payment that already happened on-chain.
+    public static let maxDeliveryAttempts = 8
+
+    /// A consignment that has been anchored on-chain but whose message has
+    /// not yet reached the send pipeline.
+    ///
+    /// Anchoring is irreversible: the moment the transfer confirms, the
+    /// consumed coins are spent whether or not the recipient ever receives
+    /// the consignment. So this record is written in the same transaction
+    /// as the spend, and cleared only in the same transaction that inserts
+    /// the message — never merely because a send was requested.
+    ///
+    /// The bytes live once, under `replayEntry`; keeping a second copy here
+    /// would double ~47 KB per payment for no benefit.
+    public struct PendingDelivery: Codable, Equatable {
+        public let id: String
+        public let threadUniqueId: String
+        public let body: String
+        /// Replay entry holding the consignment bytes.
+        public let replayEntry: String
+        /// Amount sent to the recipient, for the outgoing verdict.
+        public let amount: UInt64
+        public let currency: String?
+        public let assetId: String?
+        public let createdAt: Date
+        /// Delivery attempts so far; at `maxDeliveryAttempts` automatic
+        /// retries stop.
+        public var attempts: Int
+
+        public var hasExhaustedRetries: Bool { attempts >= OpenCsvWalletStore.maxDeliveryAttempts }
+
+        public init(
+            id: String = UUID().uuidString,
+            threadUniqueId: String,
+            body: String,
+            replayEntry: String,
+            amount: UInt64,
+            currency: String?,
+            assetId: String?,
+            createdAt: Date,
+            attempts: Int = 0,
+        ) {
+            self.id = id
+            self.threadUniqueId = threadUniqueId
+            self.body = body
+            self.replayEntry = replayEntry
+            self.amount = amount
+            self.currency = currency
+            self.assetId = assetId
+            self.createdAt = createdAt
+            self.attempts = attempts
+        }
+    }
+
+    /// Every undelivered consignment, oldest first.
+    ///
+    /// A decode failure drops that one record from the result and is
+    /// reported — it must never be allowed to look like "the queue is
+    /// empty", which would silently strand every queued payment.
+    public func pendingDeliveries(tx: DBReadTransaction) -> [PendingDelivery] {
+        pendingDeliveryIds(tx: tx).compactMap { id in
+            do {
+                guard let delivery: PendingDelivery = try keyValueStore.getCodableValue(
+                    forKey: Self.pendingDeliveryKey(id),
+                    transaction: tx,
+                ) else {
+                    owsFailDebug("pending OpenCSV delivery \(id) is indexed but missing")
+                    return nil
+                }
+                return delivery
+            } catch {
+                owsFailDebug("could not decode pending OpenCSV delivery \(id): \(error)")
+                return nil
+            }
+        }
+    }
+
+    public func addPendingDelivery(_ delivery: PendingDelivery, tx: DBWriteTransaction) throws {
+        try keyValueStore.setCodable(delivery, key: Self.pendingDeliveryKey(delivery.id), transaction: tx)
+        var ids = pendingDeliveryIds(tx: tx)
+        if !ids.contains(delivery.id) {
+            ids.append(delivery.id)
+            try keyValueStore.setCodable(ids, key: Self.pendingDeliveriesKey, transaction: tx)
+        }
+    }
+
+    /// Persist a changed attempt count. Best-effort: losing it costs an
+    /// extra retry, never a payment.
+    public func updatePendingDelivery(_ delivery: PendingDelivery, tx: DBWriteTransaction) {
+        do {
+            try keyValueStore.setCodable(delivery, key: Self.pendingDeliveryKey(delivery.id), transaction: tx)
+        } catch {
+            owsFailDebug("could not update pending OpenCSV delivery \(delivery.id): \(error)")
+        }
+    }
+
+    /// Clear a delivery. Only ever called in the same transaction that
+    /// inserts the message carrying it.
+    public func removePendingDelivery(id: String, tx: DBWriteTransaction) throws {
+        keyValueStore.removeValue(forKey: Self.pendingDeliveryKey(id), transaction: tx)
+        var ids = pendingDeliveryIds(tx: tx)
+        ids.removeAll { $0 == id }
+        try keyValueStore.setCodable(ids, key: Self.pendingDeliveriesKey, transaction: tx)
+    }
+
+    private func pendingDeliveryIds(tx: DBReadTransaction) -> [String] {
+        do {
+            return try keyValueStore.getCodableValue(forKey: Self.pendingDeliveriesKey, transaction: tx) ?? []
+        } catch {
+            owsFailDebug("could not decode the pending OpenCSV delivery index: \(error)")
+            return []
+        }
+    }
+
     // MARK: - Spent coins
 
     public func spentCoinIds(tx: DBReadTransaction) -> [String] {
         (try? keyValueStore.getCodableValue(forKey: Self.spentCoinIdsKey, transaction: tx)) ?? []
     }
 
-    public func addSpentCoinIds(_ coinIds: [String], tx: DBWriteTransaction) {
+    /// Record coins as spent.
+    ///
+    /// Throws rather than swallowing: losing this write would leave coins
+    /// that are spent on-chain looking spendable after the next restart,
+    /// so the caller must fail the whole transaction instead.
+    public func addSpentCoinIds(_ coinIds: [String], tx: DBWriteTransaction) throws {
         guard !coinIds.isEmpty else { return }
         var spent = spentCoinIds(tx: tx)
         for id in coinIds where !spent.contains(id) {
             spent.append(id)
         }
-        try? keyValueStore.setCodable(spent, key: Self.spentCoinIdsKey, transaction: tx)
+        try keyValueStore.setCodable(spent, key: Self.spentCoinIdsKey, transaction: tx)
     }
 
     private static func verdictKey(_ attachmentId: Attachment.IDType) -> String {
         "verdict:\(attachmentId)"
+    }
+
+    private static func pendingDeliveryKey(_ id: String) -> String {
+        "pendingDelivery:\(id)"
     }
 
     private static func blobKey(_ entry: String) -> String {

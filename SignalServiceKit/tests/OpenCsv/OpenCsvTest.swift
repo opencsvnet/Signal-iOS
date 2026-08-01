@@ -136,9 +136,9 @@ struct OpenCsvWalletStoreTest {
             date: Date(timeIntervalSince1970: 0),
         )
         let blob = Data([1, 2, 3])
-        db.write { tx in
+        try db.write { tx in
             store.setVerdict(verified, blob: blob, attachmentId: 42, tx: tx)
-            store.recordOutgoing(blob: Data([4, 5]), spends: ["coin1"], tx: tx)
+            _ = try store.recordOutgoing(blob: Data([4, 5]), spends: ["coin1"], tx: tx)
         }
         db.read { tx in
             #expect(store.verdict(attachmentId: 42, tx: tx) == verified)
@@ -158,6 +158,138 @@ struct OpenCsvWalletStoreTest {
         }
         db.read { tx in
             #expect(store.replayBlobs(tx: tx).count == 2)
+        }
+    }
+
+    /// B3: sending 5 of 100 must render "5 sent", not the 95 change that
+    /// the self-ingest credits back to us.
+    @Test
+    func outgoingVerdictShowsTheSentAmountNotTheChange() {
+        let sent = OpenCsvVerdictRecord(
+            sentAmount: 5,
+            currency: "USD",
+            assetId: "ab",
+            date: Date(timeIntervalSince1970: 0),
+        )
+        #expect(sent.amount == 5)
+        #expect(sent.direction == .outgoing)
+        #expect(sent.isVerified)
+
+        // What the old code did: derive the amount from the self-ingest,
+        // which only ever credits change.
+        let fromChangeCredits = OpenCsvVerdictRecord(
+            verdict: OpenCsvVerdict(
+                status: "verified",
+                reason: nil,
+                credits: [OpenCsvCredit(assetId: "ab", currency: "USD", amount: 95)],
+                coins: nil,
+                anchor: nil,
+            ),
+            date: Date(timeIntervalSince1970: 0),
+        )
+        #expect(fromChangeCredits.amount == 95, "sanity: this is the wrong number to show for a send")
+        #expect(sent.amount != fromChangeCredits.amount)
+    }
+
+    /// A verified consignment crediting none of our coins is not a
+    /// zero-value payment; rendering "+0" would assert a payment that did
+    /// not happen to us.
+    @Test
+    func verifiedButUncreditedIsThirdPartyNotZero() {
+        let record = OpenCsvVerdictRecord(
+            verdict: OpenCsvVerdict(status: "verified", reason: nil, credits: [], coins: nil, anchor: nil),
+            date: Date(timeIntervalSince1970: 0),
+        )
+        #expect(record.isVerified)
+        #expect(record.direction == .thirdParty)
+        #expect(record.amount == 0)
+
+        let credited = OpenCsvVerdictRecord(
+            verdict: OpenCsvVerdict(
+                status: "verified",
+                reason: nil,
+                credits: [OpenCsvCredit(assetId: "ab", currency: "USD", amount: 7)],
+                coins: nil,
+                anchor: nil,
+            ),
+            date: Date(timeIntervalSince1970: 0),
+        )
+        #expect(credited.direction == .incoming)
+    }
+
+    /// B2: the record must outlive a failed delivery. It is cleared only in
+    /// the transaction that inserts the message.
+    @Test
+    func pendingDeliverySurvivesUntilExplicitlyCleared() throws {
+        let delivery = OpenCsvWalletStore.PendingDelivery(
+            threadUniqueId: "thread-1",
+            body: "OpenCSV consignment (9 bytes)",
+            replayEntry: "o:1",
+            amount: 5,
+            currency: "USD",
+            assetId: "ab",
+            createdAt: Date(timeIntervalSince1970: 0),
+        )
+        try db.write { tx in
+            _ = try store.recordOutgoing(blob: Data([1, 2, 3]), spends: ["coin1"], tx: tx)
+            try store.addPendingDelivery(delivery, tx: tx)
+        }
+        db.read { tx in
+            #expect(store.pendingDeliveries(tx: tx) == [delivery])
+            // The bytes are referenced, not duplicated.
+            #expect(store.blob(forReplayEntry: "o:1", tx: tx) == Data([1, 2, 3]))
+            #expect(store.spentCoinIds(tx: tx) == ["coin1"])
+        }
+
+        try db.write { tx in try store.removePendingDelivery(id: delivery.id, tx: tx) }
+        db.read { tx in #expect(store.pendingDeliveries(tx: tx).isEmpty) }
+    }
+
+    /// A delivery that can never succeed must stop being retried rather
+    /// than looping on every foreground — but must not be discarded, since
+    /// it is the only copy of a payment that already happened on-chain.
+    @Test
+    func exhaustedDeliveriesStopRetryingButAreKept() throws {
+        var delivery = OpenCsvWalletStore.PendingDelivery(
+            threadUniqueId: "gone",
+            body: "b",
+            replayEntry: "o:1",
+            amount: 1,
+            currency: nil,
+            assetId: nil,
+            createdAt: Date(timeIntervalSince1970: 0),
+        )
+        #expect(!delivery.hasExhaustedRetries)
+        try db.write { tx in try store.addPendingDelivery(delivery, tx: tx) }
+
+        delivery.attempts = OpenCsvWalletStore.maxDeliveryAttempts
+        db.write { tx in store.updatePendingDelivery(delivery, tx: tx) }
+        db.read { tx in
+            let stored = store.pendingDeliveries(tx: tx)
+            #expect(stored.count == 1, "an exhausted delivery must still be recoverable")
+            #expect(stored.first?.hasExhaustedRetries == true)
+        }
+    }
+
+    /// Two queued payments must both survive; the old whole-array rewrite
+    /// discarded the rest of the queue on any decode failure.
+    @Test
+    func multipleDeliveriesAreIndependent() throws {
+        let a = OpenCsvWalletStore.PendingDelivery(
+            threadUniqueId: "t", body: "a", replayEntry: "o:1",
+            amount: 1, currency: nil, assetId: nil, createdAt: Date(timeIntervalSince1970: 0),
+        )
+        let b = OpenCsvWalletStore.PendingDelivery(
+            threadUniqueId: "t", body: "b", replayEntry: "o:2",
+            amount: 2, currency: nil, assetId: nil, createdAt: Date(timeIntervalSince1970: 1),
+        )
+        try db.write { tx in
+            try store.addPendingDelivery(a, tx: tx)
+            try store.addPendingDelivery(b, tx: tx)
+        }
+        try db.write { tx in try store.removePendingDelivery(id: a.id, tx: tx) }
+        db.read { tx in
+            #expect(store.pendingDeliveries(tx: tx).map(\.id) == [b.id])
         }
     }
 

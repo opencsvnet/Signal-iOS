@@ -13,6 +13,8 @@ public enum OpenCsvPaymentsError: Error {
     case needTwoCoins
     /// Unspent total is below the requested amount.
     case insufficientFunds(available: UInt64)
+    /// Another send is mid-flight; its coins are not yet marked spent.
+    case sendAlreadyInProgress
 }
 
 /// The OpenCSV payments service: owns the in-memory Rust wallet and runs the
@@ -31,6 +33,14 @@ public actor OpenCsvPayments {
     public static let requiredConfirmations: UInt64 = 6
 
     private var wallet: OpenCsvWallet?
+    /// Set for the duration of a send. `sendPayment` releases the actor at
+    /// every `await` (context reservation, anchor confirmation), so without
+    /// this two concurrent sends would both read the same unspent set and
+    /// select the same two coins.
+    private var isSending = false
+    /// Delivery ids currently being handed to the send pipeline, so a
+    /// foreground sweep cannot re-send one that is already in flight.
+    private var deliveriesInFlight = Set<String>()
 
     private var db: any DB { DependenciesBridge.shared.db }
     private var attachmentStore: AttachmentStore { DependenciesBridge.shared.attachmentStore }
@@ -205,7 +215,16 @@ public actor OpenCsvPayments {
     /// the consignment blob and the standard body text for its message.
     /// The caller delivers the blob as a normal `opencsv-consignment.bin`
     /// attachment.
-    public func sendPayment(toOwnerHex: String, amount: UInt64) async throws -> (blob: Data, body: String) {
+    public func sendPayment(
+        toOwnerHex: String,
+        amount: UInt64,
+        threadUniqueId: String,
+    ) async throws -> OpenCsvWalletStore.PendingDelivery {
+        guard !isSending else {
+            throw OpenCsvPaymentsError.sendAlreadyInProgress
+        }
+        isSending = true
+        defer { isSending = false }
         let wallet = try await ensureWallet()
 
         let unspent = try wallet.coins().filter(\.unspent)
@@ -247,8 +266,39 @@ public actor OpenCsvPayments {
         let anchorRef = try await provider.publishAnchor(recordHex: recordHex, ctxHex: ctxHex)
         let (blob, spends) = try wallet.finalize(pendingId: proved.pendingId, anchorRef: anchorRef)
 
-        // Ingest our own consignment to credit the change output, against
-        // the post-anchor snapshot (kept for offline startup replay).
+        // Carry our receiving key so the recipient's wallet can prefill
+        // the reply-to address from the chat itself.
+        var body = OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count)
+        if let owner = wallet.owners.first {
+            body += "\n" + OpenCsvAttachmentDetector.addressAnnouncement(owner: owner)
+        }
+
+        // The anchor is confirmed, so these coins are spent on-chain no
+        // matter what happens next. Persist the spend and the undelivered
+        // consignment *before* anything else — in particular before the
+        // snapshot fetch below, which is a network round trip that must not
+        // sit between an irreversible on-chain event and its record.
+        let currency = inputs.first?.currency
+        let deliveryId = UUID().uuidString
+        let createdAt = Date()
+        let recorded = try await db.awaitableWrite { tx -> OpenCsvWalletStore.PendingDelivery in
+            let entry = try self.store.recordOutgoing(blob: blob, spends: spends, tx: tx)
+            let recorded = OpenCsvWalletStore.PendingDelivery(
+                id: deliveryId,
+                threadUniqueId: threadUniqueId,
+                body: body,
+                replayEntry: entry,
+                amount: amount,
+                currency: currency,
+                assetId: assetId,
+                createdAt: createdAt,
+            )
+            try self.store.addPendingDelivery(recorded, tx: tx)
+            return recorded
+        }
+
+        // Cache-warm only: credit our own change output. Safe to fail — the
+        // replay entry above rebuilds it at next launch.
         if let snapshot = try? await fetchAndCacheSnapshot() {
             _ = try? wallet.verify(
                 blob: blob,
@@ -256,16 +306,69 @@ public actor OpenCsvPayments {
                 requiredConfirmations: Self.requiredConfirmations,
             )
         }
-        await db.awaitableWrite { tx in
-            self.store.recordOutgoing(blob: blob, spends: spends, tx: tx)
+        return recorded
+    }
+
+    /// Consignments that are anchored but whose message has not yet reached
+    /// the send pipeline, excluding any already in flight or past their
+    /// retry limit. The app layer re-enqueues these on foreground.
+    public func deliveriesNeedingRetry() -> [OpenCsvWalletStore.PendingDelivery] {
+        db.read { self.store.pendingDeliveries(tx: $0) }.filter { delivery in
+            if deliveriesInFlight.contains(delivery.id) { return false }
+            if delivery.hasExhaustedRetries {
+                Logger.warn("OpenCSV delivery \(delivery.id) exhausted retries; leaving it queued")
+                return false
+            }
+            return true
         }
-        // Carry our receiving key so the recipient's wallet can prefill
-        // the reply-to address from the chat itself.
-        var body = OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count)
-        if let owner = wallet.owners.first {
-            body += "\n" + OpenCsvAttachmentDetector.addressAnnouncement(owner: owner)
+    }
+
+    /// Claim a delivery for one attempt, returning its consignment bytes.
+    /// Returns nil if another pass already has it.
+    public func beginDelivery(_ delivery: OpenCsvWalletStore.PendingDelivery) async -> Data? {
+        guard deliveriesInFlight.insert(delivery.id).inserted else { return nil }
+        var attempted = delivery
+        attempted.attempts += 1
+        return await db.awaitableWrite { tx in
+            self.store.updatePendingDelivery(attempted, tx: tx)
+            return self.store.blob(forReplayEntry: delivery.replayEntry, tx: tx)
         }
-        return (blob, body)
+    }
+
+    /// Release a claim after an attempt; the record stays pending unless
+    /// the delivery transaction cleared it.
+    public func endDelivery(id: String) {
+        deliveriesInFlight.remove(id)
+    }
+
+    /// Write an outgoing verdict inside the caller's transaction.
+    public nonisolated func setOutgoingVerdict(
+        _ record: OpenCsvVerdictRecord,
+        attachmentId: Attachment.IDType,
+        tx: DBWriteTransaction,
+    ) {
+        OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
+            .setVerdict(record, blob: nil, attachmentId: attachmentId, tx: tx)
+    }
+
+    /// Clear a delivered consignment inside the caller's transaction, so it
+    /// commits with the message rather than after it.
+    public nonisolated func clearDelivered(id: String, tx: DBWriteTransaction) throws {
+        try OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
+            .removePendingDelivery(id: id, tx: tx)
+    }
+
+    /// The verdict to write for a consignment we sent, in the same
+    /// transaction that inserts its message.
+    public nonisolated func outgoingVerdict(
+        for delivery: OpenCsvWalletStore.PendingDelivery,
+    ) -> OpenCsvVerdictRecord {
+        OpenCsvVerdictRecord(
+            sentAmount: delivery.amount,
+            currency: delivery.currency,
+            assetId: delivery.assetId,
+            date: Date(),
+        )
     }
 
     // MARK: - Settings / status

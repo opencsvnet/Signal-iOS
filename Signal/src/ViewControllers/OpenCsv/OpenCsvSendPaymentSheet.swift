@@ -222,9 +222,43 @@ class OpenCsvSendPaymentSheet: OWSViewController {
 
     @objc
     private func anchorServerChanged() {
+        // Editing to empty is a deliberate clear; a nil field that was
+        // never populated is not (see didTapSend).
         let url = anchorServerField.text?.strippedOrNil
         Task {
             await OpenCsvPayments.shared.setAnchorServerUrl(url)
+        }
+    }
+
+    /// Rust error strings are not user-facing copy; map the ones we model.
+    private static func userFacingMessage(for error: Error) -> String {
+        switch error {
+        case OpenCsvPaymentsError.anchorServerNotConfigured:
+            return OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_NO_SERVER",
+                comment: "Error shown when no OpenCSV anchor server is configured.",
+            )
+        case OpenCsvPaymentsError.needTwoCoins:
+            return OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_NEED_TWO_COINS",
+                comment: "Error shown when the wallet has fewer than the two coins a transfer needs.",
+            )
+        case OpenCsvPaymentsError.insufficientFunds(let available):
+            let format = OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_INSUFFICIENT_FORMAT",
+                comment: "Error shown when the amount exceeds the balance. Embeds {{ available amount }}.",
+            )
+            return String.nonPluralLocalizedStringWithFormat(format, "\(available)")
+        case OpenCsvPaymentsError.sendAlreadyInProgress:
+            return OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_IN_PROGRESS",
+                comment: "Error shown when a payment is already being sent.",
+            )
+        default:
+            return OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_GENERIC",
+                comment: "Generic error shown when an OpenCSV payment could not be sent.",
+            )
         }
     }
 
@@ -259,43 +293,37 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             comment: "Status shown while an OpenCSV payment proof is being generated.",
         ))
 
+        // Only persist a URL the user actually typed: the field is filled
+        // asynchronously, so a nil here can simply mean "not loaded yet"
+        // and must not erase the configured server.
         let anchorServer = anchorServerField.text?.strippedOrNil
         let thread = self.thread
         Task {
             do {
-                await OpenCsvPayments.shared.setAnchorServerUrl(anchorServer)
-                let (blob, body) = try await OpenCsvPayments.shared.sendPayment(
+                if let anchorServer {
+                    await OpenCsvPayments.shared.setAnchorServerUrl(anchorServer)
+                }
+                let delivery = try await OpenCsvPayments.shared.sendPayment(
                     toOwnerHex: recipient,
                     amount: amount,
+                    threadUniqueId: thread.uniqueId,
                 )
-                try self.enqueueConsignmentMessage(blob: blob, body: body, thread: thread)
+                // Past this point the payment is anchored on-chain and the
+                // coins are spent. A delivery failure must NOT re-arm Send:
+                // tapping again would spend a second pair of coins. The
+                // consignment is persisted and retried on foreground.
+                do {
+                    try await OpenCsvDelivery.deliver(delivery)
+                } catch {
+                    Logger.warn("OpenCSV consignment queued for retry: \(error)")
+                }
                 self.dismiss(animated: true)
             } catch {
+                // Nothing was anchored, so retrying is safe.
                 self.sendButton.isEnabled = true
-                self.setStatus("\(error)")
+                self.setStatus(Self.userFacingMessage(for: error))
             }
         }
     }
 
-    private func enqueueConsignmentMessage(blob: Data, body: String, thread: TSThread) throws {
-        let dataSource = try DataSourcePath(writingTempFileData: blob, fileExtension: "bin")
-        dataSource.sourceFilename = OpenCsvAttachmentDetector.consignmentFilename
-        let previewable = try PreviewableAttachment.genericAttachment(
-            dataSource: dataSource,
-            dataUTI: UTType.data.identifier,
-            attachmentLimits: OutgoingAttachmentLimits.currentLimits(),
-        )
-        Task {
-            // Image quality is irrelevant for an opaque binary attachment.
-            let sendable = try await SendableAttachment.forPreviewableAttachment(
-                previewable,
-                imageQualityLevel: .one,
-            )
-            ThreadUtil.enqueueMessage(
-                body: MessageBody(text: body, ranges: .empty),
-                attachments: ([sendable], isViewOnce: false),
-                thread: thread,
-            )
-        }
-    }
 }

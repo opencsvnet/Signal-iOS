@@ -6685,6 +6685,12 @@
 /* Title for sheet shown when tapping oversized text that has expired and is unavailable for download */
 "OVERSIZE_TEXT_UNAVAILABLE_SHEET_TITLE" = "Complete Message Not Available";
 
+/* Shown in an OpenCSV payment bubble for a verified payment that pays neither party. */
+"OPENCSV_PAYMENT_AMOUNT_NOT_YOURS" = "OpenCSV payment";
+
+/* Status for a verified OpenCSV payment that credits neither party in this chat. */
+"OPENCSV_PAYMENT_STATUS_VERIFIED_NOT_YOURS" = "verified · not for this wallet";
+
 /* Placeholder shown in an OpenCSV payment bubble when no verified amount is available. */
 "OPENCSV_PAYMENT_AMOUNT_UNKNOWN" = "OpenCSV payment";
 
@@ -6708,6 +6714,21 @@
 
 /* Button that proves and sends an OpenCSV payment. */
 "OPENCSV_SEND_BUTTON" = "Prove & Send";
+
+/* Generic error shown when an OpenCSV payment could not be sent. */
+"OPENCSV_SEND_ERROR_GENERIC" = "Could not send the payment.";
+
+/* Error shown when a payment is already being sent. */
+"OPENCSV_SEND_ERROR_IN_PROGRESS" = "A payment is already being sent.";
+
+/* Error shown when the amount exceeds the balance. Embeds {{ available amount }}. */
+"OPENCSV_SEND_ERROR_INSUFFICIENT_FORMAT" = "Not enough funds. Available: %@.";
+
+/* Error shown when the wallet has fewer than the two coins a transfer needs. */
+"OPENCSV_SEND_ERROR_NEED_TWO_COINS" = "This wallet needs at least two coins to send.";
+
+/* Error shown when no OpenCSV anchor server is configured. */
+"OPENCSV_SEND_ERROR_NO_SERVER" = "Set an anchor server first.";
 
 /* Error shown when the OpenCSV amount field is not a positive integer. */
 "OPENCSV_SEND_ERROR_BAD_AMOUNT" = "Enter a positive whole amount.";

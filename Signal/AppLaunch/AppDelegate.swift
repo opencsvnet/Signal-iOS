@@ -671,6 +671,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
 
         OpenCsvAttachmentProcessor.observeAppActivation(appReadiness: appReadiness)
+        OpenCsvDelivery.observeAppActivation(appReadiness: appReadiness)
 
         appReadiness.runNowOrWhenMainAppDidBecomeReadyAsync {
             let fetchJobRunner = CallLinkFetchJobRunner(

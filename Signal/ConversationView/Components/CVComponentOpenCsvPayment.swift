@@ -59,8 +59,18 @@ public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
                 comment: "Placeholder shown in an OpenCSV payment bubble when no verified amount is available.",
             )
         }
+        // A consignment that credits none of our coins is not a zero-value
+        // payment — it is simply not ours, and must not render as "+0".
+        guard verdict.direction != .thirdParty else {
+            return OWSLocalizedString(
+                "OPENCSV_PAYMENT_AMOUNT_NOT_YOURS",
+                comment: "Shown in an OpenCSV payment bubble for a verified payment that pays neither party.",
+            )
+        }
         let currency = verdict.currency ?? ""
-        let sign = itemModel.interaction.interactionType == .incomingMessage ? "+" : ""
+        // Outgoing amounts are what the recipient receives, so they read as
+        // a debit; the change output is not part of the story.
+        let sign = verdict.direction == .outgoing ? "−" : "+"
         return "\(sign)\(verdict.amount) \(currency)".ows_stripped()
     }
 
@@ -72,6 +82,12 @@ public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
             )
         }
         if verdict.isVerified {
+            if verdict.direction == .thirdParty {
+                return OWSLocalizedString(
+                    "OPENCSV_PAYMENT_STATUS_VERIFIED_NOT_YOURS",
+                    comment: "Status for a verified OpenCSV payment that credits neither party in this chat.",
+                )
+            }
             return OWSLocalizedString(
                 "OPENCSV_PAYMENT_STATUS_VERIFIED",
                 comment: "Status shown in an OpenCSV payment bubble when the proof verified.",
