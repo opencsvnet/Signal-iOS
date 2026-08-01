@@ -670,6 +670,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             AttachmentDownloadRetryRunner.shared.beginObserving()
         }
 
+        OpenCsvAttachmentProcessor.observeAppActivation(appReadiness: appReadiness)
+
         appReadiness.runNowOrWhenMainAppDidBecomeReadyAsync {
             let fetchJobRunner = CallLinkFetchJobRunner(
                 callLinkStore: DependenciesBridge.shared.callLinkStore,

@@ -119,6 +119,27 @@ public actor OpenCsvPayments {
     /// configured, or arrived while the download hook could not verify —
     /// verifying downloaded ones and enqueueing downloads for the rest.
     /// Called when the wallet UI opens on a thread.
+    /// Retry every consignment still lacking a verdict, across all
+    /// conversations.
+    ///
+    /// Verification needs the anchor server, which may be unreachable when
+    /// a consignment arrives (offline, server down, URL not yet set). Those
+    /// attempts deliberately store nothing, so this sweep — run whenever the
+    /// app becomes active — is what eventually settles them without the
+    /// user having to open any particular screen.
+    public func retryAllPendingVerifications() async {
+        let threadUniqueIds: [String] = db.read { tx in
+            var ids = [String]()
+            ThreadFinder().enumerateVisibleThreads(isArchived: false, transaction: tx) { thread in
+                ids.append(thread.uniqueId)
+            }
+            return ids
+        }
+        for threadUniqueId in threadUniqueIds {
+            await retryPendingVerifications(threadUniqueId: threadUniqueId)
+        }
+    }
+
     public func retryPendingVerifications(threadUniqueId: String) async {
         struct Sweep {
             var verifiable = [Attachment.IDType]()

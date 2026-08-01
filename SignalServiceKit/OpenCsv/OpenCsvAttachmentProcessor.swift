@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import UIKit
 
 /// Recognises OpenCSV consignment attachments, matching the conventions of
 /// the `opencsv` CLI's Signal transport (`opencsv-signal`): a file named
@@ -72,6 +73,30 @@ public enum OpenCsvAttachmentProcessor {
         guard BuildFlags.openCsvPayments else { return }
         Task {
             await OpenCsvPayments.shared.verifyDownloadedAttachmentIfNeeded(attachmentId: attachmentId)
+        }
+    }
+
+    /// Settle consignments whose verification could not complete when they
+    /// arrived — typically because the anchor server was unreachable.
+    /// Called once the app is ready and again whenever it becomes active,
+    /// so recovery never depends on the user opening a particular screen.
+    public static func observeAppActivation(appReadiness: AppReadiness) {
+        guard BuildFlags.openCsvPayments else { return }
+        appReadiness.runNowOrWhenMainAppDidBecomeReadyAsync {
+            retryPending()
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: nil,
+            ) { _ in
+                retryPending()
+            }
+        }
+    }
+
+    private static func retryPending() {
+        Task {
+            await OpenCsvPayments.shared.retryAllPendingVerifications()
         }
     }
 }
