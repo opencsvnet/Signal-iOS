@@ -20,10 +20,6 @@ ENV['RINGRTC_PREBUILD_CHECKSUM'] = '1b87cf9bd2ddba747fbab0ec871c434c448d219f537d
 pod 'SignalRingRTC', git: 'https://github.com/signalapp/ringrtc', tag: 'v2.70.0', inhibit_warnings: true
 # pod 'SignalRingRTC', path: '../ringrtc', testspecs: ["Tests"]
 
-# OpenCSV wallet FFI (Rust staticlib xcframework; local sibling checkout during
-# development, mirroring the LibSignalClient `path:` flow above).
-pod 'OpenCsv', path: '../opencsv-rs/apple'
-
 pod 'GRDB.swift/SQLCipher'
 # pod 'GRDB.swift/SQLCipher', path: '../GRDB.swift'
 
@@ -80,6 +76,14 @@ target 'SignalUI' do
 end
 
 target 'SignalServiceKit' do
+  # OpenCSV wallet FFI. Pinned by revision and built from source at
+  # install time — no prebuilt binary and no checksum to rotate. Declared
+  # only here: SignalServiceKit is the sole target whose Swift imports
+  # OpenCsvFFI, and everything else links SignalServiceKit.framework.
+  # Requires a Rust toolchain; the first install compiles the prover stack.
+  pod 'OpenCsv', git: 'https://github.com/opencsvnet/opencsv-rs.git', commit: '738e897fb3f5a2d1dabd35fa994ecf6aedbcd15e'
+  # pod 'OpenCsv', path: '../opencsv-rs'   # local iteration
+
   pod 'CocoaLumberjack'
 
   target 'SignalServiceKitTests' do
