@@ -34,7 +34,6 @@ public actor OpenCsvPayments {
 
     private var db: any DB { DependenciesBridge.shared.db }
     private var attachmentStore: AttachmentStore { DependenciesBridge.shared.attachmentStore }
-    private var interactionStore: any InteractionStore { DependenciesBridge.shared.interactionStore }
     private var store: OpenCsvWalletStore {
         OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
     }
