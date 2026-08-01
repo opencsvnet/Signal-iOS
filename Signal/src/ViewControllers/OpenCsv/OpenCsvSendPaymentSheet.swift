@@ -136,7 +136,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             "OPENCSV_SEND_STATUS_LOADING",
             comment: "Status shown while the OpenCSV wallet is loading.",
         ))
+        let threadUniqueId = thread.uniqueId
         Task {
+            // Give unverified consignments in this chat another chance
+            // (e.g. ones that arrived before the anchor server was set).
+            await OpenCsvPayments.shared.retryPendingVerifications(threadUniqueId: threadUniqueId)
             do {
                 let summary = try await OpenCsvPayments.shared.walletSummary()
                 let balances = summary.balances

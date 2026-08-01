@@ -115,6 +115,70 @@ public actor OpenCsvPayments {
         )
     }
 
+    /// Sweep a thread's recent messages for consignment attachments that
+    /// never got a verdict — e.g. downloaded before the anchor server was
+    /// configured, or arrived while the download hook could not verify —
+    /// verifying downloaded ones and enqueueing downloads for the rest.
+    /// Called when the wallet UI opens on a thread.
+    public func retryPendingVerifications(threadUniqueId: String) async {
+        struct Sweep {
+            var verifiable = [Attachment.IDType]()
+            var messagesNeedingDownload = [TSMessage]()
+        }
+        let sweep: Sweep = db.read { tx in
+            var sweep = Sweep()
+            var scanned = 0
+            try? InteractionFinder(threadUniqueId: threadUniqueId)
+                .enumerateInteractionsForConversationView(rowIdFilter: .newest, tx: tx) { interaction in
+                    scanned += 1
+                    guard
+                        let message = interaction as? TSMessage,
+                        let messageRowId = message.sqliteRowId
+                    else {
+                        return scanned < 50
+                    }
+                    for referenced in attachmentStore.fetchReferencedAttachmentsOwnedByMessage(
+                        messageRowId: messageRowId,
+                        tx: tx,
+                    ) {
+                        guard
+                            OpenCsvAttachmentDetector.isConsignment(
+                                sourceFilename: referenced.reference.sourceFilename,
+                                mimeType: referenced.attachment.mimeType,
+                                bodyText: message.body,
+                            ),
+                            store.verdict(attachmentId: referenced.attachment.id, tx: tx) == nil
+                        else {
+                            continue
+                        }
+                        if referenced.attachment.asStream() != nil {
+                            sweep.verifiable.append(referenced.attachment.id)
+                        } else {
+                            sweep.messagesNeedingDownload.append(message)
+                        }
+                    }
+                    return scanned < 50
+                }
+            return sweep
+        }
+        if !sweep.messagesNeedingDownload.isEmpty {
+            let downloadManager = DependenciesBridge.shared.attachmentDownloadManager
+            await db.awaitableWrite { tx in
+                for message in sweep.messagesNeedingDownload {
+                    downloadManager.enqueueDownloadOfAttachmentsForMessage(
+                        message,
+                        priority: .userInitiated,
+                        useThumbnails: false,
+                        tx: tx,
+                    )
+                }
+            }
+        }
+        for attachmentId in sweep.verifiable {
+            await verifyDownloadedAttachmentIfNeeded(attachmentId: attachmentId)
+        }
+    }
+
     // MARK: - Send pipeline (wallet half)
 
     /// Prove and anchor a transfer of `amount` to `toOwnerHex`, returning
