@@ -171,18 +171,33 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private func prefillRecipient(ownKey: String) {
         guard recipientField.text?.strippedOrNil == nil else { return }
         let thread = self.thread
-        let found: String? = SSKEnvironment.shared.databaseStorageRef.read { tx in
-            var found: String?
+        let found: (key: String, announcer: String)? = SSKEnvironment.shared.databaseStorageRef.read { tx in
+            var found: (key: String, announcer: String)?
             var scanned = 0
             try? InteractionFinder(threadUniqueId: thread.uniqueId)
                 .enumerateInteractionsForConversationView(rowIdFilter: .newest, tx: tx) { interaction in
                     scanned += 1
                     if
-                        let body = (interaction as? TSMessage)?.body,
+                        let message = interaction as? TSMessage,
+                        let body = message.body,
                         let key = OpenCsvAttachmentDetector.parseAddress(fromBody: body),
                         key != ownKey
                     {
-                        found = key
+                        // Say whose key this is: a pasted address is only
+                        // as trustworthy as the person who posted it.
+                        let announcer: String
+                        if let incoming = message as? TSIncomingMessage {
+                            announcer = SSKEnvironment.shared.contactManagerRef.displayName(
+                                for: incoming.authorAddress,
+                                tx: tx,
+                            ).resolvedValue()
+                        } else {
+                            announcer = OWSLocalizedString(
+                                "OPENCSV_SEND_ANNOUNCER_YOU",
+                                comment: "Refers to the local user as the source of a shared OpenCSV key.",
+                            )
+                        }
+                        found = (key, announcer)
                         return false
                     }
                     return scanned < 100
@@ -190,11 +205,12 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             return found
         }
         if let found {
-            recipientField.text = found
-            setStatus(OWSLocalizedString(
-                "OPENCSV_SEND_RECIPIENT_FROM_CHAT",
-                comment: "Status shown when the recipient key was prefilled from the chat.",
-            ))
+            recipientField.text = found.key
+            let format = OWSLocalizedString(
+                "OPENCSV_SEND_RECIPIENT_FROM_CHAT_FORMAT",
+                comment: "Status shown when the recipient key was prefilled. Embeds {{ who announced it }}.",
+            )
+            setStatus(String.nonPluralLocalizedStringWithFormat(format, found.announcer))
         }
     }
 
@@ -249,6 +265,16 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 comment: "Error shown when the amount exceeds the balance. Embeds {{ available amount }}.",
             )
             return String.nonPluralLocalizedStringWithFormat(format, "\(available)")
+        case OpenCsvPaymentsError.malformedRecipient:
+            return OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_BAD_RECIPIENT",
+                comment: "Error shown when the recipient key is not valid hex.",
+            )
+        case OpenCsvPaymentsError.assetNotSpecified:
+            return OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_MULTIPLE_ASSETS",
+                comment: "Error shown when the wallet holds several assets and none was chosen.",
+            )
         case OpenCsvPaymentsError.sendAlreadyInProgress:
             return OWSLocalizedString(
                 "OPENCSV_SEND_ERROR_IN_PROGRESS",

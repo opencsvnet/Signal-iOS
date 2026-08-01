@@ -6742,8 +6742,17 @@
 /* Confirmation that the wallet's receiving key was posted to the chat. */
 "OPENCSV_SEND_KEY_SHARED" = "Receiving key posted to the chat.";
 
-/* Status shown when the recipient key was prefilled from the chat. */
-"OPENCSV_SEND_RECIPIENT_FROM_CHAT" = "Recipient key found in this chat.";
+/* Refers to the local user as the source of a shared OpenCSV key. */
+"OPENCSV_SEND_ANNOUNCER_YOU" = "you";
+
+/* Error shown when the recipient key is not valid hex. */
+"OPENCSV_SEND_ERROR_BAD_RECIPIENT" = "That recipient key is not valid.";
+
+/* Error shown when the wallet holds several assets and none was chosen. */
+"OPENCSV_SEND_ERROR_MULTIPLE_ASSETS" = "This wallet holds several assets; choose one to send.";
+
+/* Status shown when the recipient key was prefilled. Embeds {{ who announced it }}. */
+"OPENCSV_SEND_RECIPIENT_FROM_CHAT_FORMAT" = "Using the key shared by %@.";
 
 /* Button that posts this wallet's receiving key into the chat. */
 "OPENCSV_SEND_SHARE_KEY_BUTTON" = "Share My Key in Chat";

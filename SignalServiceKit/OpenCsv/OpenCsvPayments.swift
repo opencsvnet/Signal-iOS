@@ -15,6 +15,12 @@ public enum OpenCsvPaymentsError: Error {
     case insufficientFunds(available: UInt64)
     /// Another send is mid-flight; its coins are not yet marked spent.
     case sendAlreadyInProgress
+    /// The wallet holds more than one asset and none was chosen.
+    case assetNotSpecified(available: [String])
+    /// The recipient key is not 32 bytes of hex.
+    case malformedRecipient
+    /// The attachment is empty or too large to be a consignment.
+    case consignmentSizeRejected(bytes: Int)
 }
 
 /// The OpenCSV payments service: owns the in-memory Rust wallet and runs the
@@ -31,6 +37,14 @@ public actor OpenCsvPayments {
 
     /// Confirmation depth required of a consignment's anchor (paper §4.7).
     public static let requiredConfirmations: UInt64 = 6
+
+    /// Largest consignment this wallet will hand to the verifier.
+    ///
+    /// Verification is serialized on this actor, so an attacker who can
+    /// send attachments could otherwise stall every payment in the app by
+    /// attaching a huge "consignment". Real ones are ~47–57 KB; a megabyte
+    /// is generous and still cheap to reject.
+    public static let maxConsignmentBytes = 1024 * 1024
 
     private var wallet: OpenCsvWallet?
     /// Set for the duration of a send. `sendPayment` releases the actor at
@@ -119,6 +133,9 @@ public actor OpenCsvPayments {
     /// Verify a consignment blob against the current anchor snapshot,
     /// crediting any of our coins it contains.
     public func verifyBlob(_ blob: Data) async throws -> OpenCsvVerdict {
+        guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
+            throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
+        }
         let wallet = try await ensureWallet()
         let snapshot = try await fetchAndCacheSnapshot()
         return try wallet.verify(
@@ -219,16 +236,33 @@ public actor OpenCsvPayments {
         toOwnerHex: String,
         amount: UInt64,
         threadUniqueId: String,
+        assetIdHex: String? = nil,
     ) async throws -> OpenCsvWalletStore.PendingDelivery {
         guard !isSending else {
             throw OpenCsvPaymentsError.sendAlreadyInProgress
+        }
+        // Reject a malformed key here rather than as an opaque Rust error
+        // string surfaced in the UI.
+        let recipient = toOwnerHex.lowercased()
+        guard recipient.count == 64, recipient.allSatisfy(\.isHexDigit) else {
+            throw OpenCsvPaymentsError.malformedRecipient
         }
         isSending = true
         defer { isSending = false }
         let wallet = try await ensureWallet()
 
         let unspent = try wallet.coins().filter(\.unspent)
-        guard let assetId = unspent.first?.assetId else {
+        guard !unspent.isEmpty else {
+            throw OpenCsvPaymentsError.insufficientFunds(available: 0)
+        }
+        // Which asset to spend is a decision, not an accident of ordering.
+        // With one asset it is unambiguous; with several the caller must
+        // say, rather than us silently spending whichever sorted first.
+        let assetIds = Set(unspent.map(\.assetId))
+        guard let assetId = assetIds.count == 1 ? assetIds.first : assetIdHex else {
+            throw OpenCsvPaymentsError.assetNotSpecified(available: assetIds.sorted())
+        }
+        guard assetIds.contains(assetId) else {
             throw OpenCsvPaymentsError.insufficientFunds(available: 0)
         }
         // The transfer circuit is fixed at 2 inputs: pick the two largest
@@ -251,7 +285,7 @@ public actor OpenCsvPayments {
         let amounts = total == amount ? [amount] : [amount, total - amount]
         let proved = try wallet.proveTransfer(
             coinIds: inputs.map(\.id),
-            toOwnerHex: toOwnerHex,
+            toOwnerHex: recipient,
             amounts: amounts,
         )
         // Real chains own the transaction context: reserve one, rebind the

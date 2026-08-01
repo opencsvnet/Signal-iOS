@@ -138,7 +138,12 @@ public final class OpenCsvWallet {
     /// Verify a received consignment blob against an anchor snapshot; on
     /// success the credited coins are stored in this wallet.
     public func verify(blob: Data, snapshotJson: String, requiredConfirmations: UInt64) throws -> OpenCsvVerdict {
-        try Self.take(blob.withUnsafeBytes { bytes in
+        // An empty Data yields a null baseAddress; the C ABI treats null as
+        // an error, but never rely on the caller's luck for that.
+        guard !blob.isEmpty else {
+            throw OpenCsvClientError.ffi("consignment is empty")
+        }
+        return try Self.take(blob.withUnsafeBytes { bytes in
             snapshotJson.withCString { snapshot in
                 opencsv_verify_consignment(
                     handle,
@@ -165,17 +170,6 @@ public final class OpenCsvWallet {
         })
     }
 
-    /// Prove an issuer mint (this wallet must hold the issuer key).
-    public func proveMint(assetIdHex: String, toOwnerHex: String, amounts: [UInt64]) throws -> OpenCsvProved {
-        let amountsJson = try Self.encodeJson(amounts)
-        return try Self.take(assetIdHex.withCString { asset in
-            toOwnerHex.withCString { owner in
-                amountsJson.withCString { amounts in
-                    opencsv_prove_mint(handle, asset, owner, amounts)
-                }
-            }
-        })
-    }
 
     /// Rebuild a pending transaction's anchor record under a context the
     /// anchoring service reserved, without re-proving. Throws if that
@@ -220,12 +214,6 @@ public final class OpenCsvWallet {
         return status.coins
     }
 
-    /// Create an issuer identity for a 3-letter currency code; persist
-    /// secrets afterwards.
-    public func initIssuer(currency: String) throws -> String {
-        let asset: AssetId = try Self.take(currency.withCString { opencsv_wallet_init_issuer(handle, $0) })
-        return asset.assetId
-    }
 
     /// Public supply of an asset at the snapshot tip (needs no wallet).
     public static func audit(assetIdHex: String, snapshotJson: String) throws -> UInt64 {

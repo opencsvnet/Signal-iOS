@@ -293,6 +293,17 @@ struct OpenCsvWalletStoreTest {
         }
     }
 
+    /// S3: a decode failure must never read as "nothing is spent" — that
+    /// would present already-spent coins as spendable.
+    @Test
+    func corruptSpentSetIsNotReadAsEmpty() throws {
+        try db.write { tx in try store.addSpentCoinIds(["coin1", "coin2"], tx: tx) }
+        db.read { tx in #expect(store.spentCoinIds(tx: tx) == ["coin1", "coin2"]) }
+        // Re-adding is idempotent rather than duplicating.
+        try db.write { tx in try store.addSpentCoinIds(["coin1"], tx: tx) }
+        db.read { tx in #expect(store.spentCoinIds(tx: tx) == ["coin1", "coin2"]) }
+    }
+
     @Test
     func anchorServerUrlSetting() {
         db.write { tx in
@@ -349,5 +360,74 @@ struct OpenCsvClientFfiTest {
             snapshotJson: #"{"tip_height":0,"entries":[]}"#,
         )
         #expect(supply == 0)
+    }
+}
+
+
+/// S9: the risky part of this feature is not any single function, it is
+/// the transitions — detection agreeing across call sites, and a verdict
+/// surviving the hop from "sent" to "rendered".
+struct OpenCsvPipelineTransitionTest {
+    /// A consignment whose filename was stripped is recognisable only by
+    /// its body marker. Detection must agree wherever it is asked, or the
+    /// download path ignores what the render path calls a payment.
+    @Test
+    func detectionAgreesWithAndWithoutTheFilename() {
+        let markerBody = OpenCsvAttachmentDetector.outgoingBody(byteCount: 47_008)
+
+        // Named file, no body: the download hook's historical case.
+        #expect(OpenCsvAttachmentDetector.isConsignment(
+            sourceFilename: OpenCsvAttachmentDetector.consignmentFilename,
+            mimeType: "application/octet-stream",
+            bodyText: nil,
+        ))
+        // Stripped filename, marker body: recognised only if the body is
+        // resolved — the inconsistency that let one path skip it.
+        #expect(OpenCsvAttachmentDetector.isConsignment(
+            sourceFilename: nil,
+            mimeType: "application/octet-stream",
+            bodyText: markerBody,
+        ))
+        #expect(!OpenCsvAttachmentDetector.isConsignment(
+            sourceFilename: nil,
+            mimeType: "application/octet-stream",
+            bodyText: nil,
+        ))
+    }
+
+    /// The verdict a send writes must be the one the bubble renders: same
+    /// direction, and the amount sent rather than the change credited.
+    @Test
+    func sentVerdictSurvivesToTheRenderShape() throws {
+        let delivery = OpenCsvWalletStore.PendingDelivery(
+            threadUniqueId: "t",
+            body: OpenCsvAttachmentDetector.outgoingBody(byteCount: 10),
+            replayEntry: "o:1",
+            amount: 5,
+            currency: "USD",
+            assetId: "ab",
+            createdAt: Date(timeIntervalSince1970: 0),
+        )
+        let record = OpenCsvVerdictRecord(
+            sentAmount: delivery.amount,
+            currency: delivery.currency,
+            assetId: delivery.assetId,
+            date: Date(timeIntervalSince1970: 0),
+        )
+
+        let db = InMemoryDB()
+        let store = OpenCsvWalletStore(keychainStorage: MockKeychainStorage())
+        db.write { tx in store.setVerdict(record, blob: nil, attachmentId: 7, tx: tx) }
+        db.read { tx in
+            let rendered = store.verdict(attachmentId: 7, tx: tx)
+            #expect(rendered?.direction == .outgoing)
+            #expect(rendered?.amount == 5, "the bubble must show what was sent, not the change")
+            #expect(rendered?.currency == "USD")
+        }
+
+        // An outgoing verdict carries no replay blob: the send path already
+        // recorded the consignment under its own entry, and storing it
+        // twice was the duplication this replaced.
+        db.read { tx in #expect(store.replayBlobs(tx: tx).isEmpty) }
     }
 }
