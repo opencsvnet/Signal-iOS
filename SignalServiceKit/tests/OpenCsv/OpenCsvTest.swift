@@ -304,6 +304,40 @@ struct OpenCsvWalletStoreTest {
         db.read { tx in #expect(store.spentCoinIds(tx: tx) == ["coin1", "coin2"]) }
     }
 
+    /// An interrupted send must be distinguishable: with no txid nothing
+    /// was published and the record is safe to drop; with one the coins are
+    /// spent and the export is the only way to rebuild the payment.
+    @Test
+    func inFlightSendsTrackWhetherAnythingWasBroadcast() throws {
+        var send = OpenCsvWalletStore.InFlightSend(
+            exportJson: #"{"version":1}"#,
+            threadUniqueId: "t",
+            amount: 5,
+            currency: "USD",
+            assetId: "ab",
+            createdAt: Date(timeIntervalSince1970: 0),
+        )
+        try db.write { tx in try store.upsertInFlightSend(send, tx: tx) }
+        db.read { tx in
+            #expect(store.inFlightSends(tx: tx).first?.txidHex == nil, "not broadcast yet")
+        }
+
+        send.txidHex = "beef"
+        send.height = 100
+        send.position = 2
+        try db.write { tx in try store.upsertInFlightSend(send, tx: tx) }
+        db.read { tx in
+            let stored = store.inFlightSends(tx: tx)
+            #expect(stored.count == 1, "updating must not duplicate the record")
+            #expect(stored.first?.txidHex == "beef")
+            #expect(stored.first?.height == 100)
+            #expect(stored.first?.exportJson == #"{"version":1}"#)
+        }
+
+        try db.write { tx in try store.removeInFlightSend(id: send.id, tx: tx) }
+        db.read { tx in #expect(store.inFlightSends(tx: tx).isEmpty) }
+    }
+
     @Test
     func anchorServerUrlSetting() {
         db.write { tx in

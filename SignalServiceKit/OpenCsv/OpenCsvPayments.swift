@@ -21,6 +21,9 @@ public enum OpenCsvPaymentsError: Error {
     case malformedRecipient
     /// The attachment is empty or too large to be a consignment.
     case consignmentSizeRejected(bytes: Int)
+    /// The proved transaction could not be made crash-recoverable, so it
+    /// was not anchored.
+    case couldNotPersistPendingSend(underlying: String)
 }
 
 /// The OpenCSV payments service: owns the in-memory Rust wallet and runs the
@@ -297,7 +300,61 @@ public actor OpenCsvPayments {
             recordHex = try wallet.rebind(pendingId: proved.pendingId, ctxHex: reserved)
             ctxHex = reserved
         }
-        let anchorRef = try await provider.publishAnchor(recordHex: recordHex, ctxHex: ctxHex)
+        // Everything below is irreversible or unrecoverable-from-memory, so
+        // persist the pending transaction first. The openings carry
+        // randomness that cannot be re-derived: without this, a crash
+        // between broadcasting the anchor and finalizing spends the coins
+        // on-chain and destroys the consignment the recipient needs.
+        let inFlightId = UUID().uuidString
+        do {
+            let exportJson = try wallet.exportPending(pendingId: proved.pendingId)
+            try await db.awaitableWrite { tx in
+                try self.store.upsertInFlightSend(
+                    OpenCsvWalletStore.InFlightSend(
+                        id: inFlightId,
+                        exportJson: exportJson,
+                        threadUniqueId: threadUniqueId,
+                        amount: amount,
+                        currency: inputs.first?.currency,
+                        assetId: assetId,
+                        createdAt: Date(),
+                    ),
+                    tx: tx,
+                )
+            }
+        } catch {
+            // Refuse to anchor what we could not learn to recover.
+            throw OpenCsvPaymentsError.couldNotPersistPendingSend(underlying: "\(error)")
+        }
+
+        let anchorRef = try await provider.publishAnchor(
+            recordHex: recordHex,
+            ctxHex: ctxHex,
+            onBroadcast: { txid in
+                // Spent from this moment, confirmed or not.
+                try? await self.db.awaitableWrite { tx in
+                    var broadcast = OpenCsvWalletStore.InFlightSend(
+                        id: inFlightId,
+                        exportJson: (try? wallet.exportPending(pendingId: proved.pendingId)) ?? "",
+                        threadUniqueId: threadUniqueId,
+                        amount: amount,
+                        currency: inputs.first?.currency,
+                        assetId: assetId,
+                        createdAt: Date(),
+                    )
+                    broadcast.txidHex = txid
+                    try self.store.upsertInFlightSend(broadcast, tx: tx)
+                }
+            },
+        )
+        // Record where it landed, so a crash before finalize can resume.
+        try? await db.awaitableWrite { tx in
+            guard var send = self.store.inFlightSends(tx: tx).first(where: { $0.id == inFlightId }) else { return }
+            send.txidHex = anchorRef.txid
+            send.height = anchorRef.height
+            send.position = anchorRef.position
+            try self.store.upsertInFlightSend(send, tx: tx)
+        }
         let (blob, spends) = try wallet.finalize(pendingId: proved.pendingId, anchorRef: anchorRef)
 
         // Carry our receiving key so the recipient's wallet can prefill
@@ -328,6 +385,9 @@ public actor OpenCsvPayments {
                 createdAt: createdAt,
             )
             try self.store.addPendingDelivery(recorded, tx: tx)
+            // The consignment now exists and is durably queued, so the
+            // recovery record has done its job.
+            try self.store.removeInFlightSend(id: inFlightId, tx: tx)
             return recorded
         }
 
@@ -341,6 +401,53 @@ public actor OpenCsvPayments {
             )
         }
         return recorded
+    }
+
+    /// Finish sends interrupted between anchoring and finalizing.
+    ///
+    /// A record with no txid was never broadcast — nothing was spent, so it
+    /// is simply dropped. One with a txid may have anchored, so the export
+    /// is re-imported and finalized against the confirmed anchor, turning a
+    /// lost payment back into a deliverable one.
+    public func recoverInterruptedSends() async {
+        let sends = db.read { self.store.inFlightSends(tx: $0) }
+        guard !sends.isEmpty else { return }
+        guard let wallet = try? await ensureWallet() else { return }
+
+        for send in sends {
+            guard let txidHex = send.txidHex, let height = send.height, let position = send.position else {
+                Logger.info("dropping OpenCSV send \(send.id): never broadcast, nothing was spent")
+                try? await db.awaitableWrite { tx in try self.store.removeInFlightSend(id: send.id, tx: tx) }
+                continue
+            }
+            do {
+                let pendingId = try wallet.importPending(json: send.exportJson)
+                let (blob, spends) = try wallet.finalize(
+                    pendingId: pendingId,
+                    anchorRef: OpenCsvAnchorRef(txid: txidHex, height: height, position: position),
+                )
+                let body = OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count)
+                try await db.awaitableWrite { tx in
+                    let entry = try self.store.recordOutgoing(blob: blob, spends: spends, tx: tx)
+                    try self.store.addPendingDelivery(
+                        OpenCsvWalletStore.PendingDelivery(
+                            threadUniqueId: send.threadUniqueId,
+                            body: body,
+                            replayEntry: entry,
+                            amount: send.amount,
+                            currency: send.currency,
+                            assetId: send.assetId,
+                            createdAt: Date(),
+                        ),
+                        tx: tx,
+                    )
+                    try self.store.removeInFlightSend(id: send.id, tx: tx)
+                }
+                Logger.info("recovered interrupted OpenCSV send \(send.id) from its export")
+            } catch {
+                Logger.warn("could not recover OpenCSV send \(send.id) yet: \(error)")
+            }
+        }
     }
 
     /// Consignments that are anchored but whose message has not yet reached

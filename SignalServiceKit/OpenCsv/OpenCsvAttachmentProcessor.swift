@@ -131,6 +131,10 @@ public enum OpenCsvAttachmentProcessor {
 
     private static func retryPending() {
         Task {
+            // Finish anything interrupted between anchoring and finalizing
+            // before sweeping verifications: recovery can produce new
+            // consignments to deliver.
+            await OpenCsvPayments.shared.recoverInterruptedSends()
             await OpenCsvPayments.shared.retryAllPendingVerifications()
         }
     }

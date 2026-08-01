@@ -82,6 +82,7 @@ public struct OpenCsvWalletStore {
 
     private static let anchorServerUrlKey = "anchorServerUrl"
     private static let pendingDeliveriesKey = "pendingDeliveries"
+    private static let inFlightSendsKey = "inFlightSends"
     private static let replayOrderKey = "replayOrder"
     private static let spentCoinIdsKey = "spentCoinIds"
     private static let lastSnapshotKey = "lastSnapshot"
@@ -328,6 +329,80 @@ public struct OpenCsvWalletStore {
             owsFailDebug("could not decode the pending OpenCSV delivery index: \(error)")
             return []
         }
+    }
+
+    // MARK: - In-flight sends
+
+    /// A transfer that has been proved but whose anchor has not yet been
+    /// finalized into a consignment.
+    ///
+    /// Proving produces coin openings with fresh randomness that cannot be
+    /// re-derived, and they live only in the FFI wallet's memory. Without
+    /// this record, a crash between broadcasting the anchor and finalizing
+    /// loses the payment outright: the coins are spent on-chain and nothing
+    /// can rebuild the consignment the recipient needs.
+    ///
+    /// `exportJson` is sensitive — it reveals coin values and owners — and
+    /// is only ever written to the encrypted database.
+    public struct InFlightSend: Codable, Equatable {
+        public let id: String
+        public let exportJson: String
+        /// Set once the anchor transaction has been broadcast. Nil means
+        /// nothing was published, so the record can simply be dropped.
+        public var txidHex: String?
+        public var height: UInt64?
+        public var position: UInt32?
+        public let threadUniqueId: String
+        public let amount: UInt64
+        public let currency: String?
+        public let assetId: String?
+        public let createdAt: Date
+
+        public init(
+            id: String = UUID().uuidString,
+            exportJson: String,
+            txidHex: String? = nil,
+            height: UInt64? = nil,
+            position: UInt32? = nil,
+            threadUniqueId: String,
+            amount: UInt64,
+            currency: String?,
+            assetId: String?,
+            createdAt: Date,
+        ) {
+            self.id = id
+            self.exportJson = exportJson
+            self.txidHex = txidHex
+            self.height = height
+            self.position = position
+            self.threadUniqueId = threadUniqueId
+            self.amount = amount
+            self.currency = currency
+            self.assetId = assetId
+            self.createdAt = createdAt
+        }
+    }
+
+    public func inFlightSends(tx: DBReadTransaction) -> [InFlightSend] {
+        do {
+            return try keyValueStore.getCodableValue(forKey: Self.inFlightSendsKey, transaction: tx) ?? []
+        } catch {
+            owsFailDebug("could not decode in-flight OpenCSV sends: \(error)")
+            return []
+        }
+    }
+
+    public func upsertInFlightSend(_ send: InFlightSend, tx: DBWriteTransaction) throws {
+        var sends = inFlightSends(tx: tx)
+        sends.removeAll { $0.id == send.id }
+        sends.append(send)
+        try keyValueStore.setCodable(sends, key: Self.inFlightSendsKey, transaction: tx)
+    }
+
+    public func removeInFlightSend(id: String, tx: DBWriteTransaction) throws {
+        var sends = inFlightSends(tx: tx)
+        sends.removeAll { $0.id == id }
+        try keyValueStore.setCodable(sends, key: Self.inFlightSendsKey, transaction: tx)
     }
 
     // MARK: - Spent coins

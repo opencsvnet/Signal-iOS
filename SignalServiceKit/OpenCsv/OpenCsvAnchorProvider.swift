@@ -24,7 +24,16 @@ public protocol OpenCsvAnchorProvider {
 
     /// Publish a 64-byte anchor record (hex) under `ctxHex`, returning
     /// where it anchored (after confirmation, on real chains).
-    func publishAnchor(recordHex: String, ctxHex: String) async throws -> OpenCsvAnchorRef
+    ///
+    /// `onBroadcast` fires as soon as a txid exists, before waiting for
+    /// confirmation. Callers must persist it there: after broadcast the
+    /// coins are spent whether or not this process survives the wait, so a
+    /// crash in between must not look like "nothing was published".
+    func publishAnchor(
+        recordHex: String,
+        ctxHex: String,
+        onBroadcast: (String) async -> Void,
+    ) async throws -> OpenCsvAnchorRef
 }
 
 /// Errors from the remote anchor provider.
@@ -89,7 +98,11 @@ public final class RemoteOpenCsvAnchorProvider: OpenCsvAnchorProvider {
         return try JSONDecoder().decode(ContextReply.self, from: data).ctx
     }
 
-    public func publishAnchor(recordHex: String, ctxHex: String) async throws -> OpenCsvAnchorRef {
+    public func publishAnchor(
+        recordHex: String,
+        ctxHex: String,
+        onBroadcast: (String) async -> Void = { _ in },
+    ) async throws -> OpenCsvAnchorRef {
         var request = URLRequest(url: baseURL.appendingPathComponent("anchor"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -97,6 +110,9 @@ public final class RemoteOpenCsvAnchorProvider: OpenCsvAnchorProvider {
         let (data, response) = try await urlSession.data(for: request)
         try Self.checkStatus(response: response, data: data)
         let reply = try JSONDecoder().decode(PublishReply.self, from: data)
+        // The transaction exists from here on; tell the caller before the
+        // (possibly very long) confirmation wait.
+        await onBroadcast(reply.txid)
         if let height = reply.height, let position = reply.position {
             return OpenCsvAnchorRef(txid: reply.txid, height: height, position: position)
         }
@@ -153,7 +169,11 @@ public final class DemoOpenCsvAnchorProvider: OpenCsvAnchorProvider {
         nil
     }
 
-    public func publishAnchor(recordHex: String, ctxHex: String) async throws -> OpenCsvAnchorRef {
+    public func publishAnchor(
+        recordHex: String,
+        ctxHex: String,
+        onBroadcast: (String) async -> Void = { _ in },
+    ) async throws -> OpenCsvAnchorRef {
         throw OpenCsvAnchorProviderError.notConfigured
     }
 }

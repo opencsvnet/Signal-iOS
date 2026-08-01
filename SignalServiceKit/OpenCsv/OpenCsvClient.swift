@@ -171,6 +171,27 @@ public final class OpenCsvWallet {
     }
 
 
+    /// Export a proved-but-unanchored transaction so it survives process
+    /// death.
+    ///
+    /// The export contains the coin openings, including randomness that
+    /// cannot be re-derived — it is the only thing that can rebuild this
+    /// payment after a crash, and it reveals coin values and owners, so it
+    /// belongs only in the encrypted database.
+    public func exportPending(pendingId: UInt64) throws -> String {
+        struct Exported: Codable { let pendingJson: String }
+        let exported: Exported = try Self.take(opencsv_pending_export(handle, pendingId))
+        return exported.pendingJson
+    }
+
+    /// Re-import a pending transaction exported in an earlier process
+    /// lifetime. Returns a fresh pending id; the original is not preserved.
+    public func importPending(json: String) throws -> UInt64 {
+        struct Imported: Codable { let pendingId: UInt64 }
+        let imported: Imported = try Self.take(json.withCString { opencsv_pending_import(handle, $0) })
+        return imported.pendingId
+    }
+
     /// Rebuild a pending transaction's anchor record under a context the
     /// anchoring service reserved, without re-proving. Throws if that
     /// context would make the record misparse — reserve another and retry.
