@@ -420,7 +420,23 @@ public actor OpenCsvPayments {
                 store.lastSnapshotJson(tx: tx),
             )
         }
-        if !replay.isEmpty, let snapshot = cachedSnapshot {
+
+        // Rebuilding coins needs a chain view. Falling back to "no
+        // snapshot, no replay" would present an empty wallet as if it were
+        // genuinely empty, so try the network before giving up and say so
+        // loudly if there is still nothing to replay against.
+        var snapshot = cachedSnapshot
+        if snapshot == nil, !replay.isEmpty {
+            snapshot = try? await fetchAndCacheSnapshot()
+            if snapshot == nil {
+                Logger.error(
+                    "no anchor snapshot available: \(replay.count) stored consignment(s) cannot be "
+                    + "replayed, so balances will read as empty until one is reachable",
+                )
+            }
+        }
+
+        if let snapshot {
             for (entry, blob) in replay {
                 do {
                     let verdict = try wallet.verify(
@@ -435,8 +451,25 @@ public actor OpenCsvPayments {
                     Logger.warn("replay of \(entry) failed: \(error)")
                 }
             }
-            try? wallet.markSpent(coinIds: spent)
         }
+
+        // Re-apply spend state unconditionally, and one id at a time: the
+        // FFI call is all-or-nothing, so a single id the wallet does not
+        // know (its consignment failed to replay) would otherwise leave
+        // *every* spent coin looking spendable — a double-spend waiting to
+        // happen.
+        var unmarked: [String] = []
+        for coinId in spent {
+            do {
+                try wallet.markSpent(coinIds: [coinId])
+            } catch {
+                unmarked.append(coinId)
+            }
+        }
+        if !unmarked.isEmpty {
+            Logger.warn("could not mark \(unmarked.count) spent coin(s); they are not in the wallet")
+        }
+
         self.wallet = wallet
         return wallet
     }

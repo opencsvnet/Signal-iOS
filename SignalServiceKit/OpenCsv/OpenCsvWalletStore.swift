@@ -135,7 +135,12 @@ public struct OpenCsvWalletStore {
     // MARK: - Verdicts and blobs
 
     public func verdict(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> OpenCsvVerdictRecord? {
-        try? keyValueStore.getCodableValue(forKey: Self.verdictKey(attachmentId), transaction: tx)
+        do {
+            return try keyValueStore.getCodableValue(forKey: Self.verdictKey(attachmentId), transaction: tx)
+        } catch {
+            owsFailDebug("could not decode the OpenCSV verdict for attachment \(attachmentId): \(error)")
+            return nil
+        }
     }
 
     /// Record a verdict for a received attachment (and, when verified, its
@@ -146,7 +151,11 @@ public struct OpenCsvWalletStore {
         attachmentId: Attachment.IDType,
         tx: DBWriteTransaction,
     ) {
-        try? keyValueStore.setCodable(record, key: Self.verdictKey(attachmentId), transaction: tx)
+        do {
+            try keyValueStore.setCodable(record, key: Self.verdictKey(attachmentId), transaction: tx)
+        } catch {
+            owsFailDebug("could not persist an OpenCSV verdict: \(error)")
+        }
         guard record.isVerified, let blob else { return }
         appendReplayEntry("a:\(attachmentId)", blob: blob, tx: tx)
     }
@@ -177,8 +186,15 @@ public struct OpenCsvWalletStore {
         }
     }
 
+    /// The replay order. A decode failure here would silently orphan every
+    /// stored consignment, so it is reported rather than read as empty.
     private func replayOrder(tx: DBReadTransaction) -> [String] {
-        (try? keyValueStore.getCodableValue(forKey: Self.replayOrderKey, transaction: tx)) ?? []
+        do {
+            return try keyValueStore.getCodableValue(forKey: Self.replayOrderKey, transaction: tx) ?? []
+        } catch {
+            owsFailDebug("could not decode the OpenCSV replay order: \(error)")
+            return []
+        }
     }
 
     private func appendReplayEntry(_ entry: String, blob: Data, tx: DBWriteTransaction) {
@@ -186,7 +202,13 @@ public struct OpenCsvWalletStore {
         var order = replayOrder(tx: tx)
         if !order.contains(entry) {
             order.append(entry)
-            try? keyValueStore.setCodable(order, key: Self.replayOrderKey, transaction: tx)
+            do {
+                try keyValueStore.setCodable(order, key: Self.replayOrderKey, transaction: tx)
+            } catch {
+                // The blob is stored but unreferenced: it will not be
+                // replayed, so the coins it credits go missing at restart.
+                owsFailDebug("could not record OpenCSV replay entry \(entry): \(error)")
+            }
         }
     }
 
@@ -310,8 +332,15 @@ public struct OpenCsvWalletStore {
 
     // MARK: - Spent coins
 
+    /// Coins already spent. A decode failure must not read as "nothing is
+    /// spent" — that would present spent coins as spendable.
     public func spentCoinIds(tx: DBReadTransaction) -> [String] {
-        (try? keyValueStore.getCodableValue(forKey: Self.spentCoinIdsKey, transaction: tx)) ?? []
+        do {
+            return try keyValueStore.getCodableValue(forKey: Self.spentCoinIdsKey, transaction: tx) ?? []
+        } catch {
+            owsFailDebug("could not decode the OpenCSV spent-coin set: \(error)")
+            return []
+        }
     }
 
     /// Record coins as spent.
