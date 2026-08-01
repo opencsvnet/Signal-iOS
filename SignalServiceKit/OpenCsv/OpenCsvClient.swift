@@ -81,6 +81,8 @@ public struct OpenCsvAnchorRef: Codable, Equatable {
 /// use). Not thread-safe: callers serialize access (see `OpenCsvPayments`).
 public final class OpenCsvWallet {
     private let handle: UInt64
+    /// For chain-view calls that take the wallet handle directly.
+    var rawHandle: UInt64 { handle }
     public let owners: [String]
 
     private struct Opened: Codable {

@@ -338,6 +338,38 @@ struct OpenCsvWalletStoreTest {
         db.read { tx in #expect(store.inFlightSends(tx: tx).isEmpty) }
     }
 
+    /// The v1 single-server setting must survive as an indexer entry —
+    /// but one indexer is not a cross-check, and the code says so.
+    @Test
+    func indexerListMigratesFromTheSingleAnchorServer() throws {
+        db.read { tx in #expect(store.indexerUrls(tx: tx).isEmpty) }
+
+        db.write { tx in store.setAnchorServerUrl("http://one.example:8787", tx: tx) }
+        db.read { tx in
+            #expect(store.indexerUrls(tx: tx) == ["http://one.example:8787"], "v1 config must not be lost")
+        }
+
+        // An explicit list wins over the migrated single entry.
+        try db.write { tx in
+            try store.setIndexerUrls(["http://a.example", "http://b.example", "http://c.example"], tx: tx)
+        }
+        db.read { tx in #expect(store.indexerUrls(tx: tx).count == 3) }
+
+        // Empties are not indexers.
+        try db.write { tx in try store.setIndexerUrls(["http://a.example", ""], tx: tx) }
+        db.read { tx in #expect(store.indexerUrls(tx: tx) == ["http://a.example"]) }
+    }
+
+    @Test
+    func chainViewDefaultsAreExplicit() throws {
+        db.read { tx in
+            #expect(store.network(tx: tx) == "signet", "a prototype must not default to mainnet")
+            #expect(store.spvPeers(tx: tx).isEmpty)
+        }
+        try db.write { tx in try store.setSpvPeers(["node.example:38333"], tx: tx) }
+        db.read { tx in #expect(store.spvPeers(tx: tx) == ["node.example:38333"]) }
+    }
+
     @Test
     func anchorServerUrlSetting() {
         db.write { tx in

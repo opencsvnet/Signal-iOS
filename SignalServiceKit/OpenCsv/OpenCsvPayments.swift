@@ -24,6 +24,10 @@ public enum OpenCsvPaymentsError: Error {
     /// The proved transaction could not be made crash-recoverable, so it
     /// was not anchored.
     case couldNotPersistPendingSend(underlying: String)
+    /// Configured indexers reported different chain tips. At least one is
+    /// wrong or lying and there is no way to tell which, so nothing they
+    /// say can be trusted for this decision.
+    case indexersDisagree(tips: [UInt64])
 }
 
 /// The OpenCSV payments service: owns the in-memory Rust wallet and runs the
@@ -121,7 +125,7 @@ public actor OpenCsvPayments {
         }
 
         do {
-            let verdict = try await verifyBlob(blob)
+            let verdict = try await verifyBlobWithConfiguredChainView(blob)
             let record = OpenCsvVerdictRecord(verdict: verdict, date: Date())
             await db.awaitableWrite { tx in
                 self.store.setVerdict(record, blob: blob, attachmentId: attachmentId, tx: tx)
@@ -131,6 +135,61 @@ public actor OpenCsvPayments {
         } catch {
             Logger.warn("consignment \(attachmentId) not verifiable yet: \(error)")
         }
+    }
+
+    /// Decide whether a consignment should be believed, using the
+    /// strongest chain view configured, then credit it.
+    ///
+    /// The two halves are deliberately separate. Exclusion — has any of
+    /// these nullifiers appeared earlier? — is answered by asking every
+    /// configured indexer and refusing on any single earlier sighting, so
+    /// hiding a double-spend takes all of them. Crediting is local
+    /// bookkeeping and stays on one path.
+    ///
+    /// With no indexers configured this falls back to the single-snapshot
+    /// behaviour, which trusts one server: correct for a demo, not a
+    /// security posture, and logged as such.
+    public func verifyBlobWithConfiguredChainView(_ blob: Data) async throws -> OpenCsvVerdict {
+        guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
+            throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
+        }
+        let wallet = try await ensureWallet()
+        let indexers = db.read { self.store.indexerUrls(tx: $0) }
+
+        guard indexers.count >= 2 else {
+            if indexers.count == 1 {
+                Logger.warn(
+                    "OpenCSV exclusion rests on a single indexer: a dishonest one can hide a "
+                    + "double-spend. Configure at least three independent indexers.",
+                )
+            }
+            return try await verifyBlob(blob)
+        }
+
+        let crossChecked = try OpenCsvChainView.crossCheck(
+            wallet: wallet,
+            backends: indexers.map { .http(url: $0) },
+            consignment: blob,
+            requiredConfirmations: Self.requiredConfirmations,
+        )
+        if crossChecked.isTipDisagreement {
+            // One of these indexers is wrong or lying and we cannot tell
+            // which, so no answer here is trustworthy.
+            throw OpenCsvPaymentsError.indexersDisagree(tips: crossChecked.tips ?? [])
+        }
+        guard crossChecked.isVerified else {
+            return OpenCsvVerdict(
+                status: "rejected",
+                reason: crossChecked.reason ?? crossChecked.error ?? "cross-check rejected",
+                credits: nil,
+                coins: nil,
+                anchor: nil,
+            )
+        }
+        // Believed: now credit it through the wallet's single crediting
+        // path, against a snapshot from one of the indexers we just agreed
+        // with.
+        return try await verifyBlob(blob)
     }
 
     /// Verify a consignment blob against the current anchor snapshot,

@@ -83,6 +83,9 @@ public struct OpenCsvWalletStore {
     private static let anchorServerUrlKey = "anchorServerUrl"
     private static let pendingDeliveriesKey = "pendingDeliveries"
     private static let inFlightSendsKey = "inFlightSends"
+    private static let indexerUrlsKey = "indexerUrls"
+    private static let spvPeersKey = "spvPeers"
+    private static let networkKey = "network"
     private static let replayOrderKey = "replayOrder"
     private static let spentCoinIdsKey = "spentCoinIds"
     private static let lastSnapshotKey = "lastSnapshot"
@@ -121,6 +124,51 @@ public struct OpenCsvWalletStore {
 
     public func setAnchorServerUrl(_ urlString: String?, tx: DBWriteTransaction) {
         keyValueStore.setString(urlString, key: Self.anchorServerUrlKey, transaction: tx)
+    }
+
+    // MARK: - Chain view settings (Chain Views v2)
+
+    /// Indexers asked for the exclusion check.
+    ///
+    /// Several independent ones is the whole point: one can hide a
+    /// double-spend, a quorum cannot unless all are compromised. The old
+    /// single-anchor-server setting migrates in as one entry — honest, but
+    /// note that one indexer is not a cross-check.
+    public func indexerUrls(tx: DBReadTransaction) -> [String] {
+        do {
+            if let urls: [String] = try keyValueStore.getCodableValue(
+                forKey: Self.indexerUrlsKey,
+                transaction: tx,
+            ) {
+                return urls
+            }
+        } catch {
+            owsFailDebug("could not decode the OpenCSV indexer list: \(error)")
+        }
+        // Migration: a wallet configured before v2 has one anchor server.
+        return anchorServerUrl(tx: tx).map { [$0.absoluteString] } ?? []
+    }
+
+    public func setIndexerUrls(_ urls: [String], tx: DBWriteTransaction) throws {
+        try keyValueStore.setCodable(urls.filter { !$0.isEmpty }, key: Self.indexerUrlsKey, transaction: tx)
+    }
+
+    /// Bitcoin P2P peers for trustless SPV point verification. Empty means
+    /// point verification is unavailable and only indexer answers remain.
+    public func spvPeers(tx: DBReadTransaction) -> [String] {
+        (try? keyValueStore.getCodableValue(forKey: Self.spvPeersKey, transaction: tx)) ?? []
+    }
+
+    public func setSpvPeers(_ peers: [String], tx: DBWriteTransaction) throws {
+        try keyValueStore.setCodable(peers.filter { !$0.isEmpty }, key: Self.spvPeersKey, transaction: tx)
+    }
+
+    public func network(tx: DBReadTransaction) -> String {
+        keyValueStore.getString(Self.networkKey, transaction: tx) ?? "signet"
+    }
+
+    public func setNetwork(_ network: String, tx: DBWriteTransaction) {
+        keyValueStore.setString(network, key: Self.networkKey, transaction: tx)
     }
 
     // MARK: - Snapshot cache (for offline startup replay)

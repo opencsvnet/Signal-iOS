@@ -1970,6 +1970,7 @@
 		C1ED5CA12A72E3D5009AD3FC /* PreKeyTaskManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1ED5CA02A72E3D5009AD3FC /* PreKeyTaskManager.swift */; };
 		C1F09B9F2BB307E100F9E7F5 /* TransformingInputStreamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1F09B9E2BB307E100F9E7F5 /* TransformingInputStreamTests.swift */; };
 		C1F09BA12BB32E5900F9E7F5 /* RegistrationChooseRestoreMethodViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1F09BA02BB32E5900F9E7F5 /* RegistrationChooseRestoreMethodViewController.swift */; };
+		C1FA18BB04C6B094D07D5C88 /* OpenCsvChainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2120878EF9D8A210D4D358FD /* OpenCsvChainView.swift */; };
 		C1FB9B732B16495D00D51A3B /* DonationSubscriptionLevel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1FB9B722B16495D00D51A3B /* DonationSubscriptionLevel.swift */; };
 		C1FB9B752B16498C00D51A3B /* PendingIDEALDonationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1FB9B742B16498C00D51A3B /* PendingIDEALDonationStore.swift */; };
 		C1FE1F612C80CDC30031860B /* AttachmentBackupThumbnail.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1FE1F602C80CDC30031860B /* AttachmentBackupThumbnail.swift */; };
@@ -4412,6 +4413,7 @@
 		17E6048F28A17BD200127680 /* ZkGroupIntegrationTest.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ZkGroupIntegrationTest.swift; sourceTree = "<group>"; };
 		17EC850B29133CDB00319C82 /* CancelledGroupRing.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = CancelledGroupRing.swift; sourceTree = "<group>"; };
 		1FE9B6250EFFFF6A2E29ECAC /* OpenCsvAttachmentProcessor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenCsvAttachmentProcessor.swift; sourceTree = "<group>"; };
+		2120878EF9D8A210D4D358FD /* OpenCsvChainView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenCsvChainView.swift; sourceTree = "<group>"; };
 		299F6904BB7E4C0E2463A169 /* Pods-SignalNSE.app store release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SignalNSE.app store release.xcconfig"; path = "Target Support Files/Pods-SignalNSE/Pods-SignalNSE.app store release.xcconfig"; sourceTree = "<group>"; };
 		2B0685730953D09782B1F911 /* Pods-SignalShareExtension.profiling.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SignalShareExtension.profiling.xcconfig"; path = "Target Support Files/Pods-SignalShareExtension/Pods-SignalShareExtension.profiling.xcconfig"; sourceTree = "<group>"; };
 		2C1CB05FE7FDA3C1F0138D7F /* Pods-SignalServiceKitTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SignalServiceKitTests.debug.xcconfig"; path = "Target Support Files/Pods-SignalServiceKitTests/Pods-SignalServiceKitTests.debug.xcconfig"; sourceTree = "<group>"; };
@@ -11808,6 +11810,7 @@
 				A6EC518B1AAC22182814F6DE /* OpenCsvWalletStore.swift */,
 				1FE9B6250EFFFF6A2E29ECAC /* OpenCsvAttachmentProcessor.swift */,
 				DA8CF92D04623AA37C4EC6FE /* OpenCsvPayments.swift */,
+				2120878EF9D8A210D4D358FD /* OpenCsvChainView.swift */,
 			);
 			name = OpenCsv;
 			path = OpenCsv;
@@ -20389,6 +20392,7 @@
 				60DA76194C3EB21A72731438 /* OpenCsvWalletStore.swift in Sources */,
 				BDA22D07E3BFA1109B2852E5 /* OpenCsvAttachmentProcessor.swift in Sources */,
 				8CB2313F0D9BE56F06BF826C /* OpenCsvPayments.swift in Sources */,
+				C1FA18BB04C6B094D07D5C88 /* OpenCsvChainView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
