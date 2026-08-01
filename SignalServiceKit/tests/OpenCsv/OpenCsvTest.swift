@@ -54,6 +54,23 @@ struct OpenCsvAttachmentDetectorTest {
         #expect(body.hasPrefix(OpenCsvAttachmentDetector.bodyMarkerPrefix))
         #expect(body.contains("123"))
     }
+
+    @Test
+    func addressAnnouncementRoundTrip() {
+        let key = String(repeating: "ab", count: 32)
+        let announcement = OpenCsvAttachmentDetector.addressAnnouncement(owner: key)
+        #expect(OpenCsvAttachmentDetector.parseAddress(fromBody: announcement) == key)
+        // As a second line of a consignment body (the payment send path).
+        let body = OpenCsvAttachmentDetector.outgoingBody(byteCount: 9) + "\n" + announcement
+        #expect(OpenCsvAttachmentDetector.parseAddress(fromBody: body) == key)
+        // Uppercase hex normalizes; junk is rejected.
+        #expect(OpenCsvAttachmentDetector.parseAddress(
+            fromBody: OpenCsvAttachmentDetector.addressAnnouncement(owner: key.uppercased()),
+        ) == key)
+        #expect(OpenCsvAttachmentDetector.parseAddress(fromBody: "OpenCSV address: zz") == nil)
+        #expect(OpenCsvAttachmentDetector.parseAddress(fromBody: "hello") == nil)
+        #expect(OpenCsvAttachmentDetector.parseAddress(fromBody: nil) == nil)
+    }
 }
 
 struct OpenCsvVerdictParsingTest {

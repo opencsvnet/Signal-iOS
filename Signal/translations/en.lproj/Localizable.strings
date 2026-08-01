@@ -6718,6 +6718,15 @@
 /* Confirmation that the wallet's receiving key was copied. */
 "OPENCSV_SEND_KEY_COPIED" = "Receiving key copied.";
 
+/* Confirmation that the wallet's receiving key was posted to the chat. */
+"OPENCSV_SEND_KEY_SHARED" = "Receiving key posted to the chat.";
+
+/* Status shown when the recipient key was prefilled from the chat. */
+"OPENCSV_SEND_RECIPIENT_FROM_CHAT" = "Recipient key found in this chat.";
+
+/* Button that posts this wallet's receiving key into the chat. */
+"OPENCSV_SEND_SHARE_KEY_BUTTON" = "Share My Key in Chat";
+
 /* Shown in the OpenCSV send sheet when the wallet is empty. */
 "OPENCSV_SEND_NO_BALANCE" = "No balance";
 

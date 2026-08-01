@@ -36,6 +36,30 @@ public enum OpenCsvAttachmentDetector {
     public static func outgoingBody(byteCount: Int) -> String {
         "\(bodyMarkerPrefix) (\(byteCount) bytes)"
     }
+
+    /// Marker line announcing a wallet's receiving key inside a message
+    /// body, so wallets can prefill recipient keys from the chat itself.
+    public static let addressMarkerPrefix = "OpenCSV address: "
+
+    /// The announcement line for `owner` (64 hex chars).
+    public static func addressAnnouncement(owner: String) -> String {
+        "\(addressMarkerPrefix)\(owner)"
+    }
+
+    /// Extract an announced owner key from a message body, if any line
+    /// carries the marker followed by 64 hex characters.
+    public static func parseAddress(fromBody body: String?) -> String? {
+        guard let body else { return nil }
+        for line in body.components(separatedBy: "\n") {
+            guard line.hasPrefix(addressMarkerPrefix) else { continue }
+            let key = String(line.dropFirst(addressMarkerPrefix.count)).ows_stripped().lowercased()
+            let isHex = key.count == 64 && key.allSatisfy(\.isHexDigit)
+            if isHex {
+                return key
+            }
+        }
+        return nil
+    }
 }
 
 /// The attachment-download seam: called when an attachment download

@@ -166,7 +166,13 @@ public actor OpenCsvPayments {
         await db.awaitableWrite { tx in
             self.store.recordOutgoing(blob: blob, spends: spends, tx: tx)
         }
-        return (blob, OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count))
+        // Carry our receiving key so the recipient's wallet can prefill
+        // the reply-to address from the chat itself.
+        var body = OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count)
+        if let owner = wallet.owners.first {
+            body += "\n" + OpenCsvAttachmentDetector.addressAnnouncement(owner: owner)
+        }
+        return (blob, body)
     }
 
     // MARK: - Settings / status

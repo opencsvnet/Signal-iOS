@@ -24,6 +24,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private let recipientField = UITextField()
     private let amountField = UITextField()
     private let sendButton = UIButton(type: .system)
+    private let shareKeyButton = UIButton(type: .system)
     private let statusLabel = UILabel()
 
     init(thread: TSThread) {
@@ -93,6 +94,16 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         sendButton.titleLabel?.font = .dynamicTypeHeadline
         sendButton.addTarget(self, action: #selector(didTapSend), for: .touchUpInside)
 
+        shareKeyButton.setTitle(
+            OWSLocalizedString(
+                "OPENCSV_SEND_SHARE_KEY_BUTTON",
+                comment: "Button that posts this wallet's receiving key into the chat.",
+            ),
+            for: .normal,
+        )
+        shareKeyButton.titleLabel?.font = .dynamicTypeBody
+        shareKeyButton.addTarget(self, action: #selector(didTapShareKey), for: .touchUpInside)
+
         statusLabel.font = .dynamicTypeFootnote
         statusLabel.textColor = Theme.secondaryTextAndIconColor
         statusLabel.numberOfLines = 0
@@ -104,6 +115,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             recipientField,
             amountField,
             sendButton,
+            shareKeyButton,
             statusLabel,
         ])
         stack.axis = .vertical
@@ -138,6 +150,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                     : balances
                 self.ownerLabel.text = summary.owner
                 self.anchorServerField.text = summary.anchorServerUrl?.absoluteString
+                self.prefillRecipient(ownKey: summary.owner)
                 self.setStatus("")
             } catch {
                 self.setStatus("\(error)")
@@ -147,6 +160,55 @@ class OpenCsvSendPaymentSheet: OWSViewController {
 
     private func setStatus(_ text: String) {
         statusLabel.text = text
+    }
+
+    /// Prefill the recipient from the newest address announced in this
+    /// chat (payments carry the sender's key; "Share my key" posts it).
+    private func prefillRecipient(ownKey: String) {
+        guard recipientField.text?.strippedOrNil == nil else { return }
+        let thread = self.thread
+        let found: String? = SSKEnvironment.shared.databaseStorageRef.read { tx in
+            var found: String?
+            var scanned = 0
+            try? InteractionFinder(threadUniqueId: thread.uniqueId)
+                .enumerateInteractionsForConversationView(rowIdFilter: .newest, tx: tx) { interaction in
+                    scanned += 1
+                    if
+                        let body = (interaction as? TSMessage)?.body,
+                        let key = OpenCsvAttachmentDetector.parseAddress(fromBody: body),
+                        key != ownKey
+                    {
+                        found = key
+                        return false
+                    }
+                    return scanned < 100
+                }
+            return found
+        }
+        if let found {
+            recipientField.text = found
+            setStatus(OWSLocalizedString(
+                "OPENCSV_SEND_RECIPIENT_FROM_CHAT",
+                comment: "Status shown when the recipient key was prefilled from the chat.",
+            ))
+        }
+    }
+
+    @objc
+    private func didTapShareKey() {
+        guard let owner = ownerLabel.text?.strippedOrNil else { return }
+        let thread = self.thread
+        ThreadUtil.enqueueMessage(
+            body: MessageBody(
+                text: OpenCsvAttachmentDetector.addressAnnouncement(owner: owner),
+                ranges: .empty,
+            ),
+            thread: thread,
+        )
+        setStatus(OWSLocalizedString(
+            "OPENCSV_SEND_KEY_SHARED",
+            comment: "Confirmation that the wallet's receiving key was posted to the chat.",
+        ))
     }
 
     @objc
