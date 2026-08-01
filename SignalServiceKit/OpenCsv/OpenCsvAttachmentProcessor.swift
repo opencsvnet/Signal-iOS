@@ -15,7 +15,42 @@ public enum OpenCsvAttachmentDetector {
     public static let bodyMarkerPrefix = "OpenCSV consignment"
     public static let consignmentMimeType = "application/octet-stream"
 
+    /// Decide whether a referenced attachment carries an OpenCSV
+    /// consignment, resolving the owning message's body itself.
+    ///
+    /// Every caller must ask the same question: detection that varies by
+    /// call site means an attachment can be a payment on the render path
+    /// and an ordinary file on the download path, so it is verified by one
+    /// and ignored by the other. The body matters because a consignment is
+    /// also recognised by its marker when the filename was stripped.
+    public static func isConsignment(
+        referenced: ReferencedAttachment,
+        tx: DBReadTransaction,
+    ) -> Bool {
+        isConsignment(
+            sourceFilename: referenced.reference.sourceFilename,
+            mimeType: referenced.attachment.mimeType,
+            bodyText: owningMessageBody(of: referenced.reference, tx: tx),
+        )
+    }
+
+    /// The body of the message an attachment reference belongs to, if any.
+    public static func owningMessageBody(
+        of reference: AttachmentReference,
+        tx: DBReadTransaction,
+    ) -> String? {
+        guard case .message(let messageSource) = reference.owner else { return nil }
+        let interaction = DependenciesBridge.shared.interactionStore.fetchInteraction(
+            rowId: messageSource.messageRowId,
+            tx: tx,
+        )
+        return (interaction as? TSMessage)?.body
+    }
+
     /// Decide whether an attachment carries an OpenCSV consignment.
+    ///
+    /// Prefer the `referenced:tx:` overload; this primitive exists for the
+    /// render path, which already holds the body, and for tests.
     public static func isConsignment(sourceFilename: String?, mimeType: String?, bodyText: String?) -> Bool {
         if sourceFilename?.lowercased() == consignmentFilename {
             return true

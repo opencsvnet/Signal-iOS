@@ -82,7 +82,11 @@ public actor OpenCsvPayments {
                 if OpenCsvAttachmentDetector.isConsignment(
                     sourceFilename: reference.sourceFilename,
                     mimeType: stream.mimeType,
-                    bodyText: nil,
+                    // Resolved, not nil: a consignment whose filename was
+                    // stripped is recognised only by its body marker, and
+                    // skipping it here would leave it unverified until the
+                    // user happened to open the wallet.
+                    bodyText: OpenCsvAttachmentDetector.owningMessageBody(of: reference, tx: tx),
                 ) {
                     isConsignment = true
                 }
@@ -172,11 +176,7 @@ public actor OpenCsvPayments {
                         tx: tx,
                     ) {
                         guard
-                            OpenCsvAttachmentDetector.isConsignment(
-                                sourceFilename: referenced.reference.sourceFilename,
-                                mimeType: referenced.attachment.mimeType,
-                                bodyText: message.body,
-                            ),
+                            OpenCsvAttachmentDetector.isConsignment(referenced: referenced, tx: tx),
                             store.verdict(attachmentId: referenced.attachment.id, tx: tx) == nil
                         else {
                             continue

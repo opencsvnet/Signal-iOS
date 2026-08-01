@@ -1910,18 +1910,24 @@ private extension CVComponentState.Builder {
             if
                 BuildFlags.openCsvPayments,
                 OpenCsvAttachmentDetector.isConsignment(
-                    sourceFilename: referencedAttachment.reference.sourceFilename,
-                    mimeType: referencedAttachment.attachment.mimeType,
-                    bodyText: message.body,
+                    referenced: referencedAttachment,
+                    tx: transaction,
                 )
             {
-                self.openCsvPayment = .init(
-                    attachment: cvAttachment,
-                    verdict: OpenCsvPayments.shared.verdict(
-                        attachmentId: referencedAttachment.attachment.id,
-                        tx: transaction,
-                    ),
+                let verdict = OpenCsvPayments.shared.verdict(
+                    attachmentId: referencedAttachment.attachment.id,
+                    tx: transaction,
                 )
+                // A consignment that failed verification is still a file the
+                // user may need — to forward for diagnosis, or to keep. The
+                // payment bubble has no affordance to reach it, so fall back
+                // to the ordinary attachment cell rather than trapping the
+                // bytes behind a dead bubble.
+                if let verdict, !verdict.isVerified {
+                    self.genericAttachment = .init(attachment: cvAttachment)
+                    return
+                }
+                self.openCsvPayment = .init(attachment: cvAttachment, verdict: verdict)
                 return
             }
             self.genericAttachment = .init(attachment: cvAttachment)
