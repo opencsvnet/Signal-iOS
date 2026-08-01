@@ -79,6 +79,9 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             field.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         }
         amountField.keyboardType = .numberPad
+        // Persist the anchor server as soon as it is entered: the receive
+        // pipeline needs it before the first consignment arrives.
+        anchorServerField.addTarget(self, action: #selector(anchorServerChanged), for: .editingDidEnd)
 
         sendButton.setTitle(
             OWSLocalizedString(
@@ -149,6 +152,14 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     @objc
     private func didTapCancel() {
         dismiss(animated: true)
+    }
+
+    @objc
+    private func anchorServerChanged() {
+        let url = anchorServerField.text?.strippedOrNil
+        Task {
+            await OpenCsvPayments.shared.setAnchorServerUrl(url)
+        }
     }
 
     @objc
