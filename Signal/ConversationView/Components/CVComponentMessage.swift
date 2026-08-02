@@ -1045,6 +1045,7 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
         .audioAttachment,
         .genericAttachment,
         .paymentAttachment,
+        .openCsvPayment,
         .archivedPaymentAttachment,
         .contactShare,
         .giftBadge,
