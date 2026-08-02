@@ -321,8 +321,44 @@ public enum OpenCsvChainView {
 
     /// Sync the local occurrence index and register it for `scanVerify`.
     /// Does network I/O for up to `timeoutMs`; call off the payments actor.
+    /// Re-dials peers on every call — prefer the persistent client below
+    /// for repeat syncs.
     public static func scanSync(config: ScanSyncConfig) throws -> ScanSyncResult {
         try call(encode(config)) { opencsv_scan_sync($0) }
+    }
+
+    /// Open a persistent CBF client: one handshake, then `scanSyncWith`
+    /// reuses the connections — the fixed ~1 s re-dial cost per sync
+    /// disappears. Network I/O; call off the payments actor.
+    public static func openCbfClient(config: ScanSyncConfig) throws -> UInt64 {
+        struct OpenReply: Codable { let clientId: UInt64 }
+        let reply: OpenReply = try call(encode(config)) { opencsv_cbf_open($0) }
+        return reply.clientId
+    }
+
+    /// Sync on an already-open client's connections. Same result shape as
+    /// `scanSync` (the extra `handshakes` diagnostic is ignored).
+    public static func scanSyncWith(clientId: UInt64) throws -> ScanSyncResult {
+        guard let out = opencsv_scan_sync_with(clientId) else {
+            throw OpenCsvClientError.ffi("persistent scan sync returned null")
+        }
+        let raw: String
+        do {
+            defer { opencsv_string_free(out) }
+            raw = String(cString: out)
+        }
+        if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
+            throw OpenCsvClientError.ffi(failure.error)
+        }
+        return try decoder.decode(ScanSyncResult.self, from: Data(raw.utf8))
+    }
+
+    /// Close a persistent client. Failing to close only leaks a socket
+    /// until process exit; errors are not actionable and are swallowed.
+    public static func closeCbfClient(clientId: UInt64) {
+        if let out = opencsv_cbf_close(clientId) {
+            opencsv_string_free(out)
+        }
     }
 
     /// The outcome of running accept against the phone's own scan index.

@@ -827,6 +827,26 @@ struct OpenCsvChainViewFfiTest {
         }
     }
 
+    /// Persistent-client smokes, offline: config errors fail before any
+    /// dial, and a bogus client id is an error — both must surface as
+    /// `ffi` (infrastructure), never as verdicts.
+    @Test
+    func persistentClientErrorsSurfaceAsFfiErrors() {
+        let config = OpenCsvChainView.ScanSyncConfig(
+            network: "marsnet",
+            peers: ["127.0.0.1:1"],
+            cacheDir: NSTemporaryDirectory() + "opencsv-cbf-open-test",
+            fromHeight: 1,
+            requiredConfirmations: 6,
+        )
+        #expect(throws: OpenCsvClientError.self) {
+            _ = try OpenCsvChainView.openCbfClient(config: config)
+        }
+        #expect(throws: OpenCsvClientError.self) {
+            _ = try OpenCsvChainView.scanSyncWith(clientId: 999_999_999)
+        }
+    }
+
     @Test
     func spvVerifyAnchorConfigErrorsSurfaceAsFfiErrors() {
         let config = OpenCsvChainView.SpvConfig(

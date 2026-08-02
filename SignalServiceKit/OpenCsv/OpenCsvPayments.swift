@@ -89,6 +89,13 @@ public actor OpenCsvPayments {
     /// Guards against overlapping syncs: the sync writes the on-disk
     /// index, and app-activation can fire while a lazy sync is running.
     private var scanSyncInFlight = false
+    /// Persistent CBF client: one handshake, reused connections. Nil
+    /// until the first successful open; dropped (and re-opened next
+    /// sync) on any error or on a network/peers change.
+    private var cbfClientId: UInt64?
+    /// The configuration the client was opened with — a change means the
+    /// connections point at the wrong chain or the wrong peers.
+    private var cbfClientConfig: (network: String, peers: [String])?
 
     private var db: any DB { DependenciesBridge.shared.db }
     private var attachmentStore: AttachmentStore { DependenciesBridge.shared.attachmentStore }
@@ -420,19 +427,67 @@ public actor OpenCsvPayments {
             fromHeight: fromHeight,
             requiredConfirmations: Self.requiredConfirmations,
         )
+        // Configuration changed since the client was opened: those
+        // connections point at the wrong chain or peers.
+        if let existing = cbfClientConfig, existing.network != network || existing.peers != peers {
+            closeCbfClient()
+        }
         do {
-            let result = try await Self.offActor {
-                try OpenCsvChainView.scanSync(config: config)
-            }
+            let started = Date()
+            let result = try await syncPreferringPersistentClient(config: config)
+            let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
             scanSyncedThisLaunch = true
             lastScanSyncSummary = result
             Logger.info(
-                "self-scan synced to \(result.tipHeight): \(result.anchors) anchor(s), "
-                + "\(result.filtersBytes) filter byte(s), \(result.blocksBytes) block byte(s)",
+                "self-scan synced to \(result.tipHeight) in \(elapsedMs) ms"
+                + " (\(cbfClientId != nil ? "persistent" : "one-shot")):"
+                + " \(result.anchors) anchor(s), \(result.filtersBytes) filter byte(s),"
+                + " \(result.blocksBytes) block byte(s)",
             )
         } catch {
             Logger.warn("self-scan sync failed; scan verification unavailable until it succeeds: \(error)")
         }
+    }
+
+    /// Sync via the persistent client (one handshake ever), opening it on
+    /// first use. Any persistent-path error drops the client and falls
+    /// back to the one-shot call for this tick — the fast path can never
+    /// be a new failure mode.
+    private func syncPreferringPersistentClient(
+        config: OpenCsvChainView.ScanSyncConfig,
+    ) async throws -> OpenCsvChainView.ScanSyncResult {
+        if cbfClientId == nil {
+            do {
+                let clientId = try await Self.offActor {
+                    try OpenCsvChainView.openCbfClient(config: config)
+                }
+                cbfClientId = clientId
+                cbfClientConfig = (config.network, config.peers)
+            } catch {
+                Logger.warn("persistent chain client failed to open; using one-shot sync: \(error)")
+            }
+        }
+        if let clientId = cbfClientId {
+            do {
+                return try await Self.offActor {
+                    try OpenCsvChainView.scanSyncWith(clientId: clientId)
+                }
+            } catch {
+                Logger.warn("persistent sync failed; dropping client and using one-shot: \(error)")
+                closeCbfClient()
+            }
+        }
+        return try await Self.offActor {
+            try OpenCsvChainView.scanSync(config: config)
+        }
+    }
+
+    private func closeCbfClient() {
+        if let clientId = cbfClientId {
+            OpenCsvChainView.closeCbfClient(clientId: clientId)
+        }
+        cbfClientId = nil
+        cbfClientConfig = nil
     }
 
     /// The chain-view cache (CBF headers, filters, and the scan index
@@ -861,8 +916,10 @@ public actor OpenCsvPayments {
             self.store.setNetwork(network, tx: tx)
         }
         // The scan index and header cache are per-network; a change makes
-        // any synced state meaningless until the next sync.
+        // any synced state meaningless until the next sync, and the
+        // persistent client's connections point at the wrong chain.
         scanSyncedThisLaunch = false
+        closeCbfClient()
     }
 
     /// A stored verdict, for the conversation cell (main-thread render path).
