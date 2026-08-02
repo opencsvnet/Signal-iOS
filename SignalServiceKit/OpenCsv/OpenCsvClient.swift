@@ -42,6 +42,10 @@ public struct OpenCsvVerdict: Codable, Equatable {
     public let credits: [OpenCsvCredit]?
     public let coins: [OpenCsvCoin]?
     public let anchor: Anchor?
+    /// Which chain view decided this verdict ("self-scan", "cross-check",
+    /// "single-snapshot"). Set by the receive pipeline, never by the FFI;
+    /// nil on verdicts that predate the distinction.
+    public var chainView: String?
 
     public var isVerified: Bool { status == "verified" }
 

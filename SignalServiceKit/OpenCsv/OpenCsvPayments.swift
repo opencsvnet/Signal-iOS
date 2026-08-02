@@ -28,6 +28,14 @@ public enum OpenCsvPaymentsError: Error {
     /// wrong or lying and there is no way to tell which, so nothing they
     /// say can be trusted for this decision.
     case indexersDisagree(tips: [UInt64])
+    /// A verified consignment's anchor was missing from the very snapshot
+    /// it was verified against — a programming error surfaced loudly, not
+    /// a chain fact.
+    case snapshotMissingAnchor(height: UInt64, position: UInt32)
+    /// SPV could not settle the claimed anchor either way (our tip lags,
+    /// confirmations still accruing, peers unreachable). Nothing is
+    /// stored; the verification stays retryable.
+    case spvUnsettled(status: String, reason: String?)
 }
 
 /// The OpenCSV payments service: owns the in-memory Rust wallet and runs the
@@ -62,6 +70,13 @@ public actor OpenCsvPayments {
     /// Delivery ids currently being handed to the send pipeline, so a
     /// foreground sweep cannot re-send one that is already in flight.
     private var deliveriesInFlight = Set<String>()
+    /// Whether a self-scan sync has succeeded this process. `scanVerify`
+    /// consults the index the last successful sync registered, so until
+    /// this is true a scan decision would only throw "no scan registered".
+    private var scanSyncedThisLaunch = false
+    /// Guards against overlapping syncs: the sync writes the on-disk
+    /// index, and app-activation can fire while a lazy sync is running.
+    private var scanSyncInFlight = false
 
     private var db: any DB { DependenciesBridge.shared.db }
     private var attachmentStore: AttachmentStore { DependenciesBridge.shared.attachmentStore }
@@ -76,6 +91,8 @@ public actor OpenCsvPayments {
         public let balances: [OpenCsvCredit]
         public let unspentCoins: [OpenCsvCoin]
         public let anchorServerUrl: URL?
+        /// Bitcoin P2P peers powering self-scan and SPV point-verify.
+        public let spvPeers: [String]
     }
 
     // MARK: - Receive pipeline
@@ -141,70 +158,261 @@ public actor OpenCsvPayments {
     /// strongest chain view configured, then credit it.
     ///
     /// The two halves are deliberately separate. Exclusion — has any of
-    /// these nullifiers appeared earlier? — is answered by asking every
-    /// configured indexer and refusing on any single earlier sighting, so
-    /// hiding a double-spend takes all of them. Crediting is local
-    /// bookkeeping and stays on one path.
-    ///
-    /// With no indexers configured this falls back to the single-snapshot
-    /// behaviour, which trusts one server: correct for a demo, not a
-    /// security posture, and logged as such.
+    /// these nullifiers appeared earlier? — is decided first, by the
+    /// strongest configured view (see `chainViewPlan`); crediting is local
+    /// bookkeeping and stays on one path. A verified verdict then gets its
+    /// claimed anchor SPV-checked against the chain itself where peers are
+    /// configured, so even the crediting snapshot's server is not simply
+    /// believed.
     public func verifyBlobWithConfiguredChainView(_ blob: Data) async throws -> OpenCsvVerdict {
         guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
             throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
         }
         let wallet = try await ensureWallet()
-        let indexers = db.read { self.store.indexerUrls(tx: $0) }
+        let (peers, indexers) = db.read {
+            (self.store.spvPeers(tx: $0), self.store.indexerUrls(tx: $0))
+        }
 
-        guard indexers.count >= 2 else {
+        let plan = Self.chainViewPlan(peerCount: peers.count, indexerCount: indexers.count)
+        switch plan {
+        case .selfScan:
+            // The phone's own filter-synced occurrence index; no server is
+            // asked and none is believed. An unsynced index throws — a
+            // weaker view must never be substituted silently.
+            if !scanSyncedThisLaunch {
+                await scanSyncIfNeeded()
+            }
+            let scanned = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: blob)
+            guard scanned.isVerified else {
+                var verdict = OpenCsvVerdict(
+                    status: "rejected",
+                    reason: scanned.reason ?? "self-scan rejected",
+                    credits: nil,
+                    coins: nil,
+                    anchor: nil,
+                )
+                verdict.chainView = plan.rawValue
+                return verdict
+            }
+
+        case .crossCheck:
+            let crossChecked = try OpenCsvChainView.crossCheck(
+                wallet: wallet,
+                backends: indexers.map { .http(url: $0) },
+                consignment: blob,
+                requiredConfirmations: Self.requiredConfirmations,
+            )
+            if crossChecked.isTipDisagreement {
+                // One of these indexers is wrong or lying and we cannot
+                // tell which, so no answer here is trustworthy.
+                throw OpenCsvPaymentsError.indexersDisagree(tips: crossChecked.tips ?? [])
+            }
+            guard crossChecked.isVerified else {
+                var verdict = OpenCsvVerdict(
+                    status: "rejected",
+                    reason: crossChecked.reason ?? crossChecked.error ?? "cross-check rejected",
+                    credits: nil,
+                    coins: nil,
+                    anchor: nil,
+                )
+                verdict.chainView = plan.rawValue
+                return verdict
+            }
+
+        case .singleSnapshot:
             if indexers.count == 1 {
                 Logger.warn(
                     "OpenCSV exclusion rests on a single indexer: a dishonest one can hide a "
-                    + "double-spend. Configure at least three independent indexers.",
+                    + "double-spend. Configure SPV peers for self-scan, or several independent "
+                    + "indexers.",
                 )
             }
-            return try await verifyBlob(blob)
         }
 
-        let crossChecked = try OpenCsvChainView.crossCheck(
-            wallet: wallet,
-            backends: indexers.map { .http(url: $0) },
-            consignment: blob,
-            requiredConfirmations: Self.requiredConfirmations,
-        )
-        if crossChecked.isTipDisagreement {
-            // One of these indexers is wrong or lying and we cannot tell
-            // which, so no answer here is trustworthy.
-            throw OpenCsvPaymentsError.indexersDisagree(tips: crossChecked.tips ?? [])
+        // Believed (or undecidable beyond the single snapshot): credit
+        // through the wallet's single crediting path, then hold the
+        // snapshot's claimed anchor up against the chain itself.
+        var (verdict, snapshotJson) = try await verifyBlobReturningSnapshot(blob)
+        verdict.chainView = plan.rawValue
+        return try await spvPointVerifyIfConfigured(verdict, snapshotJson: snapshotJson)
+    }
+
+    /// Which exclusion decision the current configuration can support,
+    /// strongest first. Pure so the ordering is testable.
+    enum ChainViewPlan: String {
+        case selfScan = "self-scan"
+        case crossCheck = "cross-check"
+        case singleSnapshot = "single-snapshot"
+    }
+
+    static func chainViewPlan(peerCount: Int, indexerCount: Int) -> ChainViewPlan {
+        if peerCount > 0 {
+            return .selfScan
         }
-        guard crossChecked.isVerified else {
-            return OpenCsvVerdict(
-                status: "rejected",
-                reason: crossChecked.reason ?? crossChecked.error ?? "cross-check rejected",
-                credits: nil,
-                coins: nil,
-                anchor: nil,
-            )
+        if indexerCount >= 2 {
+            return .crossCheck
         }
-        // Believed: now credit it through the wallet's single crediting
-        // path, against a snapshot from one of the indexers we just agreed
-        // with.
-        return try await verifyBlob(blob)
+        return .singleSnapshot
     }
 
     /// Verify a consignment blob against the current anchor snapshot,
     /// crediting any of our coins it contains.
     public func verifyBlob(_ blob: Data) async throws -> OpenCsvVerdict {
+        try await verifyBlobReturningSnapshot(blob).verdict
+    }
+
+    /// As `verifyBlob`, also returning the snapshot JSON the verdict was
+    /// produced against — the only place a claimed anchor's txid and
+    /// record bytes exist on this side of the FFI, so SPV needs it.
+    private func verifyBlobReturningSnapshot(
+        _ blob: Data,
+    ) async throws -> (verdict: OpenCsvVerdict, snapshotJson: String) {
         guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
             throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
         }
         let wallet = try await ensureWallet()
         let snapshot = try await fetchAndCacheSnapshot()
-        return try wallet.verify(
+        let verdict = try wallet.verify(
             blob: blob,
             snapshotJson: snapshot,
             requiredConfirmations: Self.requiredConfirmations,
         )
+        return (verdict, snapshot)
+    }
+
+    /// Check a just-credited consignment's claimed anchor against the
+    /// chain itself (PoW headers → one block → merkle branch) where SPV
+    /// peers are configured.
+    ///
+    /// This runs after crediting because the claim's location is only
+    /// learnable from the crediting verify. The window is bounded: a
+    /// definitive negative rewrites the verdict to rejected, rejects store
+    /// no replay blob, so the phantom in-memory credit dies at next
+    /// launch — and the stored rejection is final. At 6 confirmations,
+    /// reorg risk is the accepted trade.
+    private func spvPointVerifyIfConfigured(
+        _ verdict: OpenCsvVerdict,
+        snapshotJson: String,
+    ) async throws -> OpenCsvVerdict {
+        guard verdict.isVerified, let anchor = verdict.anchor else {
+            return verdict
+        }
+        let (peers, network) = db.read {
+            (self.store.spvPeers(tx: $0), self.store.network(tx: $0))
+        }
+        guard !peers.isEmpty else {
+            return verdict
+        }
+        guard let claim = OpenCsvChainView.anchorClaim(
+            fromSnapshotJson: snapshotJson,
+            anchor: anchor,
+            requiredConfirmations: Self.requiredConfirmations,
+        ) else {
+            owsFailDebug("verified consignment's anchor is missing from its own snapshot")
+            throw OpenCsvPaymentsError.snapshotMissingAnchor(
+                height: anchor.height,
+                position: anchor.position,
+            )
+        }
+        let config = OpenCsvChainView.SpvConfig(
+            network: network,
+            peers: peers,
+            cacheDir: Self.chainCacheDir(),
+        )
+        // Network I/O for up to the config timeout: run it off the actor
+        // so sends and other verifications can interleave. No wallet
+        // handle is involved, so the suspension is hazard-free.
+        let spv = try await Self.offActor {
+            try OpenCsvChainView.verifyAnchor(config: config, claim: claim)
+        }
+        if spv.isConfirmed {
+            Logger.info(
+                "SPV confirmed anchor \(claim.height):\(claim.position) "
+                + "(\(spv.confirmations ?? 0) confirmation(s))",
+            )
+            return verdict
+        }
+        // Exactly two outcomes prove the claim is a lie; everything else —
+        // a lagging tip, confirmations still accruing, an unexpected
+        // reason (including one this side fails to decode) — stays
+        // retryable, because pod drift must never masquerade as a payment
+        // rejection.
+        if spv.status == "not_present",
+           let reason = spv.reason,
+           reason == "txid_mismatch" || reason == "record_not_in_tx" {
+            var rejected = OpenCsvVerdict(
+                status: "rejected",
+                reason: "spv: \(reason)",
+                credits: nil,
+                coins: nil,
+                anchor: nil,
+            )
+            rejected.chainView = verdict.chainView
+            return rejected
+        }
+        throw OpenCsvPaymentsError.spvUnsettled(status: spv.status, reason: spv.reason)
+    }
+
+    /// Sync the self-scan occurrence index, if SPV peers are configured.
+    /// Called on app activation (before the verification sweep) and lazily
+    /// before the first scan decision of a launch. Failure only logs:
+    /// verification then throws "no scan registered" and stays retryable.
+    /// The on-disk index resumes from its own tip, so a long first walk
+    /// simply makes progress on every foreground until it catches up.
+    public func scanSyncIfNeeded() async {
+        guard !scanSyncInFlight else {
+            return
+        }
+        let (peers, network, fromHeight) = db.read {
+            (self.store.spvPeers(tx: $0), self.store.network(tx: $0), self.store.scanFromHeight(tx: $0))
+        }
+        guard !peers.isEmpty else {
+            return
+        }
+        scanSyncInFlight = true
+        defer { scanSyncInFlight = false }
+        let config = OpenCsvChainView.ScanSyncConfig(
+            network: network,
+            peers: peers,
+            cacheDir: Self.chainCacheDir(),
+            fromHeight: fromHeight,
+            requiredConfirmations: Self.requiredConfirmations,
+        )
+        do {
+            let result = try await Self.offActor {
+                try OpenCsvChainView.scanSync(config: config)
+            }
+            scanSyncedThisLaunch = true
+            Logger.info(
+                "self-scan synced to \(result.tipHeight): \(result.anchors) anchor(s), "
+                + "\(result.filtersBytes) filter byte(s), \(result.blocksBytes) block byte(s)",
+            )
+        } catch {
+            Logger.warn("self-scan sync failed; scan verification unavailable until it succeeds: \(error)")
+        }
+    }
+
+    /// The chain-view cache (CBF headers, filters, and the scan index
+    /// under `scan/`). Caches, not the group container: everything in it
+    /// is re-derivable from the network, and the wallet's real state never
+    /// lives here.
+    private static func chainCacheDir() -> String {
+        let dir = OWSFileSystem.cachesDirectoryPath() + "/OpenCsvCbf"
+        _ = OWSFileSystem.ensureDirectoryExists(dir)
+        return dir
+    }
+
+    /// Run a blocking chain-view FFI call off the actor, so wallet work
+    /// can interleave with its network I/O. Only for calls that take no
+    /// wallet handle.
+    private static func offActor<T: Sendable>(
+        _ body: @escaping @Sendable () throws -> T,
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(with: Result { try body() })
+            }
+        }
     }
 
     /// Sweep a thread's recent messages for consignment attachments that
@@ -581,12 +789,25 @@ public actor OpenCsvPayments {
             balances: try wallet.balance(),
             unspentCoins: coins.filter(\.unspent),
             anchorServerUrl: db.read { store.anchorServerUrl(tx: $0) },
+            spvPeers: db.read { store.spvPeers(tx: $0) },
         )
     }
 
     public func setAnchorServerUrl(_ urlString: String?) async {
         await db.awaitableWrite { tx in
             self.store.setAnchorServerUrl(urlString, tx: tx)
+        }
+    }
+
+    public func setSpvPeers(_ peers: [String]) async {
+        do {
+            try await db.awaitableWrite { tx in
+                try self.store.setSpvPeers(peers, tx: tx)
+            }
+        } catch {
+            // A lost settings write is recoverable (retype it), but it must
+            // not be silent: without peers, self-scan and SPV never run.
+            Logger.error("could not persist SPV peers: \(error)")
         }
     }
 

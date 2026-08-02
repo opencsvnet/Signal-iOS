@@ -6,7 +6,7 @@
 import Foundation
 import OpenCsvFFI
 
-/// The three chain views a wallet can use, per opencsvnet/Signal-iOS#3.
+/// The chain views a wallet can use, per opencsvnet/Signal-iOS#3.
 ///
 /// They answer two different questions and must not be conflated:
 ///
@@ -14,17 +14,21 @@ import OpenCsvFFI
 ///   claims, with enough confirmations? Answered trustlessly by SPV:
 ///   PoW-validated headers, then one block, then a merkle branch. No server
 ///   is believed.
-/// - **Exclusion** — has any of these nullifiers appeared *earlier*?
-///   Unanswerable by SPV, because the on-chain payloads are deliberately
-///   not publicly derivable (that is what stops mempool copy-griefing), so
-///   it needs indexers. Trust is reduced by asking several independent ones
-///   and letting any single honest answer reject: hiding a double-spend
-///   requires compromising all of them.
+/// - **Exclusion** — has any of these nullifiers appeared *earlier*? The
+///   on-chain payloads are deliberately not publicly derivable (that is
+///   what stops mempool copy-griefing), so the record itself can never be
+///   found by a filter. The default answer is the phone's own scan: anchor
+///   transactions carry a constant marker output that BIP158 filters *do*
+///   include, so a filter walk finds every anchor-bearing block, SPV
+///   verifies each one, and exclusion becomes a local index lookup with no
+///   server believed. Asking several independent indexers (any single
+///   earlier sighting rejects) remains as a fallback for wallets that
+///   cannot scan.
 ///
-/// BIP158 compact filters cannot help with either: basic filters exclude
-/// OP_RETURN outputs entirely, so anchor records are unmatchable. The
-/// `filterDiagnostic` field that comes back from a verification is exactly
-/// that — a diagnostic — and plays no part in any verdict.
+/// The anchor *record* is an OP_RETURN output, which basic filters exclude
+/// entirely — only the marker is matchable. The `filterDiagnostic` field
+/// that comes back from a point verification is exactly that — a
+/// diagnostic — and plays no part in any verdict.
 public enum OpenCsvChainView {
 
     // MARK: - Point verification (SPV)
@@ -108,6 +112,49 @@ public enum OpenCsvChainView {
         return reply.tipHeight
     }
 
+    /// The anchor-snapshot JSON a verification runs against:
+    /// `{"tip_height":N,"entries":[{"height","position","txid","ctx","record"},…]}`.
+    /// Only the fields SPV needs are decoded.
+    private struct SnapshotIndex: Codable {
+        struct Entry: Codable {
+            let height: UInt64
+            let position: UInt32
+            let txid: String
+            let record: String
+        }
+        let entries: [Entry]
+    }
+
+    /// Build the SPV claim for the snapshot entry a verified consignment's
+    /// anchor points at.
+    ///
+    /// The crediting verify only proves the consignment matches this
+    /// *entry*; SPV is what proves the entry matches the *chain*. Nil when
+    /// the snapshot has no entry at that location — for a verdict produced
+    /// against this same snapshot that is a programming error, since the
+    /// verify cannot have succeeded without the entry.
+    public static func anchorClaim(
+        fromSnapshotJson snapshotJson: String,
+        anchor: OpenCsvVerdict.Anchor,
+        requiredConfirmations: UInt64,
+    ) -> AnchorClaim? {
+        guard
+            let index = try? decoder.decode(SnapshotIndex.self, from: Data(snapshotJson.utf8)),
+            let entry = index.entries.first(where: {
+                $0.height == anchor.height && $0.position == anchor.position
+            })
+        else {
+            return nil
+        }
+        return AnchorClaim(
+            recordHex: entry.record,
+            txidHex: entry.txid,
+            height: entry.height,
+            position: entry.position,
+            requiredConfirmations: requiredConfirmations,
+        )
+    }
+
     // MARK: - Exclusion (N-of-M cross-check)
 
     /// One indexer to ask. Several independent ones are the point: a single
@@ -136,11 +183,24 @@ public enum OpenCsvChainView {
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            switch try container.decode(String.self, forKey: .type) {
+            let type = try container.decode(String.self, forKey: .type)
+            switch type {
             case "http":
                 self = .http(url: try container.decode(String.self, forKey: .url))
+            case "snapshot":
+                // AnyCodable is scalar-only, so nested snapshot payloads
+                // degrade — matching the encoder's fidelity above.
+                let payload = try container.decode([String: AnyCodable].self, forKey: .snapshot)
+                let json = String(data: try JSONEncoder().encode(payload), encoding: .utf8) ?? "{}"
+                self = .snapshot(json: json)
             default:
-                self = .snapshot(json: "{}")
+                // A backend nobody recognises must be loud: decoding it as
+                // an empty snapshot would silently weaken the cross-check.
+                throw DecodingError.dataCorruptedError(
+                    forKey: .type,
+                    in: container,
+                    debugDescription: "unknown chain-view backend type \"\(type)\"",
+                )
             }
         }
     }
@@ -193,6 +253,87 @@ public enum OpenCsvChainView {
             return String(cString: out)
         }
         return try decoder.decode(CrossCheckVerdict.self, from: Data(raw.utf8))
+    }
+
+    // MARK: - Exclusion (self-scan)
+
+    /// One filter walk of the chain for the protocol marker output,
+    /// SPV-fetching the matching blocks into an occurrence index on disk
+    /// under `<cacheDir>/scan`. The index resumes from its synced tip, so
+    /// repeat syncs cost only the new blocks; a sync also registers the
+    /// index as the one `scanVerify` consults.
+    public struct ScanSyncConfig: Codable {
+        public let network: String
+        public let peers: [String]
+        public let cacheDir: String
+        public let timeoutMs: UInt64
+        /// Where a fresh index starts scanning — the wallet's birth
+        /// height. Use 1 to walk the whole chain's filters once; the FFI
+        /// reserves 0 as its mempool sentinel and rejects it.
+        public let fromHeight: UInt64
+        public let requiredConfirmations: UInt64
+
+        public init(
+            network: String,
+            peers: [String],
+            cacheDir: String,
+            timeoutMs: UInt64 = 30_000,
+            fromHeight: UInt64,
+            requiredConfirmations: UInt64,
+        ) {
+            self.network = network
+            self.peers = peers
+            self.cacheDir = cacheDir
+            self.timeoutMs = timeoutMs
+            self.fromHeight = fromHeight
+            self.requiredConfirmations = requiredConfirmations
+        }
+    }
+
+    /// What a sync cost, in bytes — the honest price of the trustless
+    /// view, and worth logging: fake markers can inflate `blocksBytes`
+    /// (bounded by the attacker's dust and fees), never correctness.
+    public struct ScanSyncResult: Codable {
+        public let tipHeight: UInt64
+        public let filtersBytes: UInt64
+        public let blocksBytes: UInt64
+        public let anchors: UInt64
+    }
+
+    /// Sync the local occurrence index and register it for `scanVerify`.
+    /// Does network I/O for up to `timeoutMs`; call off the payments actor.
+    public static func scanSync(config: ScanSyncConfig) throws -> ScanSyncResult {
+        try call(encode(config)) { opencsv_scan_sync($0) }
+    }
+
+    /// The outcome of running accept against the phone's own scan index.
+    public struct ScanVerdict: Codable {
+        public let status: String?
+        public let reason: String?
+        public let confirmations: UInt64?
+        public let tipHeight: UInt64?
+
+        public var isVerified: Bool { status == "verified" }
+    }
+
+    /// Decide a consignment against the local scan index. Fully local — no
+    /// server is asked and none is believed, which is what earns the
+    /// "verified by this phone" badge. Read-only: crediting stays with
+    /// `verify_consignment` so the wallet's bookkeeping has one path.
+    /// Throws ("no scan registered") until a `scanSync` has succeeded this
+    /// process — callers treat that as infrastructure, never as rejection.
+    public static func scanVerify(wallet: OpenCsvWallet, consignment: Data) throws -> ScanVerdict {
+        let raw = try consignment.hexadecimalString.withCString { pointer -> String in
+            guard let out = opencsv_scan_verify(wallet.rawHandle, pointer) else {
+                throw OpenCsvClientError.ffi("scan verify returned null")
+            }
+            defer { opencsv_string_free(out) }
+            return String(cString: out)
+        }
+        if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
+            throw OpenCsvClientError.ffi(failure.error)
+        }
+        return try decoder.decode(ScanVerdict.self, from: Data(raw.utf8))
     }
 
     // MARK: - Plumbing

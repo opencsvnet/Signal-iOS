@@ -21,6 +21,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private let balanceLabel = UILabel()
     private let ownerLabel = UILabel()
     private let anchorServerField = UITextField()
+    private let spvPeersField = UITextField()
     private let recipientField = UITextField()
     private let amountField = UITextField()
     private let sendButton = UIButton(type: .system)
@@ -63,6 +64,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 "Placeholder for the anchor server URL field in the OpenCSV send sheet.",
             ),
             (
+                spvPeersField,
+                "OPENCSV_SEND_SPV_PEERS_PLACEHOLDER",
+                "Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet.",
+            ),
+            (
                 recipientField,
                 "OPENCSV_SEND_RECIPIENT_PLACEHOLDER",
                 "Placeholder for the recipient owner key field in the OpenCSV send sheet.",
@@ -80,9 +86,10 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             field.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         }
         amountField.keyboardType = .numberPad
-        // Persist the anchor server as soon as it is entered: the receive
-        // pipeline needs it before the first consignment arrives.
+        // Persist chain settings as soon as they are entered: the receive
+        // pipeline needs them before the first consignment arrives.
         anchorServerField.addTarget(self, action: #selector(anchorServerChanged), for: .editingDidEnd)
+        spvPeersField.addTarget(self, action: #selector(spvPeersChanged), for: .editingDidEnd)
 
         sendButton.setTitle(
             OWSLocalizedString(
@@ -112,6 +119,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             balanceLabel,
             ownerLabel,
             anchorServerField,
+            spvPeersField,
             recipientField,
             amountField,
             sendButton,
@@ -154,6 +162,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                     : balances
                 self.ownerLabel.text = summary.owner
                 self.anchorServerField.text = summary.anchorServerUrl?.absoluteString
+                self.spvPeersField.text = summary.spvPeers.joined(separator: ", ")
                 self.prefillRecipient(ownKey: summary.owner)
                 self.setStatus("")
             } catch {
@@ -243,6 +252,19 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         let url = anchorServerField.text?.strippedOrNil
         Task {
             await OpenCsvPayments.shared.setAnchorServerUrl(url)
+        }
+    }
+
+    @objc
+    private func spvPeersChanged() {
+        // Comma-separated host:port entries; one field powers both the
+        // self-scan exclusion index and SPV point verification.
+        let peers = (spvPeersField.text ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        Task {
+            await OpenCsvPayments.shared.setSpvPeers(peers)
         }
     }
 

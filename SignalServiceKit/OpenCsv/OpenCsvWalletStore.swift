@@ -28,6 +28,10 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
     public let assetId: String?
     public let direction: OpenCsvPaymentDirection
     public let verifiedAt: Date
+    /// Which chain view decided this verdict ("self-scan", "cross-check",
+    /// "single-snapshot"). "self-scan" means no server was believed — the
+    /// bubble may say so. Nil on records that predate the distinction.
+    public let chainView: String?
 
     public var isVerified: Bool { status == "verified" }
 
@@ -44,6 +48,7 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.assetId = credits.first?.assetId
         self.direction = credits.isEmpty ? .thirdParty : .incoming
         self.verifiedAt = date
+        self.chainView = verdict.chainView
     }
 
     /// A verdict for a consignment we sent. The amount is what the
@@ -57,6 +62,7 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.assetId = assetId
         self.direction = .outgoing
         self.verifiedAt = date
+        self.chainView = nil
     }
 }
 
@@ -85,6 +91,7 @@ public struct OpenCsvWalletStore {
     private static let inFlightSendsKey = "inFlightSends"
     private static let indexerUrlsKey = "indexerUrls"
     private static let spvPeersKey = "spvPeers"
+    private static let scanFromHeightKey = "scanFromHeight"
     private static let networkKey = "network"
     private static let replayOrderKey = "replayOrder"
     private static let spentCoinIdsKey = "spentCoinIds"
@@ -161,6 +168,22 @@ public struct OpenCsvWalletStore {
 
     public func setSpvPeers(_ peers: [String], tx: DBWriteTransaction) throws {
         try keyValueStore.setCodable(peers.filter { !$0.isEmpty }, key: Self.spvPeersKey, transaction: tx)
+    }
+
+    /// Where a fresh self-scan index starts walking filters — the wallet's
+    /// birth height. Defaults to 1, one full-history filter walk on first
+    /// sync; later syncs resume from the index's own tip. Never 0: the FFI
+    /// reserves height 0 as its mempool sentinel and rejects it.
+    public func scanFromHeight(tx: DBReadTransaction) -> UInt64 {
+        let stored: UInt64 = (try? keyValueStore.getCodableValue(
+            forKey: Self.scanFromHeightKey,
+            transaction: tx,
+        )) ?? 1
+        return max(1, stored)
+    }
+
+    public func setScanFromHeight(_ height: UInt64, tx: DBWriteTransaction) throws {
+        try keyValueStore.setCodable(height, key: Self.scanFromHeightKey, transaction: tx)
     }
 
     public func network(tx: DBReadTransaction) -> String {

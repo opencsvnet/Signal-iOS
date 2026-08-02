@@ -88,6 +88,14 @@ public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
                     comment: "Status for a verified OpenCSV payment that credits neither party in this chat.",
                 )
             }
+            // Self-scan means the phone checked the chain itself and
+            // believed no server — a strictly stronger claim, so say so.
+            if verdict.chainView == "self-scan" {
+                return OWSLocalizedString(
+                    "OPENCSV_PAYMENT_STATUS_VERIFIED_SELF_SCAN",
+                    comment: "Status shown in an OpenCSV payment bubble when the proof verified against the phone's own chain scan, trusting no server.",
+                )
+            }
             return OWSLocalizedString(
                 "OPENCSV_PAYMENT_STATUS_VERIFIED",
                 comment: "Status shown in an OpenCSV payment bubble when the proof verified.",

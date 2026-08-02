@@ -497,3 +497,357 @@ struct OpenCsvPipelineTransitionTest {
         db.read { tx in #expect(store.replayBlobs(tx: tx).isEmpty) }
     }
 }
+
+struct OpenCsvChainViewTest {
+    private let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }()
+
+    // MARK: - SPV verdicts (opencsv_cbf_verify_anchor JSON shapes)
+
+    @Test
+    func decodesSpvConfirmedVerdict() throws {
+        let json = """
+        {"status":"confirmed","ctx_hex":"aa","block_hash_hex":"bb","confirmations":9,
+         "filter_diagnostic":false,"tip_height":120}
+        """
+        let verdict = try decoder.decode(OpenCsvChainView.SpvVerdict.self, from: Data(json.utf8))
+        #expect(verdict.isConfirmed)
+        #expect(verdict.confirmations == 9)
+        #expect(verdict.blockHashHex == "bb")
+    }
+
+    /// The doctrine at the top of OpenCsvChainView: `filter_diagnostic` is
+    /// never evidence. A confirmed verdict stays confirmed with the flag
+    /// false, and a not_present verdict stays not_present with it true.
+    @Test
+    func filterDiagnosticIsPresentButNeverEvidence() throws {
+        let confirmed = try decoder.decode(
+            OpenCsvChainView.SpvVerdict.self,
+            from: Data(#"{"status":"confirmed","confirmations":6,"filter_diagnostic":false}"#.utf8),
+        )
+        #expect(confirmed.isConfirmed)
+        #expect(confirmed.filterDiagnostic == false)
+
+        let absent = try decoder.decode(
+            OpenCsvChainView.SpvVerdict.self,
+            from: Data(#"{"status":"not_present","reason":"txid_mismatch","filter_diagnostic":true}"#.utf8),
+        )
+        #expect(!absent.isConfirmed)
+        #expect(absent.filterDiagnostic == true)
+    }
+
+    @Test
+    func decodesSpvNotPresentVerdict() throws {
+        // Sibling detail keys (claimed/actual) must not break decoding.
+        let json = """
+        {"status":"not_present","reason":"txid_mismatch",
+         "claimed_hex":"aa","actual_hex":"bb","tip_height":50}
+        """
+        let verdict = try decoder.decode(OpenCsvChainView.SpvVerdict.self, from: Data(json.utf8))
+        #expect(!verdict.isConfirmed)
+        #expect(verdict.reason == "txid_mismatch")
+    }
+
+    @Test
+    func decodesSpvInsufficientConfirmations() throws {
+        let json = #"{"status":"insufficient_confirmations","have":2,"required":6}"#
+        let verdict = try decoder.decode(OpenCsvChainView.SpvVerdict.self, from: Data(json.utf8))
+        #expect(!verdict.isConfirmed)
+        #expect(verdict.have == 2)
+        #expect(verdict.required == 6)
+    }
+
+    // MARK: - Cross-check verdicts
+
+    @Test
+    func decodesCrossCheckVerdicts() throws {
+        let verified = try decoder.decode(
+            OpenCsvChainView.CrossCheckVerdict.self,
+            from: Data(#"{"status":"verified","tip_height":9}"#.utf8),
+        )
+        #expect(verified.isVerified)
+        #expect(!verified.isTipDisagreement)
+
+        let rejected = try decoder.decode(
+            OpenCsvChainView.CrossCheckVerdict.self,
+            from: Data(#"{"status":"rejected","reason":"NullifierConflict"}"#.utf8),
+        )
+        #expect(!rejected.isVerified)
+        #expect(rejected.reason == "NullifierConflict")
+
+        // A tip disagreement arrives as the error shape and must decode as
+        // a verdict (not be thrown away) so callers can say why.
+        let disagreement = try decoder.decode(
+            OpenCsvChainView.CrossCheckVerdict.self,
+            from: Data(#"{"error":"backends disagree","kind":"tip_disagreement","tips":[10,12]}"#.utf8),
+        )
+        #expect(disagreement.isTipDisagreement)
+        #expect(disagreement.tips == [10, 12])
+        #expect(!disagreement.isVerified)
+    }
+
+    // MARK: - Scan verdicts (opencsv_scan_verify JSON shapes)
+
+    @Test
+    func decodesScanVerdicts() throws {
+        let verified = try decoder.decode(
+            OpenCsvChainView.ScanVerdict.self,
+            from: Data("""
+            {"status":"verified","coins":[{"id":"aa","asset_id":"bb","value":5,"owner":"cc"}],
+             "anchor":{"height":3,"position":0},"confirmations":7,"tip_height":10}
+            """.utf8),
+        )
+        #expect(verified.isVerified)
+        #expect(verified.confirmations == 7)
+
+        let rejected = try decoder.decode(
+            OpenCsvChainView.ScanVerdict.self,
+            from: Data(#"{"status":"rejected","reason":"NullifierConflict","tip_height":10}"#.utf8),
+        )
+        #expect(!rejected.isVerified)
+        #expect(rejected.reason == "NullifierConflict")
+    }
+
+    // MARK: - Backend Codable
+
+    @Test
+    func backendCodableRoundTrip() throws {
+        let encoder = JSONEncoder()
+        let http = try JSONDecoder().decode(
+            OpenCsvChainView.Backend.self,
+            from: try encoder.encode(OpenCsvChainView.Backend.http(url: "http://indexer:8080")),
+        )
+        guard case .http(let url) = http else {
+            Issue.record("http backend did not survive the round trip")
+            return
+        }
+        #expect(url == "http://indexer:8080")
+
+        let snapshot = try JSONDecoder().decode(
+            OpenCsvChainView.Backend.self,
+            from: try encoder.encode(OpenCsvChainView.Backend.snapshot(json: "{}")),
+        )
+        guard case .snapshot(let json) = snapshot else {
+            Issue.record("snapshot backend did not survive the round trip")
+            return
+        }
+        #expect(json == "{}")
+    }
+
+    @Test
+    func backendUnknownTypeThrows() {
+        // An unrecognized backend must fail loudly, never silently decode
+        // as an empty snapshot that weakens the cross-check.
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(
+                OpenCsvChainView.Backend.self,
+                from: Data(#"{"type":"carrier-pigeon"}"#.utf8),
+            )
+        }
+    }
+
+    // MARK: - Snapshot → SPV claim
+
+    @Test
+    func anchorClaimFromSnapshot() throws {
+        let snapshot = """
+        {"tip_height":10,"entries":[
+          {"height":3,"position":0,"txid":"aa11","ctx":"cc","record":"dd"},
+          {"height":7,"position":2,"txid":"bb22","ctx":"ee","record":"ff"}]}
+        """
+        let anchor = try decoder.decode(
+            OpenCsvVerdict.Anchor.self,
+            from: Data(#"{"height":7,"position":2}"#.utf8),
+        )
+        let claim = OpenCsvChainView.anchorClaim(
+            fromSnapshotJson: snapshot,
+            anchor: anchor,
+            requiredConfirmations: 6,
+        )
+        #expect(claim?.txidHex == "bb22")
+        #expect(claim?.recordHex == "ff")
+        #expect(claim?.height == 7)
+        #expect(claim?.position == 2)
+        #expect(claim?.requiredConfirmations == 6)
+
+        // No entry at the claimed location: no claim, never a guess.
+        let missing = try decoder.decode(
+            OpenCsvVerdict.Anchor.self,
+            from: Data(#"{"height":9,"position":0}"#.utf8),
+        )
+        #expect(OpenCsvChainView.anchorClaim(
+            fromSnapshotJson: snapshot,
+            anchor: missing,
+            requiredConfirmations: 6,
+        ) == nil)
+    }
+
+    // MARK: - Decision ladder
+
+    @Test
+    func chainViewPlanPrefersTheStrongestConfiguredView() {
+        // Self-scan wins whenever peers exist, regardless of indexers.
+        #expect(OpenCsvPayments.chainViewPlan(peerCount: 1, indexerCount: 0) == .selfScan)
+        #expect(OpenCsvPayments.chainViewPlan(peerCount: 2, indexerCount: 5) == .selfScan)
+        // Cross-check needs at least two independent indexers.
+        #expect(OpenCsvPayments.chainViewPlan(peerCount: 0, indexerCount: 2) == .crossCheck)
+        // One indexer is not a cross-check; zero of anything is a demo.
+        #expect(OpenCsvPayments.chainViewPlan(peerCount: 0, indexerCount: 1) == .singleSnapshot)
+        #expect(OpenCsvPayments.chainViewPlan(peerCount: 0, indexerCount: 0) == .singleSnapshot)
+    }
+
+    // MARK: - Verdict record compatibility
+
+    @Test
+    func verdictRecordWithoutChainViewStillDecodes() throws {
+        // Records persisted before the chainView field existed must load.
+        let legacy = """
+        {"status":"verified","amount":5,"currency":"USD","assetId":"ab",
+         "direction":"incoming","verifiedAt":0}
+        """
+        let record = try JSONDecoder().decode(OpenCsvVerdictRecord.self, from: Data(legacy.utf8))
+        #expect(record.isVerified)
+        #expect(record.chainView == nil)
+    }
+
+    @Test
+    func verdictRecordCarriesChainViewThrough() throws {
+        var verdict = try decoder.decode(
+            OpenCsvVerdict.self,
+            from: Data(#"{"status":"verified","credits":[],"anchor":{"height":1,"position":0}}"#.utf8),
+        )
+        verdict.chainView = "self-scan"
+        let record = OpenCsvVerdictRecord(verdict: verdict, date: Date(timeIntervalSince1970: 0))
+        #expect(record.chainView == "self-scan")
+
+        let reloaded = try JSONDecoder().decode(
+            OpenCsvVerdictRecord.self,
+            from: try JSONEncoder().encode(record),
+        )
+        #expect(reloaded.chainView == "self-scan")
+    }
+}
+
+/// Chain-view calls against the real FFI binary — offline, instant: they
+/// pin symbol linkage, request-key encoding, and error mapping without
+/// touching the network.
+struct OpenCsvChainViewFfiTest {
+    /// The FFI validates the consignment's encoding before consulting the
+    /// scan registration (live-verified check order), so garbage bytes
+    /// surface as an `ffi` error — never a "rejected" verdict a caller
+    /// might persist as final.
+    @Test
+    func scanVerifyGarbageConsignmentIsAnErrorNotARejection() throws {
+        let wallet = try OpenCsvWallet(secretsJson: OpenCsvWallet.createSecrets())
+        do {
+            _ = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: Data([1, 2, 3]))
+            Issue.record("garbage bytes must not produce a verdict")
+        } catch let OpenCsvClientError.ffi(message) {
+            #expect(message.contains("consignment"))
+        }
+    }
+
+    /// An unknown network fails at config parse, before any peer is
+    /// dialed. If the Swift request encoding ever drifted from the ABI's
+    /// snake_case keys, this would fail with "missing field" instead.
+    @Test
+    func scanSyncRejectsAnUnknownNetworkAtConfigParse() {
+        let config = OpenCsvChainView.ScanSyncConfig(
+            network: "marsnet",
+            peers: ["127.0.0.1:1"],
+            cacheDir: NSTemporaryDirectory() + "opencsv-scan-config-test",
+            fromHeight: 0,
+            requiredConfirmations: 6,
+        )
+        do {
+            _ = try OpenCsvChainView.scanSync(config: config)
+            Issue.record("an unknown network must be rejected")
+        } catch let OpenCsvClientError.ffi(message) {
+            #expect(message.contains("marsnet") || message.lowercased().contains("network"))
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
+
+    @Test
+    func spvVerifyAnchorConfigErrorsSurfaceAsFfiErrors() {
+        let config = OpenCsvChainView.SpvConfig(
+            network: "marsnet",
+            peers: ["127.0.0.1:1"],
+            cacheDir: NSTemporaryDirectory() + "opencsv-cbf-config-test",
+            timeoutMs: 500,
+        )
+        let claim = OpenCsvChainView.AnchorClaim(
+            recordHex: String(repeating: "0", count: 128),
+            txidHex: String(repeating: "1", count: 64),
+            height: 1,
+            position: 0,
+            requiredConfirmations: 1,
+        )
+        #expect(throws: OpenCsvClientError.self) {
+            _ = try OpenCsvChainView.verifyAnchor(config: config, claim: claim)
+        }
+    }
+}
+
+/// Live end-to-end against a host bitcoind: the whole app-side pipeline —
+/// Swift config encoding → FFI → P2P handshake → header/filter sync →
+/// on-disk occurrence index → registered scan verify. Requires
+/// `bitcoind -regtest -blockfilterindex=1 -peerblockfilters=1` listening
+/// on 127.0.0.1:18444; run with TEST_RUNNER_OPENCSV_REGTEST=1.
+struct OpenCsvScanRegtestTest {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCSV_REGTEST"] == "1"))
+    func syncsTheScanIndexFromALiveRegtestNode() throws {
+        let cacheDir = NSTemporaryDirectory() + "opencsv-scan-regtest-\(UUID().uuidString)"
+        let result = try OpenCsvChainView.scanSync(config: .init(
+            network: "regtest",
+            peers: ["127.0.0.1:18444"],
+            cacheDir: cacheDir,
+            fromHeight: 1,
+            requiredConfirmations: 1,
+        ))
+        #expect(result.tipHeight > 0)
+        #expect(result.filtersBytes > 0, "a real sync walks real filter bytes")
+        // Live diagnostic for the log: the honest bandwidth numbers.
+        print(
+            "OPENCSV_REGTEST scan sync: tip \(result.tipHeight), "
+            + "anchors \(result.anchors), filters \(result.filtersBytes) B, "
+            + "blocks \(result.blocksBytes) B",
+        )
+
+        // When the host chain carries marker-bearing anchor transactions
+        // (OPENCSV_REGTEST_MIN_ANCHORS says how many), the filter walk
+        // must discover them — that is the whole design.
+        let env = ProcessInfo.processInfo.environment
+        if let minAnchors = env["OPENCSV_REGTEST_MIN_ANCHORS"].flatMap(UInt64.init) {
+            #expect(result.anchors >= minAnchors, "the filter walk missed the marker anchor(s)")
+            #expect(result.blocksBytes > 0, "an anchor day downloads its block")
+        }
+
+        // With the index registered, a garbage consignment still fails on
+        // its own defects (encoding is checked first), as an error — never
+        // as a persistable verdict.
+        let wallet = try OpenCsvWallet(secretsJson: OpenCsvWallet.createSecrets())
+        #expect(throws: OpenCsvClientError.self) {
+            _ = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: Data([1, 2, 3]))
+        }
+
+        // A second sync resumes from the synced tip: no filter re-walk.
+        let resumed = try OpenCsvChainView.scanSync(config: .init(
+            network: "regtest",
+            peers: ["127.0.0.1:18444"],
+            cacheDir: cacheDir,
+            fromHeight: 1,
+            requiredConfirmations: 1,
+        ))
+        #expect(resumed.tipHeight == result.tipHeight)
+        #expect(resumed.anchors == result.anchors)
+        #expect(
+            resumed.filtersBytes <= result.filtersBytes,
+            "a resumed sync must not re-walk the whole filter chain",
+        )
+    }
+}

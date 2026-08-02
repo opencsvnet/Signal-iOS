@@ -6703,6 +6703,9 @@
 /* Status shown in an OpenCSV payment bubble when the proof verified. */
 "OPENCSV_PAYMENT_STATUS_VERIFIED" = "verified";
 
+/* Status shown in an OpenCSV payment bubble when the proof verified against the phone's own chain scan, trusting no server. */
+"OPENCSV_PAYMENT_STATUS_VERIFIED_SELF_SCAN" = "fully verified by this phone";
+
 /* Title of an OpenCSV payment bubble in the conversation view. */
 "OPENCSV_PAYMENT_TITLE" = "OpenCSV payment";
 
@@ -6711,6 +6714,9 @@
 
 /* Placeholder for the anchor server URL field in the OpenCSV send sheet. */
 "OPENCSV_SEND_ANCHOR_SERVER_PLACEHOLDER" = "Anchor server URL (http://host:port)";
+
+/* Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet. */
+"OPENCSV_SEND_SPV_PEERS_PLACEHOLDER" = "Bitcoin peers for self-scan (host:port, comma-separated)";
 
 /* Button that proves and sends an OpenCSV payment. */
 "OPENCSV_SEND_BUTTON" = "Prove & Send";
