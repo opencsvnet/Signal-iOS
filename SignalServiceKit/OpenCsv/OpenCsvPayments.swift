@@ -36,6 +36,10 @@ public enum OpenCsvPaymentsError: Error {
     /// confirmations still accruing, peers unreachable). Nothing is
     /// stored; the verification stays retryable.
     case spvUnsettled(status: String, reason: String?)
+    /// The scan index has not caught up to the payment's anchor yet
+    /// (AnchorNotFound / InsufficientConfirmations). Nothing is stored;
+    /// the sweep retries once the chain view advances.
+    case chainViewLagging(reason: String)
 }
 
 /// The OpenCSV payments service: owns the in-memory Rust wallet and runs the
@@ -93,6 +97,8 @@ public actor OpenCsvPayments {
         public let anchorServerUrl: URL?
         /// Bitcoin P2P peers powering self-scan and SPV point-verify.
         public let spvPeers: [String]
+        /// Bitcoin network for the chain views ("signet" default).
+        public let network: String
     }
 
     // MARK: - Receive pipeline
@@ -148,7 +154,11 @@ public actor OpenCsvPayments {
                 self.store.setVerdict(record, blob: blob, attachmentId: attachmentId, tx: tx)
                 self.touchOwners(attachmentId: attachmentId, tx: tx)
             }
-            Logger.info("consignment \(attachmentId): \(record.status)")
+            Logger.info(
+                "consignment \(attachmentId): \(record.status)"
+                + (record.reason.map { " (\($0))" } ?? "")
+                + " via \(record.chainView ?? "?")",
+            )
         } catch {
             Logger.warn("consignment \(attachmentId) not verifiable yet: \(error)")
         }
@@ -182,8 +192,22 @@ public actor OpenCsvPayments {
             if !scanSyncedThisLaunch {
                 await scanSyncIfNeeded()
             }
-            let scanned = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: blob)
+            var scanned = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: blob)
+            if !scanned.isVerified, Self.isChainLagReason(scanned.reason) {
+                // A payment message routinely beats the chain view by
+                // seconds: the anchor exists, the index just hasn't seen
+                // it. One fresh (resumed, cheap) sync and retry before
+                // any verdict is allowed to exist.
+                await scanSyncIfNeeded()
+                scanned = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: blob)
+            }
             guard scanned.isVerified else {
+                if Self.isChainLagReason(scanned.reason) {
+                    // Still behind after a resync: infrastructure, never a
+                    // final verdict — the sweep re-runs when the chain
+                    // catches up. A lagging tip must not reject a payment.
+                    throw OpenCsvPaymentsError.chainViewLagging(reason: scanned.reason ?? "?")
+                }
                 var verdict = OpenCsvVerdict(
                     status: "rejected",
                     reason: scanned.reason ?? "self-scan rejected",
@@ -255,6 +279,14 @@ public actor OpenCsvPayments {
         return .singleSnapshot
     }
 
+    /// Scan rejections that mean "the chain view hasn't caught up", not
+    /// "this payment is bad": never final, always retryable. Pure so the
+    /// classification is testable.
+    static func isChainLagReason(_ reason: String?) -> Bool {
+        guard let reason else { return false }
+        return reason.contains("AnchorNotFound") || reason.contains("InsufficientConfirmations")
+    }
+
     /// Verify a consignment blob against the current anchor snapshot,
     /// crediting any of our coins it contains.
     public func verifyBlob(_ blob: Data) async throws -> OpenCsvVerdict {
@@ -317,7 +349,7 @@ public actor OpenCsvPayments {
         let config = OpenCsvChainView.SpvConfig(
             network: network,
             peers: peers,
-            cacheDir: Self.chainCacheDir(),
+            cacheDir: Self.chainCacheDir(network: network),
         )
         // Network I/O for up to the config timeout: run it off the actor
         // so sends and other verifications can interleave. No wallet
@@ -374,7 +406,7 @@ public actor OpenCsvPayments {
         let config = OpenCsvChainView.ScanSyncConfig(
             network: network,
             peers: peers,
-            cacheDir: Self.chainCacheDir(),
+            cacheDir: Self.chainCacheDir(network: network),
             fromHeight: fromHeight,
             requiredConfirmations: Self.requiredConfirmations,
         )
@@ -393,11 +425,12 @@ public actor OpenCsvPayments {
     }
 
     /// The chain-view cache (CBF headers, filters, and the scan index
-    /// under `scan/`). Caches, not the group container: everything in it
-    /// is re-derivable from the network, and the wallet's real state never
-    /// lives here.
-    private static func chainCacheDir() -> String {
-        let dir = OWSFileSystem.cachesDirectoryPath() + "/OpenCsvCbf"
+    /// under `scan/`), namespaced per network so switching networks can
+    /// never replay one chain's cache against another. Caches, not the
+    /// group container: everything in it is re-derivable from the
+    /// network, and the wallet's real state never lives here.
+    private static func chainCacheDir(network: String) -> String {
+        let dir = OWSFileSystem.cachesDirectoryPath() + "/OpenCsvCbf/" + network
         _ = OWSFileSystem.ensureDirectoryExists(dir)
         return dir
     }
@@ -790,6 +823,7 @@ public actor OpenCsvPayments {
             unspentCoins: coins.filter(\.unspent),
             anchorServerUrl: db.read { store.anchorServerUrl(tx: $0) },
             spvPeers: db.read { store.spvPeers(tx: $0) },
+            network: db.read { store.network(tx: $0) },
         )
     }
 
@@ -809,6 +843,15 @@ public actor OpenCsvPayments {
             // not be silent: without peers, self-scan and SPV never run.
             Logger.error("could not persist SPV peers: \(error)")
         }
+    }
+
+    public func setNetwork(_ network: String) async {
+        await db.awaitableWrite { tx in
+            self.store.setNetwork(network, tx: tx)
+        }
+        // The scan index and header cache are per-network; a change makes
+        // any synced state meaningless until the next sync.
+        scanSyncedThisLaunch = false
     }
 
     /// A stored verdict, for the conversation cell (main-thread render path).
@@ -896,6 +939,27 @@ public actor OpenCsvPayments {
     }
 
     private func fetchAndCacheSnapshot() async throws -> String {
+        // Serverless first: when the phone has its own chain view, the
+        // crediting snapshot comes from the scan index — no server asked,
+        // and the tip agrees with the scan's own confirmation counting.
+        // Cached like any snapshot so offline startup replay keeps working.
+        let peers = db.read { self.store.spvPeers(tx: $0) }
+        if !peers.isEmpty {
+            if !scanSyncedThisLaunch {
+                await scanSyncIfNeeded()
+            }
+            if scanSyncedThisLaunch {
+                do {
+                    let snapshot = try OpenCsvChainView.exportScanSnapshot()
+                    await db.awaitableWrite { tx in
+                        self.store.setLastSnapshotJson(snapshot, tx: tx)
+                    }
+                    return snapshot
+                } catch {
+                    Logger.warn("scan-index snapshot export failed; falling back to server/cache: \(error)")
+                }
+            }
+        }
         let anchorUrl = db.read { store.anchorServerUrl(tx: $0) }
         guard let anchorUrl else {
             // Demo mode: no server configured; verification runs against

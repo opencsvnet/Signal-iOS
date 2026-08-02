@@ -58,7 +58,7 @@ DEPENDENCIES:
   - libwebp
   - lottie-ios
   - MobileCoin/CoreHTTP (from `https://github.com/mobilecoinofficial/MobileCoin-Swift`, tag `v6.0.3`)
-  - OpenCsv (from `https://github.com/opencsvnet/opencsv-rs.git`, commit `6dbbba648`)
+  - OpenCsv (from `https://github.com/opencsvnet/opencsv-rs.git`, commit `290c8e081`)
   - PureLayout
   - SDWebImage
   - SDWebImageWebPCoder
@@ -96,7 +96,7 @@ EXTERNAL SOURCES:
     :git: https://github.com/mobilecoinofficial/MobileCoin-Swift
     :tag: v6.0.3
   OpenCsv:
-    :commit: 6dbbba648
+    :commit: 290c8e081
     :git: https://github.com/opencsvnet/opencsv-rs.git
   SignalRingRTC:
     :git: https://github.com/signalapp/ringrtc
@@ -123,7 +123,7 @@ CHECKOUT OPTIONS:
     :git: https://github.com/mobilecoinofficial/MobileCoin-Swift
     :tag: v6.0.3
   OpenCsv:
-    :commit: 6dbbba648
+    :commit: 290c8e081
     :git: https://github.com/opencsvnet/opencsv-rs.git
   SignalRingRTC:
     :git: https://github.com/signalapp/ringrtc
@@ -152,6 +152,6 @@ SPEC CHECKSUMS:
   SQLCipher: ff2f045b20d675a73a70f7329395ddd4a2580063
   SwiftProtobuf: 9e106a71456f4d3f6a3b0c8fd87ef0be085efc38
 
-PODFILE CHECKSUM: 14500b8771059a5cd1a1785aaf063ce1413677db
+PODFILE CHECKSUM: c198076e68f17310aa57ba76bd214ecf56b40b35
 
 COCOAPODS: 1.17.0

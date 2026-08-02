@@ -316,6 +316,23 @@ public enum OpenCsvChainView {
         public var isVerified: Bool { status == "verified" }
     }
 
+    /// The anchor snapshot as the registered scan index sees it — the
+    /// serverless source for the crediting path. `tip_height` is the
+    /// index's synced tip, so confirmation counting in the crediting
+    /// verify agrees with the scan's own view. Throws ("no scan
+    /// registered") until a `scanSync` has succeeded this process.
+    public static func exportScanSnapshot() throws -> String {
+        guard let out = opencsv_scan_export_snapshot() else {
+            throw OpenCsvClientError.ffi("scan export returned null")
+        }
+        defer { opencsv_string_free(out) }
+        let raw = String(cString: out)
+        if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
+            throw OpenCsvClientError.ffi(failure.error)
+        }
+        return raw
+    }
+
     /// Decide a consignment against the local scan index. Fully local — no
     /// server is asked and none is believed, which is what earns the
     /// "verified by this phone" badge. Read-only: crediting stays with

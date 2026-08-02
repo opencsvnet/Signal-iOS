@@ -22,6 +22,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private let ownerLabel = UILabel()
     private let anchorServerField = UITextField()
     private let spvPeersField = UITextField()
+    private let networkField = UITextField()
     private let recipientField = UITextField()
     private let amountField = UITextField()
     private let sendButton = UIButton(type: .system)
@@ -69,6 +70,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 "Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet.",
             ),
             (
+                networkField,
+                "OPENCSV_SEND_NETWORK_PLACEHOLDER",
+                "Placeholder for the Bitcoin network field in the OpenCSV send sheet.",
+            ),
+            (
                 recipientField,
                 "OPENCSV_SEND_RECIPIENT_PLACEHOLDER",
                 "Placeholder for the recipient owner key field in the OpenCSV send sheet.",
@@ -90,6 +96,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         // pipeline needs them before the first consignment arrives.
         anchorServerField.addTarget(self, action: #selector(anchorServerChanged), for: .editingDidEnd)
         spvPeersField.addTarget(self, action: #selector(spvPeersChanged), for: .editingDidEnd)
+        networkField.addTarget(self, action: #selector(networkChanged), for: .editingDidEnd)
 
         sendButton.setTitle(
             OWSLocalizedString(
@@ -120,6 +127,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             ownerLabel,
             anchorServerField,
             spvPeersField,
+            networkField,
             recipientField,
             amountField,
             sendButton,
@@ -163,6 +171,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 self.ownerLabel.text = summary.owner
                 self.anchorServerField.text = summary.anchorServerUrl?.absoluteString
                 self.spvPeersField.text = summary.spvPeers.joined(separator: ", ")
+                self.networkField.text = summary.network
                 self.prefillRecipient(ownKey: summary.owner)
                 self.setStatus("")
             } catch {
@@ -252,6 +261,17 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         let url = anchorServerField.text?.strippedOrNil
         Task {
             await OpenCsvPayments.shared.setAnchorServerUrl(url)
+        }
+    }
+
+    @objc
+    private func networkChanged() {
+        // Empty restores the signet default (the store's fallback); the
+        // chain cache is per-network, so a change simply means the next
+        // sync starts that network from scratch.
+        let network = networkField.text?.strippedOrNil ?? "signet"
+        Task {
+            await OpenCsvPayments.shared.setNetwork(network)
         }
     }
 

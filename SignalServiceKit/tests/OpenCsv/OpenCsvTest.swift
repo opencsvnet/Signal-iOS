@@ -699,6 +699,18 @@ struct OpenCsvChainViewTest {
         #expect(OpenCsvPayments.chainViewPlan(peerCount: 0, indexerCount: 0) == .singleSnapshot)
     }
 
+    /// A lagging chain view must never produce a final verdict — found
+    /// live when a payment message beat the scan index by seconds and was
+    /// permanently rejected with AnchorNotFound.
+    @Test
+    func chainLagReasonsAreNeverFinal() {
+        #expect(OpenCsvPayments.isChainLagReason("AnchorNotFound"))
+        #expect(OpenCsvPayments.isChainLagReason("InsufficientConfirmations { have: 2, required: 6 }"))
+        #expect(!OpenCsvPayments.isChainLagReason("NullifierConflict"))
+        #expect(!OpenCsvPayments.isChainLagReason("NoOwnedOutput"))
+        #expect(!OpenCsvPayments.isChainLagReason(nil))
+    }
+
     // MARK: - Verdict record compatibility
 
     @Test
@@ -767,6 +779,23 @@ struct OpenCsvChainViewFfiTest {
             Issue.record("an unknown network must be rejected")
         } catch let OpenCsvClientError.ffi(message) {
             #expect(message.contains("marsnet") || message.lowercased().contains("network"))
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
+
+    /// Serverless crediting's precondition, pinned: exporting before any
+    /// sync is an infrastructure error (the crediting path falls back to
+    /// server/cache), with the exact string the FFI asserts in its own
+    /// tests. Skipped in live-regtest runs, where the scan registration
+    /// this asserts the absence of legitimately exists in-process.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCSV_REGTEST"] != "1"))
+    func exportSnapshotBeforeAnySyncThrowsNoScanRegistered() {
+        do {
+            _ = try OpenCsvChainView.exportScanSnapshot()
+            Issue.record("export without a sync must throw")
+        } catch let OpenCsvClientError.ffi(message) {
+            #expect(message.contains("no scan registered"))
         } catch {
             Issue.record("unexpected error type: \(error)")
         }
@@ -849,5 +878,32 @@ struct OpenCsvScanRegtestTest {
             resumed.filtersBytes <= result.filtersBytes,
             "a resumed sync must not re-walk the whole filter chain",
         )
+    }
+}
+
+/// Ad-hoc diagnostic (env-gated): reproduce the phone's exact scan-verify
+/// path against the live rig and print the raw verdict.
+struct OpenCsvScanDiagTest {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCSV_DIAG_CONSIGNMENT"] != nil))
+    func diagnoseScanVerifyVerdict() throws {
+        let env = ProcessInfo.processInfo.environment
+        let path = env["OPENCSV_DIAG_CONSIGNMENT"]!
+        let blob = try Data(contentsOf: URL(fileURLWithPath: path))
+        let cacheDir = NSTemporaryDirectory() + "scan-diag-\(UUID().uuidString)"
+        let sync = try OpenCsvChainView.scanSync(config: .init(
+            network: "regtest",
+            peers: ["127.0.0.1:18555"],
+            cacheDir: cacheDir,
+            fromHeight: 1,
+            requiredConfirmations: 6,
+        ))
+        print("DIAG sync tip \(sync.tipHeight) anchors \(sync.anchors)")
+        let wallet = try OpenCsvWallet(secretsJson: OpenCsvWallet.createSecrets())
+        do {
+            let verdict = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: blob)
+            print("DIAG verdict status=\(verdict.status ?? "nil") reason=\(verdict.reason ?? "nil")")
+        } catch {
+            print("DIAG threw: \(error)")
+        }
     }
 }

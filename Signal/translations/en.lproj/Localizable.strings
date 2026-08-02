@@ -6718,6 +6718,9 @@
 /* Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet. */
 "OPENCSV_SEND_SPV_PEERS_PLACEHOLDER" = "Bitcoin peers for self-scan (host:port, comma-separated)";
 
+/* Placeholder for the Bitcoin network field in the OpenCSV send sheet. */
+"OPENCSV_SEND_NETWORK_PLACEHOLDER" = "Network (signet, mainnet, regtest)";
+
 /* Button that proves and sends an OpenCSV payment. */
 "OPENCSV_SEND_BUTTON" = "Prove & Send";
 
