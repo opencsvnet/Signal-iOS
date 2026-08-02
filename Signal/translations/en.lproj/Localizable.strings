@@ -6787,6 +6787,33 @@
 /* Provenance line while verification is retryable. Embeds {{ the last failure reason }}. */
 "OPENCSV_EXPLORER_WITHHELD_FORMAT" = "Verification pending — last attempt: %@. Retries when the app is opened.";
 
+/* Balance line on the send sheet. Embeds {{ the balance }}. */
+"OPENCSV_SEND_BALANCE_FORMAT" = "Balance: %@";
+
+/* Shown when nobody in this chat has shared a payment key yet. */
+"OPENCSV_SEND_NO_RECIPIENT_KEY" = "No payment key in this chat yet. Ask them to open their wallet and share it \u2014 or share yours to get paid.";
+
+/* Send button state while the payment is being anchored on the chain. */
+"OPENCSV_SEND_STATE_ANCHORING" = "Anchoring\u2026";
+
+/* Send button state while the payment proof is generated on this phone. */
+"OPENCSV_SEND_STATE_PROVING" = "Proving\u2026";
+
+/* Send button state after the payment has been sent. */
+"OPENCSV_SEND_STATE_SENT" = "Sent";
+
+/* Recipient line on the send sheet. Embeds {{ the recipient's name }}. */
+"OPENCSV_SEND_TO_FORMAT" = "to %@";
+
+/* Disclosure button revealing advanced chain configuration. */
+"OPENCSV_WALLET_ADVANCED" = "Advanced";
+
+/* Section header for receiving payments (this wallet's key). */
+"OPENCSV_WALLET_RECEIVE" = "Receive";
+
+/* Title of the OpenCSV wallet screen. */
+"OPENCSV_WALLET_TITLE" = "Wallet";
+
 /* Placeholder for the amount field in the OpenCSV send sheet. */
 "OPENCSV_SEND_AMOUNT_PLACEHOLDER" = "Amount (base units)";
 

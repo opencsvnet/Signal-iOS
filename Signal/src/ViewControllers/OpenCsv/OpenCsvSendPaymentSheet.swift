@@ -6,28 +6,26 @@
 import SignalServiceKit
 import SignalUI
 import UIKit
-import UniformTypeIdentifiers
 
-/// Minimal OpenCSV payment send sheet (dev-flag prototype): shows the
-/// wallet's balance and receiving key, takes an amount and the recipient's
-/// owner key, proves + anchors the transfer, and delivers the consignment
-/// through the normal message pipeline as an `opencsv-consignment.bin`
-/// attachment. Also exposes the anchor-server URL setting — the one piece
-/// of configuration the wallet needs (never hardcoded).
+/// The OpenCSV send sheet: an amount, who it goes to, and a button.
+///
+/// Configuration is not sending — the wallet screen (nav bar) holds the
+/// receiving key, balance detail, and advanced chain settings. Payments
+/// happen in conversations, so the recipient is resolved from the key
+/// announced in this chat, never typed: hex does not appear here.
 class OpenCsvSendPaymentSheet: OWSViewController {
 
     private let thread: TSThread
 
     private let balanceLabel = UILabel()
-    private let ownerLabel = UILabel()
-    private let anchorServerField = UITextField()
-    private let spvPeersField = UITextField()
-    private let networkField = UITextField()
-    private let recipientField = UITextField()
     private let amountField = UITextField()
+    private let recipientLabel = UILabel()
     private let sendButton = UIButton(type: .system)
     private let shareKeyButton = UIButton(type: .system)
-    private let statusLabel = UILabel()
+    private let errorLabel = UILabel()
+
+    private var resolvedRecipientKey: String?
+    private var currency: String?
 
     init(thread: TSThread) {
         self.thread = thread
@@ -46,67 +44,31 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             target: self,
             action: #selector(didTapCancel),
         )
-
-        balanceLabel.font = .dynamicTypeTitle2
-        balanceLabel.adjustsFontSizeToFitWidth = true
-
-        ownerLabel.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        ownerLabel.numberOfLines = 2
-        ownerLabel.lineBreakMode = .byCharWrapping
-        ownerLabel.isUserInteractionEnabled = true
-        ownerLabel.addGestureRecognizer(
-            UITapGestureRecognizer(target: self, action: #selector(didTapOwnerKey)),
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            title: OWSLocalizedString(
+                "OPENCSV_WALLET_TITLE",
+                comment: "Title of the OpenCSV wallet screen.",
+            ),
+            style: .plain,
+            target: self,
+            action: #selector(didTapWallet),
         )
 
-        for (field, placeholderKey, placeholderComment) in [
-            (
-                anchorServerField,
-                "OPENCSV_SEND_ANCHOR_SERVER_PLACEHOLDER",
-                "Placeholder for the anchor server URL field in the OpenCSV send sheet.",
-            ),
-            (
-                spvPeersField,
-                "OPENCSV_SEND_SPV_PEERS_PLACEHOLDER",
-                "Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet.",
-            ),
-            (
-                networkField,
-                "OPENCSV_SEND_NETWORK_PLACEHOLDER",
-                "Placeholder for the Bitcoin network field in the OpenCSV send sheet.",
-            ),
-            (
-                recipientField,
-                "OPENCSV_SEND_RECIPIENT_PLACEHOLDER",
-                "Placeholder for the recipient owner key field in the OpenCSV send sheet.",
-            ),
-            (
-                amountField,
-                "OPENCSV_SEND_AMOUNT_PLACEHOLDER",
-                "Placeholder for the amount field in the OpenCSV send sheet.",
-            ),
-        ] {
-            field.placeholder = OWSLocalizedString(placeholderKey, comment: placeholderComment)
-            field.borderStyle = .roundedRect
-            field.autocapitalizationType = .none
-            field.autocorrectionType = .no
-            field.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        }
+        balanceLabel.font = .dynamicTypeFootnote
+        balanceLabel.textColor = Theme.secondaryTextAndIconColor
+
+        amountField.font = UIFont.dynamicTypeLargeTitle1Clamped.withSize(44)
         amountField.keyboardType = .numberPad
-        // Persist chain settings as soon as they are entered: the receive
-        // pipeline needs them before the first consignment arrives.
-        anchorServerField.addTarget(self, action: #selector(anchorServerChanged), for: .editingDidEnd)
-        spvPeersField.addTarget(self, action: #selector(spvPeersChanged), for: .editingDidEnd)
-        networkField.addTarget(self, action: #selector(networkChanged), for: .editingDidEnd)
+        amountField.textAlignment = .center
+        amountField.placeholder = "0"
 
-        sendButton.setTitle(
-            OWSLocalizedString(
-                "OPENCSV_SEND_BUTTON",
-                comment: "Button that proves and sends an OpenCSV payment.",
-            ),
-            for: .normal,
-        )
+        recipientLabel.font = .dynamicTypeBody
+        recipientLabel.textAlignment = .center
+        recipientLabel.numberOfLines = 0
+
         sendButton.titleLabel?.font = .dynamicTypeHeadline
         sendButton.addTarget(self, action: #selector(didTapSend), for: .touchUpInside)
+        setSendState(.ready)
 
         shareKeyButton.setTitle(
             OWSLocalizedString(
@@ -117,48 +79,85 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         )
         shareKeyButton.titleLabel?.font = .dynamicTypeBody
         shareKeyButton.addTarget(self, action: #selector(didTapShareKey), for: .touchUpInside)
+        shareKeyButton.isHidden = true
 
-        statusLabel.font = .dynamicTypeFootnote
-        statusLabel.textColor = Theme.secondaryTextAndIconColor
-        statusLabel.numberOfLines = 0
+        errorLabel.font = .dynamicTypeFootnote
+        errorLabel.textColor = .ows_accentRed
+        errorLabel.numberOfLines = 0
+        errorLabel.textAlignment = .center
 
         let stack = UIStackView(arrangedSubviews: [
             balanceLabel,
-            ownerLabel,
-            anchorServerField,
-            spvPeersField,
-            networkField,
-            recipientField,
             amountField,
+            recipientLabel,
             sendButton,
             shareKeyButton,
-            statusLabel,
+            errorLabel,
         ])
         stack.axis = .vertical
-        stack.spacing = 12
+        stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 32),
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
         ])
 
-        refreshWalletSummary()
+        refresh()
     }
 
-    private func refreshWalletSummary() {
-        setStatus(OWSLocalizedString(
-            "OPENCSV_SEND_STATUS_LOADING",
-            comment: "Status shown while the OpenCSV wallet is loading.",
-        ))
+    // MARK: - State
+
+    private enum SendState {
+        case ready
+        case proving
+        case anchoring
+        case sent
+    }
+
+    private func setSendState(_ state: SendState) {
+        let (key, comment, enabled): (String, String, Bool) = {
+            switch state {
+            case .ready:
+                return (
+                    "OPENCSV_SEND_BUTTON",
+                    "Button that proves and sends an OpenCSV payment.",
+                    true
+                )
+            case .proving:
+                return (
+                    "OPENCSV_SEND_STATE_PROVING",
+                    "Send button state while the payment proof is generated on this phone.",
+                    false
+                )
+            case .anchoring:
+                return (
+                    "OPENCSV_SEND_STATE_ANCHORING",
+                    "Send button state while the payment is being anchored on the chain.",
+                    false
+                )
+            case .sent:
+                return (
+                    "OPENCSV_SEND_STATE_SENT",
+                    "Send button state after the payment has been sent.",
+                    false
+                )
+            }
+        }()
+        sendButton.setTitle(OWSLocalizedString(key, comment: comment), for: .normal)
+        sendButton.isEnabled = enabled
+    }
+
+    private func refresh() {
         let threadUniqueId = thread.uniqueId
         Task {
             // Give unverified consignments in this chat another chance
-            // (e.g. ones that arrived before the anchor server was set).
+            // before showing a balance that might be about to change.
             await OpenCsvPayments.shared.retryPendingVerifications(threadUniqueId: threadUniqueId)
             do {
                 let summary = try await OpenCsvPayments.shared.walletSummary()
+                self.currency = summary.balances.first?.currency
                 let balances = summary.balances
                     .map { "\($0.amount) \($0.currency ?? $0.assetId.prefix(8).lowercased())" }
                     .joined(separator: ", ")
@@ -167,27 +166,23 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                         "OPENCSV_SEND_NO_BALANCE",
                         comment: "Shown in the OpenCSV send sheet when the wallet is empty.",
                     )
-                    : balances
-                self.ownerLabel.text = summary.owner
-                self.anchorServerField.text = summary.anchorServerUrl?.absoluteString
-                self.spvPeersField.text = summary.spvPeers.joined(separator: ", ")
-                self.networkField.text = summary.network
-                self.prefillRecipient(ownKey: summary.owner)
-                self.setStatus("")
+                    : String.nonPluralLocalizedStringWithFormat(
+                        OWSLocalizedString(
+                            "OPENCSV_SEND_BALANCE_FORMAT",
+                            comment: "Balance line on the send sheet. Embeds {{ the balance }}.",
+                        ),
+                        balances,
+                    )
+                self.resolveRecipient(ownKey: summary.owner)
             } catch {
-                self.setStatus("\(error)")
+                self.showError("\(error)")
             }
         }
     }
 
-    private func setStatus(_ text: String) {
-        statusLabel.text = text
-    }
-
-    /// Prefill the recipient from the newest address announced in this
-    /// chat (payments carry the sender's key; "Share my key" posts it).
-    private func prefillRecipient(ownKey: String) {
-        guard recipientField.text?.strippedOrNil == nil else { return }
+    /// The recipient is the newest key announced in this chat by someone
+    /// other than us — resolved, named, and never typed.
+    private func resolveRecipient(ownKey: String) {
         let thread = self.thread
         let found: (key: String, announcer: String)? = SSKEnvironment.shared.databaseStorageRef.read { tx in
             var found: (key: String, announcer: String)?
@@ -201,8 +196,6 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                         let key = OpenCsvAttachmentDetector.parseAddress(fromBody: body),
                         key != ownKey
                     {
-                        // Say whose key this is: a pasted address is only
-                        // as trustworthy as the person who posted it.
                         let announcer: String
                         if let incoming = message as? TSIncomingMessage {
                             announcer = SSKEnvironment.shared.contactManagerRef.displayName(
@@ -223,31 +216,31 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             return found
         }
         if let found {
-            recipientField.text = found.key
+            resolvedRecipientKey = found.key
             let format = OWSLocalizedString(
-                "OPENCSV_SEND_RECIPIENT_FROM_CHAT_FORMAT",
-                comment: "Status shown when the recipient key was prefilled. Embeds {{ who announced it }}.",
+                "OPENCSV_SEND_TO_FORMAT",
+                comment: "Recipient line on the send sheet. Embeds {{ the recipient's name }}.",
             )
-            setStatus(String.nonPluralLocalizedStringWithFormat(format, found.announcer))
+            recipientLabel.text = String.nonPluralLocalizedStringWithFormat(format, found.announcer)
+            sendButton.isHidden = false
+            shareKeyButton.isHidden = true
+        } else {
+            resolvedRecipientKey = nil
+            recipientLabel.text = OWSLocalizedString(
+                "OPENCSV_SEND_NO_RECIPIENT_KEY",
+                comment: "Shown when nobody in this chat has shared a payment key yet.",
+            )
+            sendButton.isHidden = true
+            shareKeyButton.isHidden = false
         }
     }
 
-    @objc
-    private func didTapShareKey() {
-        guard let owner = ownerLabel.text?.strippedOrNil else { return }
-        let thread = self.thread
-        ThreadUtil.enqueueMessage(
-            body: MessageBody(
-                text: OpenCsvAttachmentDetector.addressAnnouncement(owner: owner),
-                ranges: .empty,
-            ),
-            thread: thread,
-        )
-        setStatus(OWSLocalizedString(
-            "OPENCSV_SEND_KEY_SHARED",
-            comment: "Confirmation that the wallet's receiving key was posted to the chat.",
-        ))
+    private func showError(_ text: String) {
+        errorLabel.text = text
+        setSendState(.ready)
     }
+
+    // MARK: - Actions
 
     @objc
     private func didTapCancel() {
@@ -255,36 +248,66 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     }
 
     @objc
-    private func anchorServerChanged() {
-        // Editing to empty is a deliberate clear; a nil field that was
-        // never populated is not (see didTapSend).
-        let url = anchorServerField.text?.strippedOrNil
+    private func didTapWallet() {
+        navigationController?.pushViewController(
+            OpenCsvWalletViewController(thread: thread),
+            animated: true,
+        )
+    }
+
+    @objc
+    private func didTapShareKey() {
         Task {
-            await OpenCsvPayments.shared.setAnchorServerUrl(url)
+            guard let owner = try? await OpenCsvPayments.shared.walletSummary().owner else { return }
+            ThreadUtil.enqueueMessage(
+                body: MessageBody(
+                    text: OpenCsvAttachmentDetector.addressAnnouncement(owner: owner),
+                    ranges: .empty,
+                ),
+                thread: self.thread,
+            )
+            self.presentToast(text: OWSLocalizedString(
+                "OPENCSV_SEND_KEY_SHARED",
+                comment: "Confirmation that the wallet's receiving key was posted to the chat.",
+            ))
         }
     }
 
     @objc
-    private func networkChanged() {
-        // Empty restores the signet default (the store's fallback); the
-        // chain cache is per-network, so a change simply means the next
-        // sync starts that network from scratch.
-        let network = networkField.text?.strippedOrNil ?? "signet"
-        Task {
-            await OpenCsvPayments.shared.setNetwork(network)
+    private func didTapSend() {
+        errorLabel.text = nil
+        guard let recipient = resolvedRecipientKey else { return }
+        guard let amountText = amountField.text, let amount = UInt64(amountText), amount > 0 else {
+            showError(OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_BAD_AMOUNT",
+                comment: "Error shown when the OpenCSV amount field is not a positive integer.",
+            ))
+            return
         }
-    }
-
-    @objc
-    private func spvPeersChanged() {
-        // Comma-separated host:port entries; one field powers both the
-        // self-scan exclusion index and SPV point verification.
-        let peers = (spvPeersField.text ?? "")
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        // Past proving, the coins are spent on-chain: the button never
+        // re-arms after anchoring (tapping again would spend a second
+        // pair of coins) — the states make that visible.
+        setSendState(.proving)
+        let thread = self.thread
         Task {
-            await OpenCsvPayments.shared.setSpvPeers(peers)
+            do {
+                self.setSendState(.anchoring)
+                let delivery = try await OpenCsvPayments.shared.sendPayment(
+                    toOwnerHex: recipient,
+                    amount: amount,
+                    threadUniqueId: thread.uniqueId,
+                )
+                self.setSendState(.sent)
+                do {
+                    try await OpenCsvDelivery.deliver(delivery)
+                } catch {
+                    Logger.warn("OpenCSV consignment queued for retry: \(error)")
+                }
+                self.dismiss(animated: true)
+            } catch {
+                // Nothing was anchored, so retrying is safe.
+                self.showError(Self.userFacingMessage(for: error))
+            }
         }
     }
 
@@ -329,69 +352,4 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             )
         }
     }
-
-    @objc
-    private func didTapOwnerKey() {
-        UIPasteboard.general.string = ownerLabel.text
-        setStatus(OWSLocalizedString(
-            "OPENCSV_SEND_KEY_COPIED",
-            comment: "Confirmation that the wallet's receiving key was copied.",
-        ))
-    }
-
-    @objc
-    private func didTapSend() {
-        guard let recipient = recipientField.text?.strippedOrNil else {
-            setStatus(OWSLocalizedString(
-                "OPENCSV_SEND_ERROR_NO_RECIPIENT",
-                comment: "Error shown when the OpenCSV recipient key field is empty.",
-            ))
-            return
-        }
-        guard let amountText = amountField.text, let amount = UInt64(amountText), amount > 0 else {
-            setStatus(OWSLocalizedString(
-                "OPENCSV_SEND_ERROR_BAD_AMOUNT",
-                comment: "Error shown when the OpenCSV amount field is not a positive integer.",
-            ))
-            return
-        }
-        sendButton.isEnabled = false
-        setStatus(OWSLocalizedString(
-            "OPENCSV_SEND_STATUS_PROVING",
-            comment: "Status shown while an OpenCSV payment proof is being generated.",
-        ))
-
-        // Only persist a URL the user actually typed: the field is filled
-        // asynchronously, so a nil here can simply mean "not loaded yet"
-        // and must not erase the configured server.
-        let anchorServer = anchorServerField.text?.strippedOrNil
-        let thread = self.thread
-        Task {
-            do {
-                if let anchorServer {
-                    await OpenCsvPayments.shared.setAnchorServerUrl(anchorServer)
-                }
-                let delivery = try await OpenCsvPayments.shared.sendPayment(
-                    toOwnerHex: recipient,
-                    amount: amount,
-                    threadUniqueId: thread.uniqueId,
-                )
-                // Past this point the payment is anchored on-chain and the
-                // coins are spent. A delivery failure must NOT re-arm Send:
-                // tapping again would spend a second pair of coins. The
-                // consignment is persisted and retried on foreground.
-                do {
-                    try await OpenCsvDelivery.deliver(delivery)
-                } catch {
-                    Logger.warn("OpenCSV consignment queued for retry: \(error)")
-                }
-                self.dismiss(animated: true)
-            } catch {
-                // Nothing was anchored, so retrying is safe.
-                self.sendButton.isEnabled = true
-                self.setStatus(Self.userFacingMessage(for: error))
-            }
-        }
-    }
-
 }
