@@ -352,6 +352,8 @@ extension EditHistoryTableSheetViewController: CVComponentDelegate {
 
     func didTapPayment(_ payment: PaymentsHistoryItem) {}
 
+    func didTapOpenCsvPayment(attachmentId: Attachment.IDType) {}
+
     func didChangeLongPress(_ itemViewModel: CVItemViewModelImpl) {}
 
     func didEndLongPress(_ itemViewModel: CVItemViewModelImpl) {}

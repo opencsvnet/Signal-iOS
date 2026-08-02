@@ -711,6 +711,32 @@ struct OpenCsvChainViewTest {
         #expect(!OpenCsvPayments.isChainLagReason(nil))
     }
 
+    /// The explorer sheet's evidence join: full snapshot entry (txid,
+    /// record, ctx) at a verdict's anchor location.
+    @Test
+    func snapshotEntryDetailsJoin() throws {
+        let snapshot = """
+        {"tip_height":10,"entries":[
+          {"height":3,"position":0,"txid":"aa11","ctx":"cc22","record":"dd33"}]}
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let anchor = try decoder.decode(
+            OpenCsvVerdict.Anchor.self,
+            from: Data(#"{"height":3,"position":0}"#.utf8),
+        )
+        let entry = OpenCsvChainView.snapshotEntryDetails(fromSnapshotJson: snapshot, anchor: anchor)
+        #expect(entry?.txidHex == "aa11")
+        #expect(entry?.recordHex == "dd33")
+        #expect(entry?.ctxHex == "cc22")
+
+        let missing = try decoder.decode(
+            OpenCsvVerdict.Anchor.self,
+            from: Data(#"{"height":9,"position":9}"#.utf8),
+        )
+        #expect(OpenCsvChainView.snapshotEntryDetails(fromSnapshotJson: snapshot, anchor: missing) == nil)
+    }
+
     // MARK: - Verdict record compatibility
 
     @Test

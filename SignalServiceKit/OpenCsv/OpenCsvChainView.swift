@@ -121,8 +121,27 @@ public enum OpenCsvChainView {
             let position: UInt32
             let txid: String
             let record: String
+            let ctx: String?
         }
         let entries: [Entry]
+    }
+
+    /// The full snapshot entry at an anchor's location — what the explorer
+    /// sheet shows (txid, record, ctx). Nil when the snapshot has no entry
+    /// there.
+    public static func snapshotEntryDetails(
+        fromSnapshotJson snapshotJson: String,
+        anchor: OpenCsvVerdict.Anchor,
+    ) -> (txidHex: String, recordHex: String, ctxHex: String?)? {
+        guard
+            let index = try? decoder.decode(SnapshotIndex.self, from: Data(snapshotJson.utf8)),
+            let entry = index.entries.first(where: {
+                $0.height == anchor.height && $0.position == anchor.position
+            })
+        else {
+            return nil
+        }
+        return (entry.txid, entry.record, entry.ctx)
     }
 
     /// Build the SPV claim for the snapshot entry a verified consignment's

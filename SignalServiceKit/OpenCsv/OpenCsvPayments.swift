@@ -78,6 +78,14 @@ public actor OpenCsvPayments {
     /// consults the index the last successful sync registered, so until
     /// this is true a scan decision would only throw "no scan registered".
     private var scanSyncedThisLaunch = false
+    /// The last successful sync's counters, for the explorer sheet's
+    /// "this phone's chain view" section. In-memory only.
+    private var lastScanSyncSummary: OpenCsvChainView.ScanSyncResult?
+    /// The last withheld (retryable) verification failure per attachment,
+    /// for the explorer sheet. Deliberately never persisted — a withheld
+    /// verdict stores nothing by design; this is display-only honesty
+    /// about the most recent attempt.
+    private var lastWithheldReason = [Attachment.IDType: String]()
     /// Guards against overlapping syncs: the sync writes the on-disk
     /// index, and app-activation can fire while a lazy sync is running.
     private var scanSyncInFlight = false
@@ -154,12 +162,14 @@ public actor OpenCsvPayments {
                 self.store.setVerdict(record, blob: blob, attachmentId: attachmentId, tx: tx)
                 self.touchOwners(attachmentId: attachmentId, tx: tx)
             }
+            lastWithheldReason[attachmentId] = nil
             Logger.info(
                 "consignment \(attachmentId): \(record.status)"
                 + (record.reason.map { " (\($0))" } ?? "")
                 + " via \(record.chainView ?? "?")",
             )
         } catch {
+            lastWithheldReason[attachmentId] = "\(error)"
             Logger.warn("consignment \(attachmentId) not verifiable yet: \(error)")
         }
     }
@@ -415,6 +425,7 @@ public actor OpenCsvPayments {
                 try OpenCsvChainView.scanSync(config: config)
             }
             scanSyncedThisLaunch = true
+            lastScanSyncSummary = result
             Logger.info(
                 "self-scan synced to \(result.tipHeight): \(result.anchors) anchor(s), "
                 + "\(result.filtersBytes) filter byte(s), \(result.blocksBytes) block byte(s)",
@@ -858,6 +869,107 @@ public actor OpenCsvPayments {
     public nonisolated func verdict(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> OpenCsvVerdictRecord? {
         OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
             .verdict(attachmentId: attachmentId, tx: tx)
+    }
+
+    // MARK: - Explorer (the phone-as-explorer detail sheet)
+
+    /// Everything the tap-through detail sheet shows: the stored verdict
+    /// (authoritative), the chain evidence derived live from the phone's
+    /// own view, and what that view cost to build. Read-only — deriving
+    /// detail never writes a verdict.
+    public struct ExplorerDetail {
+        public let verdict: OpenCsvVerdictRecord?
+        /// Last withheld (retryable) failure, when no verdict exists yet.
+        public let withheldReason: String?
+        /// Chain evidence, present when it could be derived live.
+        public let anchorHeight: UInt64?
+        public let anchorPosition: UInt32?
+        public let txidHex: String?
+        public let recordHex: String?
+        public let ctxHex: String?
+        /// Confirmations of the anchor against the phone's current tip.
+        public let confirmations: UInt64?
+        public let tipHeight: UInt64?
+        /// The last scan sync's counters (nil before the first sync).
+        public let syncSummary: OpenCsvChainView.ScanSyncResult?
+        public let network: String
+        /// The stored consignment blob, for the share/open row.
+        public let blob: Data?
+    }
+
+    /// Build the detail sheet's model. Chain evidence is derived at
+    /// tap-time by re-verifying the stored blob against the scan-index
+    /// snapshot — always-fresh confirmations, works for old verdicts, and
+    /// the stored verdict stays authoritative regardless of the outcome.
+    public func explorerDetail(attachmentId: Attachment.IDType) async -> ExplorerDetail {
+        let (record, blob, network) = db.read { tx in
+            (
+                self.store.verdict(attachmentId: attachmentId, tx: tx),
+                self.store.replayBlobs(tx: tx).first { $0.entry == "a:\(attachmentId)" }?.blob,
+                self.store.network(tx: tx),
+            )
+        }
+        var anchor: OpenCsvVerdict.Anchor?
+        var txid: String?
+        var recordHex: String?
+        var ctx: String?
+        var confirmations: UInt64?
+        var tip: UInt64?
+        if let blob, let wallet = try? await ensureWallet() {
+            if !scanSyncedThisLaunch {
+                await scanSyncIfNeeded()
+            }
+            if let snapshot = try? OpenCsvChainView.exportScanSnapshot(),
+               let verdict = try? wallet.verify(
+                blob: blob,
+                snapshotJson: snapshot,
+                requiredConfirmations: 0,
+               ),
+               let liveAnchor = verdict.anchor {
+                anchor = liveAnchor
+                if let entry = OpenCsvChainView.snapshotEntryDetails(
+                    fromSnapshotJson: snapshot,
+                    anchor: liveAnchor,
+                ) {
+                    txid = entry.txidHex
+                    recordHex = entry.recordHex
+                    ctx = entry.ctxHex
+                }
+                tip = lastScanSyncSummary?.tipHeight
+                if let tip, tip >= liveAnchor.height {
+                    confirmations = tip - liveAnchor.height + 1
+                }
+            }
+        }
+        return ExplorerDetail(
+            verdict: record,
+            withheldReason: record == nil ? lastWithheldReason[attachmentId] : nil,
+            anchorHeight: anchor?.height,
+            anchorPosition: anchor?.position,
+            txidHex: txid,
+            recordHex: recordHex,
+            ctxHex: ctx,
+            confirmations: confirmations,
+            tipHeight: tip,
+            syncSummary: lastScanSyncSummary,
+            network: network,
+            blob: blob,
+        )
+    }
+
+    /// The explorer's "Re-verify now": a fresh sync plus a fresh scan
+    /// decision on the stored blob. Read-only — reports what the chain
+    /// says right now; the stored verdict is not rewritten.
+    public func reVerify(attachmentId: Attachment.IDType) async throws -> Bool {
+        guard let blob = db.read(block: { tx in
+            self.store.replayBlobs(tx: tx).first { $0.entry == "a:\(attachmentId)" }?.blob
+        }) else {
+            throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: 0)
+        }
+        let wallet = try await ensureWallet()
+        await scanSyncIfNeeded()
+        let scanned = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: blob)
+        return scanned.isVerified
     }
 
     // MARK: - Wallet lifecycle

@@ -156,6 +156,8 @@ public protocol CVComponentDelegate: AnyObject, AudioMessageViewDelegate, CVPoll
 
     func didTapPayment(_ payment: PaymentsHistoryItem)
 
+    func didTapOpenCsvPayment(attachmentId: Attachment.IDType)
+
     func didTapGroupInviteLink(url: PossibleGroupInviteLinkUrl)
 
     func didTapProxyLink(url: URL)

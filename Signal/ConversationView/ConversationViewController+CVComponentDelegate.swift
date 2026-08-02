@@ -712,6 +712,13 @@ extension ConversationViewController: CVComponentDelegate {
         navigationController?.pushViewController(paymentsDetailViewController, animated: true)
     }
 
+    public func didTapOpenCsvPayment(attachmentId: Attachment.IDType) {
+        AssertIsOnMainThread()
+
+        let explorer = OpenCsvPaymentExplorerViewController(attachmentId: attachmentId)
+        present(OWSNavigationController(rootViewController: explorer), animated: true)
+    }
+
     public func didTapGroupInviteLink(url: PossibleGroupInviteLinkUrl) {
         AssertIsOnMainThread()
 

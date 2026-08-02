@@ -6709,6 +6709,84 @@
 /* Title of an OpenCSV payment bubble in the conversation view. */
 "OPENCSV_PAYMENT_TITLE" = "OpenCSV payment";
 
+/* Label for the anchor's block height and position. */
+"OPENCSV_EXPLORER_ANCHOR_LOCATION" = "Anchor";
+
+/* Label for the number of anchors in the phone's index. */
+"OPENCSV_EXPLORER_ANCHORS_INDEXED" = "Anchors indexed";
+
+/* Label for the confirmations row. */
+"OPENCSV_EXPLORER_CONFIRMATIONS" = "Confirmations";
+
+/* Confirmations row. Embeds {{ confirmation count }} and {{ the phone's synced tip height }}. */
+"OPENCSV_EXPLORER_CONFIRMATIONS_FORMAT" = "%@ (tip %@)";
+
+/* Toast confirming a value was copied to the clipboard. */
+"OPENCSV_EXPLORER_COPIED" = "Copied";
+
+/* Label for the anchor binding context row. */
+"OPENCSV_EXPLORER_CTX" = "Binding ctx";
+
+/* Label for the verification date row. */
+"OPENCSV_EXPLORER_DATE" = "Verified";
+
+/* Plain-language double-spend result shown for a verified OpenCSV payment. */
+"OPENCSV_EXPLORER_EXCLUSION" = "No earlier occurrence of this coin was found on the chain.";
+
+/* Provenance line for a payment verified by cross-checking independent indexers. */
+"OPENCSV_EXPLORER_PROVENANCE_CROSS_CHECK" = "Verified by cross-checking independent indexers";
+
+/* Provenance line for a payment this phone verified against the chain with no server. */
+"OPENCSV_EXPLORER_PROVENANCE_SELF_SCAN" = "Fully verified by this phone — no server was asked, none was believed";
+
+/* Provenance line for a payment verified against a single anchor snapshot. */
+"OPENCSV_EXPLORER_PROVENANCE_SNAPSHOT" = "Verified against a single anchor snapshot (demo trust)";
+
+/* Label for the 64-byte anchor record row. */
+"OPENCSV_EXPLORER_RECORD" = "Record";
+
+/* Provenance line for a rejected payment. Embeds {{ the rejection reason }}. */
+"OPENCSV_EXPLORER_REJECTED_FORMAT" = "Rejected: %@";
+
+/* Button that re-runs verification against the phone's current chain view. */
+"OPENCSV_EXPLORER_REVERIFY" = "Re-verify now";
+
+/* Toast shown when a live re-verification does not verify. */
+"OPENCSV_EXPLORER_REVERIFY_FAILED" = "Did not verify against the current chain view";
+
+/* Toast shown when a live re-verification succeeds. */
+"OPENCSV_EXPLORER_REVERIFY_OK" = "Verified again, just now, by this phone";
+
+/* Section header for the on-chain anchor evidence. */
+"OPENCSV_EXPLORER_SECTION_ANCHOR" = "Chain evidence";
+
+/* Section header for the phone's own chain view stats. */
+"OPENCSV_EXPLORER_SECTION_CHAIN_VIEW" = "This phone's chain view";
+
+/* Button that shares the raw consignment file. */
+"OPENCSV_EXPLORER_SHARE_FILE" = "Share consignment file";
+
+/* Label for the bytes the last sync cost. */
+"OPENCSV_EXPLORER_SYNC_COST" = "Last sync cost";
+
+/* Label for the phone's synced chain tip. */
+"OPENCSV_EXPLORER_TIP" = "Synced tip";
+
+/* Title of the OpenCSV payment detail (explorer) sheet. */
+"OPENCSV_EXPLORER_TITLE" = "Payment details";
+
+/* Label for the anchor transaction id row. */
+"OPENCSV_EXPLORER_TXID" = "Transaction";
+
+/* Button opening the anchor transaction on a public block explorer. */
+"OPENCSV_EXPLORER_VIEW_EXTERNAL" = "View on public explorer";
+
+/* Provenance line while verification has not yet been attempted. */
+"OPENCSV_EXPLORER_WITHHELD_NO_ATTEMPT" = "Verification pending — retries when the app is opened.";
+
+/* Provenance line while verification is retryable. Embeds {{ the last failure reason }}. */
+"OPENCSV_EXPLORER_WITHHELD_FORMAT" = "Verification pending — last attempt: %@. Retries when the app is opened.";
+
 /* Placeholder for the amount field in the OpenCSV send sheet. */
 "OPENCSV_SEND_AMOUNT_PLACEHOLDER" = "Amount (base units)";
 

@@ -1378,6 +1378,7 @@
 		66FC638E29EDABAC00F00DAC /* SearchDisplayConfigurations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FC638D29EDABAC00F00DAC /* SearchDisplayConfigurations.swift */; };
 		66FFDADC2C823C270079C0E7 /* BackupArchive+Contexts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FFDADB2C823C270079C0E7 /* BackupArchive+Contexts.swift */; };
 		7028CF98589C199B6F5C7A02 /* OpenCsvSendPaymentSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE53056093A0BDE880BE5CB3 /* OpenCsvSendPaymentSheet.swift */; };
+		0C5E01AB44D21E77A3F09B01 /* OpenCsvPaymentExplorerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5E01AB44D21E77A3F09B02 /* OpenCsvPaymentExplorerViewController.swift */; };
 		7203F5332D53B53000639949 /* UInt64+SSK.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7203F5322D53B52900639949 /* UInt64+SSK.swift */; };
 		7203F5352D53B83500639949 /* TimeInterval+SSK.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7203F5342D53B83000639949 /* TimeInterval+SSK.swift */; };
 		720547F22B9C8F9900E2CF2F /* AvatarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 883A7FD1269F642F00841DF9 /* AvatarModel.swift */; };
@@ -6314,6 +6315,7 @@
 		C1FE1F602C80CDC30031860B /* AttachmentBackupThumbnail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentBackupThumbnail.swift; sourceTree = "<group>"; };
 		C597942EF64D456BBE9782A2 /* Pods-SignalTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SignalTests.debug.xcconfig"; path = "Target Support Files/Pods-SignalTests/Pods-SignalTests.debug.xcconfig"; sourceTree = "<group>"; };
 		CE53056093A0BDE880BE5CB3 /* OpenCsvSendPaymentSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenCsvSendPaymentSheet.swift; sourceTree = "<group>"; };
+		0C5E01AB44D21E77A3F09B02 /* OpenCsvPaymentExplorerViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenCsvPaymentExplorerViewController.swift; sourceTree = "<group>"; };
 		D04C0CF3D967B70249C31E0D /* OpenCsvDelivery.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenCsvDelivery.swift; sourceTree = "<group>"; };
 		D2179CFB16BB0B3A0006F3AB /* CoreTelephony.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreTelephony.framework; path = System/Library/Frameworks/CoreTelephony.framework; sourceTree = SDKROOT; };
 		D2179CFD16BB0B480006F3AB /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
@@ -8759,6 +8761,7 @@
 			isa = PBXGroup;
 			children = (
 				CE53056093A0BDE880BE5CB3 /* OpenCsvSendPaymentSheet.swift */,
+				0C5E01AB44D21E77A3F09B02 /* OpenCsvPaymentExplorerViewController.swift */,
 				D04C0CF3D967B70249C31E0D /* OpenCsvDelivery.swift */,
 			);
 			name = OpenCsv;
@@ -19072,6 +19075,7 @@
 				76616C9D2A266A05005F7001 /* WindowManager.swift in Sources */,
 				9118460AF0C1A35F2437E46F /* CVComponentOpenCsvPayment.swift in Sources */,
 				7028CF98589C199B6F5C7A02 /* OpenCsvSendPaymentSheet.swift in Sources */,
+				0C5E01AB44D21E77A3F09B01 /* OpenCsvPaymentExplorerViewController.swift in Sources */,
 				81B90CAE777F0859B14F003D /* OpenCsvDelivery.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

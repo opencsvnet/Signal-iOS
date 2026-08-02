@@ -143,6 +143,20 @@ public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
         )
     }
 
+    override public func handleTap(
+        sender: UIGestureRecognizer,
+        componentDelegate: CVComponentDelegate,
+        componentView: CVComponentView,
+        renderItem: CVRenderItem,
+    ) -> Bool {
+        // The phone is the explorer: the sheet shows the evidence this
+        // device gathered for (or against) the payment.
+        componentDelegate.didTapOpenCsvPayment(
+            attachmentId: openCsvPayment.attachment.attachment.attachment.id,
+        )
+        return true
+    }
+
     public func measure(
         maxWidth: CGFloat,
         measurementBuilder: CVCellMeasurement.Builder,
