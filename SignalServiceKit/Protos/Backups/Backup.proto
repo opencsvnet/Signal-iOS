@@ -177,6 +177,18 @@ message AccountData {
     bool isSystemCallLogEnabled = 1;
   }
 
+  // Signal-native OpenCSV recovery material. The account root and compact
+  // Rust checkpoint are encrypted by the surrounding Signal backup. The
+  // device-binding secret is deliberately absent: a restored primary must
+  // open read/export-only until an explicit recovery/rekey flow runs.
+  message OpenCsvWallet {
+    uint32 version = 1;
+    bytes accountRoot = 2; // Exactly 32 bytes.
+    string checkpointJson = 3;
+    string checkpointHash = 4;
+    string deviceBindingCommitment = 5;
+  }
+
   bytes profileKey = 1;
   optional string username = 2;
   UsernameLink usernameLink = 3;
@@ -193,6 +205,7 @@ message AccountData {
   string bioEmoji = 14;
   reserved /*keyTransparencyData*/ 15;
   IOSSpecificSettings iosSpecificSettings = 16;
+  OpenCsvWallet openCsvWallet = 17;
 }
 
 message Recipient {

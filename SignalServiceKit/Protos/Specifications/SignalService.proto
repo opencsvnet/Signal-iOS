@@ -576,6 +576,10 @@ message SyncMessage {
     reserved /* linkPreviews */ 4;
     optional uint32 provisioningVersion = 5;
     optional bool linkPreviews = 6;
+    // Public-only OpenCSV watch account for linked Signal devices. JSON
+    // contains BIP84 public descriptors and owner identity; never roots or
+    // signing material. Experimental fork field, deliberately high-numbered.
+    optional bytes openCsvWatchAccount = 101;
   }
 
   message StickerPackOperation {

@@ -168,6 +168,25 @@ public class BackupArchiveAccountDataArchiver: BackupArchiveProtoStreamWriter {
                 accountData.iosSpecificSettings = iosSpecificSettings
             }
 
+            do {
+                let openCsvStore = OpenCsvWalletStore(
+                    keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+                )
+                if let payload = try openCsvStore.secureBackupPayload(tx: context.tx) {
+                    var openCsvWallet = BackupProto_AccountData.OpenCsvWallet()
+                    openCsvWallet.version = payload.version
+                    openCsvWallet.accountRoot = payload.accountRoot
+                    openCsvWallet.checkpointJson = payload.checkpointJson
+                    openCsvWallet.checkpointHash = payload.checkpointHash
+                    openCsvWallet.deviceBindingCommitment = payload.deviceBindingCommitment
+                    accountData.openCsvWallet = openCsvWallet
+                }
+            } catch {
+                // A completed backup that silently omitted wallet recovery
+                // state could strand assets, so fail the frame instead.
+                return .failure(.archiveFrameError(.protoSerializationError(error)))
+            }
+
             let error: BackupArchive.ArchiveFrameError? = Self.writeFrameToStream(
                 stream,
                 frameBencher: frameBencher,
@@ -638,6 +657,34 @@ public class BackupArchiveAccountDataArchiver: BackupArchiveProtoStreamWriter {
                 accountData.iosSpecificSettings.isSystemCallLogEnabled,
                 tx: context.tx,
             )
+        }
+
+        if accountData.hasOpenCsvWallet {
+            let openCsvWallet = accountData.openCsvWallet
+            do {
+                guard
+                    openCsvWallet.version == 1,
+                    !openCsvWallet.checkpointJson.isEmpty,
+                    !openCsvWallet.checkpointHash.isEmpty,
+                    !openCsvWallet.deviceBindingCommitment.isEmpty
+                else {
+                    throw OpenCsvAccountMaterialError.invalidLength
+                }
+                let payload = try OpenCsvSecureBackupPayload(
+                    version: openCsvWallet.version,
+                    accountRoot: openCsvWallet.accountRoot,
+                    checkpointJson: openCsvWallet.checkpointJson,
+                    checkpointHash: openCsvWallet.checkpointHash,
+                    deviceBindingCommitment: openCsvWallet.deviceBindingCommitment,
+                )
+                let openCsvStore = OpenCsvWalletStore(
+                    keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+                )
+                try openCsvStore.installRestoredAccountRoot(payload.accountRoot)
+                try openCsvStore.setSecureBackupPayload(payload, tx: context.tx)
+            } catch {
+                return .failure([.restoreFrameError(.invalidProtoData(.invalidOpenCsvWallet))])
+            }
         }
 
         if partialErrors.isEmpty {

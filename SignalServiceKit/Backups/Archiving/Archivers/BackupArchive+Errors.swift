@@ -589,6 +589,9 @@ extension BackupArchive {
 
                 /// The backup tier in account settings was set but not able to be parsed by libsignal.
                 case invalidBackupTier
+                /// OpenCSV recovery material had the wrong version, root
+                /// length, or an incomplete checkpoint/binding receipt.
+                case invalidOpenCsvWallet
 
                 /// A ``BackupProto/Contact`` with no aci, pni, or e164.
                 case contactWithoutIdentifiers
@@ -884,7 +887,8 @@ extension BackupArchive {
                     .accountDataNotFound,
                     .recipientIdNotFound,
                     .chatIdNotFound,
-                    .invalidBackupTier:
+                    .invalidBackupTier,
+                    .invalidOpenCsvWallet:
                     // Collapse these by the id they refer to, which is in the "type".
                     return typeLogString
                 case .customChatColorNotFound:
@@ -1014,6 +1018,7 @@ extension BackupArchive {
                     .invalidDistributionListMember,
                     .invalidMemberLabel,
                     .invalidBackupTier,
+                    .invalidOpenCsvWallet,
                     .contactWithoutIdentifiers,
                     .otherContactWithLocalIdentifiers,
                     .chatItemInvalidDateSent,

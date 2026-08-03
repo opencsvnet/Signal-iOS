@@ -42,6 +42,10 @@ public struct OpenCsvVerdict: Codable, Equatable {
     public let credits: [OpenCsvCredit]?
     public let coins: [OpenCsvCoin]?
     public let anchor: Anchor?
+    /// Stable identity over Rust's canonical consignment encoding. Signal
+    /// keys verdict and rendered-cell state by this value, never by an
+    /// attachment id or delivery-attempt nonce.
+    public let consignmentId: String?
     /// Which chain view decided this verdict ("self-scan", "cross-check",
     /// "single-snapshot"). Set by the receive pipeline, never by the FFI;
     /// nil on verdicts that predate the distinction.
@@ -49,18 +53,469 @@ public struct OpenCsvVerdict: Codable, Equatable {
 
     public var isVerified: Bool { status == "verified" }
 
-    public init(status: String, reason: String?, credits: [OpenCsvCredit]?, coins: [OpenCsvCoin]?, anchor: Anchor?) {
+    public init(
+        status: String,
+        reason: String?,
+        credits: [OpenCsvCredit]?,
+        coins: [OpenCsvCoin]?,
+        anchor: Anchor?,
+        consignmentId: String? = nil,
+    ) {
         self.status = status
         self.reason = reason
         self.credits = credits
         self.coins = coins
         self.anchor = anchor
+        self.consignmentId = consignmentId
     }
 }
 
-/// Result of a `prove*` call: publish `anchorRecordHex` under `ctxHex`,
-/// then finalize. On real chains the anchoring service supplies the
-/// context instead — see `OpenCsvWallet.rebind`.
+// MARK: - Signal-native account wallet
+
+public enum OpenCsvAccountRole: String, Codable, Equatable {
+    case primary
+    case linked
+}
+
+/// Public policy supplied when opening the Rust-owned account wallet. Secret
+/// keys, Bitcoin inputs, change addresses and transaction bytes are
+/// intentionally absent.
+public struct OpenCsvAccountConfig: Codable, Equatable {
+    public let version: UInt32
+    public let network: String
+    public let esploraUrl: String
+    public let peers: [String]
+    public let verificationPeers: [String]
+    public let verificationTimeoutSecs: UInt64
+    public let maxVerificationBlocks: UInt64
+    public let role: OpenCsvAccountRole
+    public let backupVerified: Bool
+    public let expectedDeviceBindingCommitment: String?
+    public let requiredConfirmations: UInt32
+    public let stopGap: UInt
+    public let parallelRequests: UInt
+    public let watchExternalDescriptor: String?
+    public let watchInternalDescriptor: String?
+    public let watchOwner: String?
+
+    public init(
+        version: UInt32 = 1,
+        network: String,
+        esploraUrl: String,
+        peers: [String],
+        verificationPeers: [String],
+        verificationTimeoutSecs: UInt64 = 180,
+        maxVerificationBlocks: UInt64 = 2_048,
+        role: OpenCsvAccountRole,
+        backupVerified: Bool,
+        expectedDeviceBindingCommitment: String? = nil,
+        requiredConfirmations: UInt32 = 6,
+        stopGap: UInt = 20,
+        parallelRequests: UInt = 4,
+        watchExternalDescriptor: String? = nil,
+        watchInternalDescriptor: String? = nil,
+        watchOwner: String? = nil,
+    ) {
+        self.version = version
+        self.network = network
+        self.esploraUrl = esploraUrl
+        self.peers = peers
+        self.verificationPeers = verificationPeers
+        self.verificationTimeoutSecs = verificationTimeoutSecs
+        self.maxVerificationBlocks = maxVerificationBlocks
+        self.role = role
+        self.backupVerified = backupVerified
+        self.expectedDeviceBindingCommitment = expectedDeviceBindingCommitment
+        self.requiredConfirmations = requiredConfirmations
+        self.stopGap = stopGap
+        self.parallelRequests = parallelRequests
+        self.watchExternalDescriptor = watchExternalDescriptor
+        self.watchInternalDescriptor = watchInternalDescriptor
+        self.watchOwner = watchOwner
+    }
+}
+
+public struct OpenCsvAccountStatus: Codable, Equatable {
+    public struct FeeReserve: Codable, Equatable {
+        public struct Utxo: Codable, Equatable {
+            public let txid: String
+            public let vout: UInt32
+            public let valueSats: UInt64
+            public let keychain: String
+            public let derivationIndex: UInt32
+            public let reserved: Bool
+        }
+
+        public let confirmedSats: UInt64
+        public let trustedPendingSats: UInt64
+        public let untrustedPendingSats: UInt64
+        public let immatureSats: UInt64
+        public let totalSats: UInt64
+        public let utxos: [Utxo]
+    }
+
+    public struct WatchDescriptors: Codable, Equatable {
+        public let external: String
+        public let `internal`: String
+    }
+
+    public struct DeviceBinding: Codable, Equatable {
+        public let status: String
+        public let commitment: String?
+    }
+
+    public struct SyncProvenance: Codable, Equatable {
+        public let accelerator: String
+        public let authoritative: String
+        public let verificationPeerCount: UInt
+        public let lastSyncAt: String?
+        public let lastSyncTip: String?
+    }
+
+    public let version: UInt32
+    public let role: OpenCsvAccountRole
+    public let network: String
+    public let owners: [String]
+    public let assets: [OpenCsvCredit]
+    public let feeReserve: FeeReserve
+    public let depositAddress: String
+    public let watchDescriptors: WatchDescriptors
+    public let backupVerified: Bool
+    public let writeEnabled: Bool
+    public let deviceBinding: DeviceBinding
+    public let syncProvenance: SyncProvenance
+    public let rootFingerprint: String
+}
+
+public struct OpenCsvAccountSyncReport: Codable, Equatable {
+    public let status: String
+    public let tipHeight: UInt64
+    public let feeReserveSats: UInt64
+    public let source: String
+    public let authoritativeSpendCheck: String
+}
+
+public struct OpenCsvPreparedOperation: Codable, Equatable {
+    public let operationId: String
+    public let state: String
+    public let fundingOutpoint: String
+    public let fundingValueSats: UInt64
+    public let anchorRecordHex: String
+    public let assetId: String?
+    public let toOwner: String?
+    public let checkpointHash: String
+    public let backupAckRequired: Bool
+}
+
+public struct OpenCsvAccountOperation: Codable, Equatable {
+    public struct Receipt: Codable, Equatable {
+        public let txid: String?
+        public let feeSats: UInt64?
+        public let feeRateSatPerVb: UInt64?
+        public let deliveryNonce: String?
+        public let consignmentId: String?
+        public let consignmentBase64: String?
+        public let deliveryReady: Bool?
+        public let replaces: String?
+        public let feeIncrementSats: UInt64?
+        public let replacementChangeSats: UInt64?
+    }
+
+    public let operationId: String
+    public let kind: String
+    public let state: String
+    public let txid: String?
+    public let receipt: Receipt?
+    public let rejectionReason: String?
+    public let deliveryNonce: String
+    public let checkpointHash: String?
+    public let backupAcked: Bool
+}
+
+/// Public, non-secret operation metadata exported in the compact account
+/// checkpoint. The wallet UI uses this list to offer RBF only for
+/// transactions that Rust itself created.
+public struct OpenCsvAccountOperationSummary: Codable, Equatable {
+    public let operationId: String
+    public let kind: String
+    public let state: String
+    public let txid: String?
+}
+
+public struct OpenCsvAccountCheckpoint: Codable, Equatable {
+    public struct Payload: Codable, Equatable {
+        public let version: UInt32
+        public let network: String
+        public let rootFingerprint: String
+        public let deviceBindingCommitment: String?
+        public let owners: [String]
+    }
+
+    public let checkpoint: Payload
+    public let checkpointHash: String
+}
+
+/// A process-local handle to the durable Rust-owned account wallet. Callers
+/// must serialize it; `OpenCsvPayments` owns one instance inside its actor.
+public final class OpenCsvAccountWallet {
+    private let handle: UInt64
+    var rawHandle: UInt64 { handle }
+
+    private struct Opened: Codable {
+        let handle: UInt64
+    }
+
+    private struct BackupState: Codable {
+        let backupVerified: Bool
+        let writeEnabled: Bool
+    }
+
+    private struct BackupAcknowledgement: Codable {
+        let operationId: String
+        let backupAcked: Bool
+        let checkpointHash: String
+    }
+
+    private struct Ok: Codable {
+        let ok: Bool
+    }
+
+    public init(
+        config: OpenCsvAccountConfig,
+        accountRoot: Data,
+        deviceBinding: Data?,
+        databasePath: String,
+    ) throws {
+        guard accountRoot.isEmpty || accountRoot.count == 32 else {
+            throw OpenCsvClientError.ffi("account root must be exactly 32 bytes")
+        }
+        guard deviceBinding == nil || deviceBinding?.count == 32 else {
+            throw OpenCsvClientError.ffi("device binding must be exactly 32 bytes")
+        }
+        let configJson = try Self.encodeJson(config)
+        let binding = deviceBinding ?? Data()
+        let opened: Opened = try accountRoot.withUnsafeBytes { accountBytes in
+            try binding.withUnsafeBytes { bindingBytes in
+                try configJson.withCString { configPointer in
+                    try databasePath.withCString { pathPointer in
+                        try Self.take(opencsv_account_open(
+                            configPointer,
+                            accountBytes.bindMemory(to: UInt8.self).baseAddress,
+                            accountRoot.count,
+                            bindingBytes.bindMemory(to: UInt8.self).baseAddress,
+                            binding.count,
+                            pathPointer,
+                        ))
+                    }
+                }
+            }
+        }
+        self.handle = opened.handle
+    }
+
+    deinit {
+        opencsv_string_free(opencsv_account_close(handle))
+    }
+
+    public func status() throws -> OpenCsvAccountStatus {
+        try Self.take(opencsv_account_status(handle))
+    }
+
+    public func sync() throws -> OpenCsvAccountSyncReport {
+        try Self.take(opencsv_account_sync(handle))
+    }
+
+    public func setBackupState(verified: Bool, checkpointVersion: UInt32) throws -> Bool {
+        let state: BackupState = try Self.take(opencsv_account_set_backup_state(
+            handle,
+            verified,
+            checkpointVersion,
+        ))
+        return state.writeEnabled
+    }
+
+    public func checkpoint() throws -> OpenCsvAccountCheckpoint {
+        try Self.decode(checkpointJson())
+    }
+
+    /// Exact FFI response retained for Secure Backup. Re-encoding the
+    /// summary type would discard asset, operation and consignment fields.
+    public func checkpointJson() throws -> String {
+        try Self.takeRaw(opencsv_account_checkpoint(handle))
+    }
+
+    public func operationSummaries() throws -> [OpenCsvAccountOperationSummary] {
+        struct Envelope: Decodable {
+            struct Checkpoint: Decodable {
+                let operations: [OpenCsvAccountOperationSummary]
+            }
+            let checkpoint: Checkpoint
+        }
+        let envelope: Envelope = try Self.decode(checkpointJson())
+        return envelope.checkpoint.operations
+    }
+
+    /// Import an exact Signal Secure Backup checkpoint into a clean account.
+    /// Rust validates its hash, network, root-derived owner, and public
+    /// device-binding commitment; a root-only restore remains read-only.
+    public func restoreCheckpoint(_ checkpointJson: String) throws -> OpenCsvAccountStatus {
+        try checkpointJson.withCString {
+            try Self.take(opencsv_account_restore_checkpoint(handle, $0))
+        }
+    }
+
+    public func verify(blob: Data, snapshotJson: String) throws -> OpenCsvVerdict {
+        guard !blob.isEmpty else {
+            throw OpenCsvClientError.ffi("consignment is empty")
+        }
+        return try blob.withUnsafeBytes { bytes in
+            try snapshotJson.withCString { snapshot in
+                try Self.take(opencsv_account_verify_consignment(
+                    handle,
+                    bytes.bindMemory(to: UInt8.self).baseAddress,
+                    blob.count,
+                    snapshot,
+                ))
+            }
+        }
+    }
+
+    public func prepareMint(
+        currency: String,
+        amounts: [UInt64],
+        assetId: String? = nil,
+        toOwner: String? = nil,
+    ) throws -> OpenCsvPreparedOperation {
+        struct Request: Codable {
+            let currency: String
+            let amounts: [UInt64]
+            let assetId: String?
+            let toOwner: String?
+        }
+        return try callJson(
+            Request(currency: currency, amounts: amounts, assetId: assetId, toOwner: toOwner),
+            opencsv_mint_prepare,
+        )
+    }
+
+    public func prepareTransfer(assetId: String, toOwner: String, amount: UInt64) throws -> OpenCsvPreparedOperation {
+        struct Request: Codable {
+            let assetId: String
+            let toOwner: String
+            let amount: UInt64
+        }
+        return try callJson(
+            Request(assetId: assetId, toOwner: toOwner, amount: amount),
+            opencsv_transfer_prepare,
+        )
+    }
+
+    public func acknowledgeBackup(operationId: String, checkpointHash: String) throws {
+        let acknowledgement: BackupAcknowledgement = try operationId.withCString { operation in
+            try checkpointHash.withCString { checkpoint in
+                try Self.take(opencsv_operation_ack_backup(handle, operation, checkpoint))
+            }
+        }
+        guard acknowledgement.backupAcked, acknowledgement.operationId == operationId else {
+            throw OpenCsvClientError.decode("backup acknowledgement did not match the operation")
+        }
+    }
+
+    public func signAndBroadcast(
+        operationId: String,
+        targetSatPerVb: UInt64,
+        maxFeeSats: UInt64? = nil,
+    ) throws -> OpenCsvAccountOperation {
+        struct FeePolicy: Codable {
+            let targetSatPerVb: UInt64
+            let maxFeeSats: UInt64?
+        }
+        let policy = try Self.encodeJson(FeePolicy(targetSatPerVb: targetSatPerVb, maxFeeSats: maxFeeSats))
+        return try operationId.withCString { operation in
+            try policy.withCString { policyPointer in
+                try Self.take(opencsv_operation_sign_and_broadcast(handle, operation, policyPointer))
+            }
+        }
+    }
+
+    public func operationStatus(_ operationId: String) throws -> OpenCsvAccountOperation {
+        try operationId.withCString { try Self.take(opencsv_operation_status(handle, $0)) }
+    }
+
+    public func resume(_ operationId: String) throws -> OpenCsvAccountOperation {
+        try operationId.withCString { try Self.take(opencsv_operation_resume(handle, $0)) }
+    }
+
+    public func cancel(_ operationId: String) throws {
+        let result: Ok = try operationId.withCString { try Self.take(opencsv_operation_cancel(handle, $0)) }
+        guard result.ok else {
+            throw OpenCsvClientError.decode("cancel did not return success")
+        }
+    }
+
+    public func feeBump(operationId: String, targetSatPerVb: UInt64) throws -> OpenCsvAccountOperation {
+        try operationId.withCString {
+            try Self.take(opencsv_fee_bump(handle, $0, targetSatPerVb))
+        }
+    }
+
+    public func markDelivered(operationId: String, deliveryNonce: String) throws -> OpenCsvAccountOperation {
+        try operationId.withCString { operation in
+            try deliveryNonce.withCString { nonce in
+                try Self.take(opencsv_operation_mark_delivered(handle, operation, nonce))
+            }
+        }
+    }
+
+    private func callJson<Request: Encodable, Reply: Decodable>(
+        _ request: Request,
+        _ function: (UInt64, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?,
+    ) throws -> Reply {
+        let json = try Self.encodeJson(request)
+        return try json.withCString { try Self.take(function(handle, $0)) }
+    }
+
+    private static func take<T: Decodable>(_ pointer: UnsafeMutablePointer<CChar>?) throws -> T {
+        try decode(takeRaw(pointer))
+    }
+
+    private static func decode<T: Decodable>(_ raw: String) throws -> T {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            return try decoder.decode(T.self, from: Data(raw.utf8))
+        } catch {
+            throw OpenCsvClientError.decode("\(error): \(raw.prefix(300))")
+        }
+    }
+
+    private static func takeRaw(_ pointer: UnsafeMutablePointer<CChar>?) throws -> String {
+        guard let pointer else {
+            throw OpenCsvClientError.ffi("FFI returned null")
+        }
+        defer { opencsv_string_free(pointer) }
+        let raw = String(cString: pointer)
+        struct FfiFailure: Codable {
+            let error: String
+        }
+        if let failure = try? JSONDecoder().decode(FfiFailure.self, from: Data(raw.utf8)) {
+            throw OpenCsvClientError.ffi(failure.error)
+        }
+        return raw
+    }
+
+    private static func encodeJson<T: Encodable>(_ value: T) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        guard let json = String(data: try encoder.encode(value), encoding: .utf8) else {
+            throw OpenCsvClientError.decode("could not encode request")
+        }
+        return json
+    }
+}
+
+/// Result of a legacy prototype `prove*` call. New account-wallet writes
+/// reserve the Bitcoin funding input in Rust before proof generation.
 public struct OpenCsvProved: Codable, Equatable {
     public let pendingId: UInt64
     public let anchorRecordHex: String
@@ -68,7 +523,8 @@ public struct OpenCsvProved: Codable, Equatable {
     public let spends: [String]
 }
 
-/// Where a published anchor record landed, per the anchor server.
+/// Where a published anchor record landed on Bitcoin. Retained only for
+/// importing prototype-era pending operations.
 public struct OpenCsvAnchorRef: Codable, Equatable {
     public let txid: String
     public let height: UInt64

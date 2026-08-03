@@ -12241,6 +12241,18 @@ public class SSKProtoSyncMessageConfiguration: NSObject, Codable, NSSecureCoding
         return proto.hasLinkPreviews
     }
 
+    @objc
+    public var openCsvWatchAccount: Data? {
+        guard hasOpenCsvWatchAccount else {
+            return nil
+        }
+        return proto.openCsvWatchAccount
+    }
+    @objc
+    public var hasOpenCsvWatchAccount: Bool {
+        return proto.hasOpenCsvWatchAccount
+    }
+
     public var hasUnknownFields: Bool {
         return !proto.unknownFields.data.isEmpty
     }
@@ -12329,6 +12341,9 @@ extension SSKProtoSyncMessageConfiguration {
         if hasLinkPreviews {
             builder.setLinkPreviews(linkPreviews)
         }
+        if let _value = openCsvWatchAccount {
+            builder.setOpenCsvWatchAccount(_value)
+        }
         if let _value = unknownFields {
             builder.setUnknownFields(_value)
         }
@@ -12367,6 +12382,17 @@ public class SSKProtoSyncMessageConfigurationBuilder: NSObject {
     @objc
     public func setLinkPreviews(_ valueParam: Bool) {
         proto.linkPreviews = valueParam
+    }
+
+    @objc
+    @available(swift, obsoleted: 1.0)
+    public func setOpenCsvWatchAccount(_ valueParam: Data?) {
+        guard let valueParam = valueParam else { return }
+        proto.openCsvWatchAccount = valueParam
+    }
+
+    public func setOpenCsvWatchAccount(_ valueParam: Data) {
+        proto.openCsvWatchAccount = valueParam
     }
 
     public func setUnknownFields(_ unknownFields: SwiftProtobuf.UnknownStorage) {

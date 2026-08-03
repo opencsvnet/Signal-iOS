@@ -11,6 +11,8 @@ public enum OpenCsvPaymentDirection: String, Codable {
     case incoming
     /// We sent it; `amount` is what went to the recipient, not the change.
     case outgoing
+    /// This account issued new units of an issuer-controlled asset.
+    case minted
     /// It verifies, but pays neither us nor (as far as we can tell) the
     /// other party in this chat — e.g. a consignment forwarded into the
     /// conversation. Rendering it as a credit would be a lie.
@@ -32,6 +34,10 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
     /// "single-snapshot"). "self-scan" means no server was believed — the
     /// bubble may say so. Nil on records that predate the distinction.
     public let chainView: String?
+    /// Canonical identity returned by Rust after decode/re-encode. Two
+    /// byte-distinct attachments encoding the same consignment share this
+    /// identity and therefore one logical verdict/payment cell.
+    public let consignmentId: String?
 
     public var isVerified: Bool { status == "verified" }
 
@@ -49,12 +55,19 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.direction = credits.isEmpty ? .thirdParty : .incoming
         self.verifiedAt = date
         self.chainView = verdict.chainView
+        self.consignmentId = verdict.consignmentId
     }
 
     /// A verdict for a consignment we sent. The amount is what the
     /// recipient receives — the self-ingest only ever credits our change,
     /// so deriving it from credits would show the wrong number.
-    public init(sentAmount: UInt64, currency: String?, assetId: String?, date: Date) {
+    public init(
+        sentAmount: UInt64,
+        currency: String?,
+        assetId: String?,
+        consignmentId: String? = nil,
+        date: Date,
+    ) {
         self.status = "verified"
         self.reason = nil
         self.amount = sentAmount
@@ -63,13 +76,119 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.direction = .outgoing
         self.verifiedAt = date
         self.chainView = nil
+        self.consignmentId = consignmentId
+    }
+
+    /// A verdict for an issuer operation created by this account. A mint is
+    /// an asset credit, not an outgoing transfer, so the conversation must
+    /// never render it with a debit sign.
+    public init(
+        mintedAmount: UInt64,
+        currency: String?,
+        assetId: String?,
+        consignmentId: String? = nil,
+        date: Date,
+    ) {
+        self.status = "verified"
+        self.reason = nil
+        self.amount = mintedAmount
+        self.currency = currency
+        self.assetId = assetId
+        self.direction = .minted
+        self.verifiedAt = date
+        self.chainView = nil
+        self.consignmentId = consignmentId
+    }
+}
+
+public enum OpenCsvAccountMaterialError: Error, Equatable {
+    case invalidLength
+    case conflictingAccountRoot
+}
+
+/// Secret material held by the primary installation. Fresh setup stores the
+/// root and binding in one Keychain value so a crash cannot leave a half-made
+/// account. Secure Backup recovery deliberately installs only the root; the
+/// missing non-migratable binding therefore opens Rust read/export-only.
+public struct OpenCsvAccountMaterial: Codable, Equatable {
+    public let accountRoot: Data
+    public let deviceBinding: Data?
+
+    public var isRestoredReadOnly: Bool { deviceBinding == nil }
+
+    public init(accountRoot: Data, deviceBinding: Data?) throws {
+        guard accountRoot.count == 32, deviceBinding == nil || deviceBinding?.count == 32 else {
+            throw OpenCsvAccountMaterialError.invalidLength
+        }
+        self.accountRoot = accountRoot
+        self.deviceBinding = deviceBinding
+    }
+}
+
+/// The wallet-owned payload passed to Signal Secure Backups. The BDK chain
+/// database is intentionally absent; only the root and Rust's compact,
+/// versioned checkpoint are recovery material.
+public struct OpenCsvSecureBackupPayload: Codable, Equatable {
+    public let version: UInt32
+    public let accountRoot: Data
+    public let checkpointJson: String
+    public let checkpointHash: String
+    public let deviceBindingCommitment: String
+
+    public init(
+        version: UInt32,
+        accountRoot: Data,
+        checkpointJson: String,
+        checkpointHash: String,
+        deviceBindingCommitment: String,
+    ) throws {
+        guard accountRoot.count == 32 else {
+            throw OpenCsvAccountMaterialError.invalidLength
+        }
+        self.version = version
+        self.accountRoot = accountRoot
+        self.checkpointJson = checkpointJson
+        self.checkpointHash = checkpointHash
+        self.deviceBindingCommitment = deviceBindingCommitment
+    }
+}
+
+/// Public wallet material distributed to linked Signal devices. It is safe to
+/// sync through Signal's device channel: no account root, issuer secret, or
+/// Bitcoin signing material is present.
+public struct OpenCsvLinkedWatchAccount: Codable, Equatable {
+    public let externalDescriptor: String
+    public let internalDescriptor: String
+    public let owner: String
+
+    public init(externalDescriptor: String, internalDescriptor: String, owner: String) {
+        self.externalDescriptor = externalDescriptor
+        self.internalDescriptor = internalDescriptor
+        self.owner = owner
+    }
+
+    public var isValidForLinkedProvisioning: Bool {
+        let descriptors = externalDescriptor.lowercased() + "\n" + internalDescriptor.lowercased()
+        return owner.count == 64
+            && owner.allSatisfy(\.isHexDigit)
+            && externalDescriptor.hasPrefix("wpkh(")
+            && internalDescriptor.hasPrefix("wpkh(")
+            && externalDescriptor.utf8.count <= 2048
+            && internalDescriptor.utf8.count <= 2048
+            && externalDescriptor != internalDescriptor
+            // Extended private keys must never cross Signal's linked-device
+            // channel. BIP84 watch descriptors contain xpub/tpub variants;
+            // every standardized extended-private variant contains `prv`.
+            && !descriptors.contains("prv")
     }
 }
 
 /// Persistence for the OpenCSV wallet, following SSK store conventions:
 ///
-/// - **Secrets** live in the iOS Keychain (never on disk in plaintext),
-///   via the app's `KeychainStorage`.
+/// - **Account secrets** live in the iOS Keychain (never on disk in
+///   plaintext), via the app's `KeychainStorage`. That implementation uses
+///   `AfterFirstUnlockThisDeviceOnly`; Secure Backup explicitly exports only
+///   the account root, never the device binding.
 /// - **Consignments and verdicts** live in the (SQLCipher-encrypted) GRDB
 ///   database through a `KeyValueStore`: the raw blob and verdict of every
 ///   verified consignment, plus the ordered replay list and the spent-coin
@@ -84,10 +203,15 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
 public struct OpenCsvWalletStore {
     private static let collection = "OpenCsvPayments"
     private static let keychainService = "OpenCsvPayments"
+    private static let primaryAccountMaterialKey = "primaryAccountMaterial.v1"
+    private static let restoredAccountRootKey = "restoredAccountRoot.v1"
     private static let keychainKey = "walletSecrets"
 
     private static let anchorServerUrlKey = "anchorServerUrl"
+    private static let esploraUrlKey = "esploraUrl.v1"
+    private static let linkedWatchAccountKey = "linkedWatchAccount.v1"
     private static let pendingDeliveriesKey = "pendingDeliveries"
+    private static let pendingAccountOperationsKey = "pendingAccountOperations.v1"
     private static let inFlightSendsKey = "inFlightSends"
     private static let indexerUrlsKey = "indexerUrls"
     private static let spvPeersKey = "spvPeers"
@@ -97,6 +221,9 @@ public struct OpenCsvWalletStore {
     private static let spentCoinIdsKey = "spentCoinIds"
     private static let lastSnapshotKey = "lastSnapshot"
     private static let outgoingOrdinalKey = "outgoingOrdinal"
+    private static let secureBackupPayloadKey = "secureBackupPayload.v1"
+    private static let attachmentConsignmentIdPrefix = "attachmentConsignmentId:"
+    private static let canonicalPresentationAttachmentPrefix = "canonicalPresentationAttachment:"
 
     private let keyValueStore = KeyValueStore(collection: Self.collection)
     private let keychainStorage: any KeychainStorage
@@ -105,7 +232,83 @@ public struct OpenCsvWalletStore {
         self.keychainStorage = keychainStorage
     }
 
-    // MARK: - Secrets (Keychain)
+    // MARK: - Signal-native account material (Keychain)
+
+    public func accountMaterial() throws -> OpenCsvAccountMaterial? {
+        do {
+            let data = try keychainStorage.dataValue(
+                service: Self.keychainService,
+                key: Self.primaryAccountMaterialKey,
+            )
+            let material = try JSONDecoder().decode(OpenCsvAccountMaterial.self, from: data)
+            // A fresh combined record must always contain both values. A
+            // nil binding is represented only by the root-only recovery key.
+            guard material.deviceBinding != nil else {
+                throw OpenCsvAccountMaterialError.invalidLength
+            }
+            return try OpenCsvAccountMaterial(
+                accountRoot: material.accountRoot,
+                deviceBinding: material.deviceBinding,
+            )
+        } catch KeychainError.notFound {
+            do {
+                let root = try keychainStorage.dataValue(
+                    service: Self.keychainService,
+                    key: Self.restoredAccountRootKey,
+                )
+                return try OpenCsvAccountMaterial(accountRoot: root, deviceBinding: nil)
+            } catch KeychainError.notFound {
+                return nil
+            }
+        }
+    }
+
+    /// Atomically create root + binding for a genuinely fresh account. If a
+    /// root was restored without its binding, this returns that read-only
+    /// state and never manufactures a replacement binding.
+    public func createPrimaryAccountMaterial() throws -> OpenCsvAccountMaterial {
+        try createPrimaryAccountMaterial { Randomness.generateRandomBytes(UInt($0)) }
+    }
+
+    func createPrimaryAccountMaterial(
+        randomBytes: (Int) -> Data,
+    ) throws -> OpenCsvAccountMaterial {
+        if let existing = try accountMaterial() {
+            return existing
+        }
+        let material = try OpenCsvAccountMaterial(
+            accountRoot: randomBytes(32),
+            deviceBinding: randomBytes(32),
+        )
+        let encoded = try JSONEncoder().encode(material)
+        try keychainStorage.setDataValue(
+            encoded,
+            service: Self.keychainService,
+            key: Self.primaryAccountMaterialKey,
+        )
+        return material
+    }
+
+    /// Install the root restored by Signal Secure Backup. Existing material
+    /// is never replaced; a conflicting root is a hard recovery error.
+    public func installRestoredAccountRoot(_ root: Data) throws {
+        guard root.count == 32 else {
+            throw OpenCsvAccountMaterialError.invalidLength
+        }
+        if let existing = try accountMaterial() {
+            guard existing.accountRoot == root else {
+                throw OpenCsvAccountMaterialError.conflictingAccountRoot
+            }
+            return
+        }
+        try keychainStorage.setDataValue(
+            root,
+            service: Self.keychainService,
+            key: Self.restoredAccountRootKey,
+        )
+    }
+
+    // MARK: - Legacy wallet secrets (retained read-only for migration)
 
     public func walletSecrets() throws -> String? {
         do {
@@ -120,6 +323,24 @@ public struct OpenCsvWalletStore {
         try keychainStorage.setDataValue(Data(secretsJson.utf8), service: Self.keychainService, key: Self.keychainKey)
     }
 
+    // MARK: - Secure Backup handoff
+
+    public func secureBackupPayload(tx: DBReadTransaction) throws -> OpenCsvSecureBackupPayload? {
+        try keyValueStore.getCodableValue(forKey: Self.secureBackupPayloadKey, transaction: tx)
+    }
+
+    public func setSecureBackupPayload(_ payload: OpenCsvSecureBackupPayload, tx: DBWriteTransaction) throws {
+        try keyValueStore.setCodable(payload, key: Self.secureBackupPayloadKey, transaction: tx)
+    }
+
+    public func linkedWatchAccount(tx: DBReadTransaction) throws -> OpenCsvLinkedWatchAccount? {
+        try keyValueStore.getCodableValue(forKey: Self.linkedWatchAccountKey, transaction: tx)
+    }
+
+    public func setLinkedWatchAccount(_ account: OpenCsvLinkedWatchAccount, tx: DBWriteTransaction) throws {
+        try keyValueStore.setCodable(account, key: Self.linkedWatchAccountKey, transaction: tx)
+    }
+
     // MARK: - Settings
 
     public func anchorServerUrl(tx: DBReadTransaction) -> URL? {
@@ -131,6 +352,27 @@ public struct OpenCsvWalletStore {
 
     public func setAnchorServerUrl(_ urlString: String?, tx: DBWriteTransaction) {
         keyValueStore.setString(urlString, key: Self.anchorServerUrlKey, transaction: tx)
+    }
+
+    /// Generic Esplora read accelerator and transaction-relay fallback.
+    /// This is not an OpenCSV service and is never authoritative for spend
+    /// state; Rust verifies selected outpoints through compact-filter peers.
+    public func esploraUrl(tx: DBReadTransaction) -> String {
+        if let configured = keyValueStore.getString(Self.esploraUrlKey, transaction: tx), !configured.isEmpty {
+            return configured
+        }
+        switch network(tx: tx) {
+        case "mainnet":
+            return "https://mempool.space/api"
+        case "regtest":
+            return "http://127.0.0.1:3002"
+        default:
+            return "https://mempool.space/signet/api"
+        }
+    }
+
+    public func setEsploraUrl(_ urlString: String?, tx: DBWriteTransaction) {
+        keyValueStore.setString(urlString?.trimmingCharacters(in: .whitespacesAndNewlines), key: Self.esploraUrlKey, transaction: tx)
     }
 
     // MARK: - Chain view settings (Chain Views v2)
@@ -208,6 +450,15 @@ public struct OpenCsvWalletStore {
 
     public func verdict(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> OpenCsvVerdictRecord? {
         do {
+            if let consignmentId = keyValueStore.getString(
+                Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
+                transaction: tx,
+            ) {
+                return try keyValueStore.getCodableValue(
+                    forKey: Self.canonicalVerdictKey(consignmentId),
+                    transaction: tx,
+                )
+            }
             return try keyValueStore.getCodableValue(forKey: Self.verdictKey(attachmentId), transaction: tx)
         } catch {
             owsFailDebug("could not decode the OpenCSV verdict for attachment \(attachmentId): \(error)")
@@ -223,13 +474,60 @@ public struct OpenCsvWalletStore {
         attachmentId: Attachment.IDType,
         tx: DBWriteTransaction,
     ) {
+        let verdictKey: String
+        if let consignmentId = record.consignmentId {
+            verdictKey = Self.canonicalVerdictKey(consignmentId)
+            keyValueStore.setString(
+                consignmentId,
+                key: Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
+                transaction: tx,
+            )
+            let presentationKey = Self.canonicalPresentationAttachmentPrefix + consignmentId
+            if keyValueStore.getString(presentationKey, transaction: tx) == nil {
+                keyValueStore.setString("\(attachmentId)", key: presentationKey, transaction: tx)
+            }
+        } else {
+            // Compatibility only for prototype records produced before Rust
+            // returned canonical identity.
+            verdictKey = Self.verdictKey(attachmentId)
+        }
         do {
-            try keyValueStore.setCodable(record, key: Self.verdictKey(attachmentId), transaction: tx)
+            try keyValueStore.setCodable(record, key: verdictKey, transaction: tx)
         } catch {
             owsFailDebug("could not persist an OpenCSV verdict: \(error)")
         }
         guard record.isVerified, let blob else { return }
-        appendReplayEntry("a:\(attachmentId)", blob: blob, tx: tx)
+        let replayEntry = record.consignmentId.map { "c:\($0)" } ?? "a:\(attachmentId)"
+        appendReplayEntry(replayEntry, blob: blob, tx: tx)
+    }
+
+    /// Exactly one transport attachment renders as the logical payment for
+    /// a canonical consignment. Byte-distinct retries remain available as
+    /// ordinary files, but cannot create a second verified payment bubble.
+    public func isCanonicalPresentationAttachment(
+        attachmentId: Attachment.IDType,
+        tx: DBReadTransaction,
+    ) -> Bool {
+        guard let consignmentId = keyValueStore.getString(
+            Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
+            transaction: tx,
+        ) else {
+            return true
+        }
+        return keyValueStore.getString(
+            Self.canonicalPresentationAttachmentPrefix + consignmentId,
+            transaction: tx,
+        ) == "\(attachmentId)"
+    }
+
+    public func blobForAttachment(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> Data? {
+        if let consignmentId = keyValueStore.getString(
+            Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
+            transaction: tx,
+        ) {
+            return blob(forReplayEntry: "c:\(consignmentId)", tx: tx)
+        }
+        return blob(forReplayEntry: "a:\(attachmentId)", tx: tx)
     }
 
     /// Record one of our own outgoing consignments (replayed to re-credit
@@ -312,10 +610,24 @@ public struct OpenCsvWalletStore {
         public let amount: UInt64
         public let currency: String?
         public let assetId: String?
+        /// Rust operation kind. Optional only for prototype records written
+        /// before the account-wallet migration.
+        public let operationKind: String?
+        /// Rust operation identity and idempotent delivery acknowledgement.
+        /// Nil only for prototype deliveries created before the account API.
+        public let operationId: String?
+        public let deliveryNonce: String?
+        /// Canonical Rust identity, independent of attachment transport bytes.
+        public let consignmentId: String?
         public let createdAt: Date
         /// Delivery attempts so far; at `maxDeliveryAttempts` automatic
         /// retries stop.
         public var attempts: Int
+        /// Set atomically with insertion of the Signal message. The record
+        /// remains until Rust acknowledges the matching operation/nonce, so
+        /// a crash cannot cause either a duplicate chat message or a lost
+        /// protocol delivery acknowledgement.
+        public var enqueuedAt: Date?
 
         public var hasExhaustedRetries: Bool { attempts >= OpenCsvWalletStore.maxDeliveryAttempts }
 
@@ -327,8 +639,13 @@ public struct OpenCsvWalletStore {
             amount: UInt64,
             currency: String?,
             assetId: String?,
+            operationKind: String? = nil,
+            operationId: String? = nil,
+            deliveryNonce: String? = nil,
+            consignmentId: String? = nil,
             createdAt: Date,
             attempts: Int = 0,
+            enqueuedAt: Date? = nil,
         ) {
             self.id = id
             self.threadUniqueId = threadUniqueId
@@ -337,9 +654,72 @@ public struct OpenCsvWalletStore {
             self.amount = amount
             self.currency = currency
             self.assetId = assetId
+            self.operationKind = operationKind
+            self.operationId = operationId
+            self.deliveryNonce = deliveryNonce
+            self.consignmentId = consignmentId
             self.createdAt = createdAt
             self.attempts = attempts
+            self.enqueuedAt = enqueuedAt
         }
+    }
+
+    /// Signal delivery metadata for a Rust-durable operation whose signed
+    /// transaction or consignment may need resuming after app restart.
+    public struct PendingAccountOperation: Codable, Equatable {
+        public let operationId: String
+        public let threadUniqueId: String
+        public let amount: UInt64
+        public let currency: String?
+        public let assetId: String?
+        public let kind: String?
+        public let createdAt: Date
+
+        public init(
+            operationId: String,
+            threadUniqueId: String,
+            amount: UInt64,
+            currency: String?,
+            assetId: String?,
+            kind: String? = nil,
+            createdAt: Date,
+        ) {
+            self.operationId = operationId
+            self.threadUniqueId = threadUniqueId
+            self.amount = amount
+            self.currency = currency
+            self.assetId = assetId
+            self.kind = kind
+            self.createdAt = createdAt
+        }
+    }
+
+    public func pendingAccountOperations(tx: DBReadTransaction) throws -> [PendingAccountOperation] {
+        try keyValueStore.getCodableValue(forKey: Self.pendingAccountOperationsKey, transaction: tx) ?? []
+    }
+
+    public func upsertPendingAccountOperation(
+        _ operation: PendingAccountOperation,
+        tx: DBWriteTransaction,
+    ) throws {
+        var operations = try pendingAccountOperations(tx: tx)
+        operations.removeAll { $0.operationId == operation.operationId }
+        operations.append(operation)
+        try keyValueStore.setCodable(
+            operations,
+            key: Self.pendingAccountOperationsKey,
+            transaction: tx,
+        )
+    }
+
+    public func removePendingAccountOperation(operationId: String, tx: DBWriteTransaction) throws {
+        var operations = try pendingAccountOperations(tx: tx)
+        operations.removeAll { $0.operationId == operationId }
+        try keyValueStore.setCodable(
+            operations,
+            key: Self.pendingAccountOperationsKey,
+            transaction: tx,
+        )
     }
 
     /// Every undelivered consignment, oldest first.
@@ -391,6 +771,17 @@ public struct OpenCsvWalletStore {
         var ids = pendingDeliveryIds(tx: tx)
         ids.removeAll { $0 == id }
         try keyValueStore.setCodable(ids, key: Self.pendingDeliveriesKey, transaction: tx)
+    }
+
+    public func markPendingDeliveryEnqueued(id: String, tx: DBWriteTransaction) throws {
+        guard var delivery: PendingDelivery = try keyValueStore.getCodableValue(
+            forKey: Self.pendingDeliveryKey(id),
+            transaction: tx,
+        ) else {
+            return
+        }
+        delivery.enqueuedAt = delivery.enqueuedAt ?? Date()
+        try keyValueStore.setCodable(delivery, key: Self.pendingDeliveryKey(id), transaction: tx)
     }
 
     private func pendingDeliveryIds(tx: DBReadTransaction) -> [String] {
@@ -505,6 +896,10 @@ public struct OpenCsvWalletStore {
 
     private static func verdictKey(_ attachmentId: Attachment.IDType) -> String {
         "verdict:\(attachmentId)"
+    }
+
+    private static func canonicalVerdictKey(_ consignmentId: String) -> String {
+        "verdict:consignment:\(consignmentId)"
     }
 
     private static func pendingDeliveryKey(_ id: String) -> String {

@@ -307,7 +307,23 @@ class AppSettingsViewController: OWSTableViewController2 {
         ))
         contents.add(section2)
 
-        if SUIEnvironment.shared.paymentsRef.shouldShowPaymentsUI {
+        if BuildFlags.openCsvPayments {
+            let walletSection = OWSTableSection()
+            walletSection.add(.disclosureItem(
+                icon: .settingsPayments,
+                withText: OWSLocalizedString(
+                    "OPENCSV_WALLET_TITLE",
+                    comment: "Title of the OpenCSV wallet screen.",
+                ),
+                actionBlock: { [weak self] in
+                    self?.navigationController?.pushViewController(
+                        OpenCsvWalletViewController(thread: nil),
+                        animated: true,
+                    )
+                },
+            ))
+            contents.add(walletSection)
+        } else if SUIEnvironment.shared.paymentsRef.shouldShowPaymentsUI {
             let paymentsSection = OWSTableSection()
             paymentsSection.add(.init(
                 customCellBlock: {

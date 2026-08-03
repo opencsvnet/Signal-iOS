@@ -26,6 +26,19 @@ public class PaymentsImpl: NSObject, PaymentsSwift {
         self.paymentsProcessor = PaymentsProcessor(appReadiness: appReadiness)
         super.init()
 
+        // OpenCSV dev builds retain legacy MobileCoin entropy and database
+        // rows solely for a read-only, authenticated recovery export. They
+        // must never initialize the MobileCoin network, reconciliation, or
+        // payment-provider behavior.
+        if BuildFlags.openCsvPayments {
+            appReadiness.runNowOrWhenAppDidBecomeReadyAsync {
+                SSKEnvironment.shared.databaseStorageRef.asyncWrite { transaction in
+                    self.updateLastKnownLocalPaymentAddressProtoData(transaction: transaction)
+                }
+            }
+            return
+        }
+
         // Note: this isn't how often we refresh the balance, it's how often we
         // check whether we should refresh the balance.
         //
@@ -135,6 +148,9 @@ public class PaymentsImpl: NSObject, PaymentsSwift {
     // build since we need to obtain authentication from
     // the service, so we cache and reuse instances.
     func getMobileCoinAPI() async throws -> MobileCoinAPI {
+        guard !BuildFlags.openCsvPayments else {
+            throw PaymentsError.notEnabled
+        }
         guard !CurrentAppContext().isNSE else {
             throw OWSAssertionError("Payments disabled in NSE.")
         }
@@ -153,7 +169,7 @@ public class PaymentsImpl: NSObject, PaymentsSwift {
     public var canEnablePayments: Bool { SSKEnvironment.shared.paymentsHelperRef.canEnablePayments }
 
     public var shouldShowPaymentsUI: Bool {
-        arePaymentsEnabled || canEnablePayments
+        !BuildFlags.openCsvPayments && (arePaymentsEnabled || canEnablePayments)
     }
 
     // MARK: - PaymentsState
@@ -248,7 +264,7 @@ public class PaymentsImpl: NSObject, PaymentsSwift {
     }
 
     private var canUsePayments: Bool {
-        arePaymentsEnabled && !CurrentAppContext().isNSE
+        !BuildFlags.openCsvPayments && arePaymentsEnabled && !CurrentAppContext().isNSE
     }
 
     // We need to update our balance:
@@ -465,6 +481,9 @@ public extension PaymentsImpl {
     }
 
     func localPaymentAddressProtoData(paymentsState: PaymentsState, tx: DBReadTransaction) -> Data? {
+        guard !BuildFlags.openCsvPayments else {
+            return nil
+        }
         owsAssertDebug(paymentsState.isEnabled)
 
         guard let localPaymentAddress = buildLocalPaymentAddress(paymentsState: paymentsState) else {

@@ -304,8 +304,16 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                     Logger.warn("OpenCSV consignment queued for retry: \(error)")
                 }
                 self.dismiss(animated: true)
+            } catch OpenCsvPaymentsError.consignmentNotReady(let operationId, let state) {
+                // Rust has already persisted (and may have submitted) the
+                // exact signed transaction. Foreground recovery resumes the
+                // same operation; never re-arm the button for a second spend.
+                Logger.info("OpenCSV operation \(operationId) queued in \(state)")
+                self.setSendState(.sent)
+                self.dismiss(animated: true)
             } catch {
-                // Nothing was anchored, so retrying is safe.
+                // Failures surfaced here occurred before the durable signed
+                // boundary, so retrying the same user intent is safe.
                 self.showError(Self.userFacingMessage(for: error))
             }
         }
@@ -314,10 +322,15 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     /// Rust error strings are not user-facing copy; map the ones we model.
     private static func userFacingMessage(for error: Error) -> String {
         switch error {
-        case OpenCsvPaymentsError.anchorServerNotConfigured:
+        case OpenCsvPaymentsError.secureBackupRequired:
             return OWSLocalizedString(
-                "OPENCSV_SEND_ERROR_NO_SERVER",
-                comment: "Error shown when no OpenCSV anchor server is configured.",
+                "OPENCSV_SEND_ERROR_BACKUP_REQUIRED",
+                comment: "Error shown when Signal Secure Backup must be enabled before an OpenCSV write.",
+            )
+        case OpenCsvPaymentsError.secureBackupFailed:
+            return OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_BACKUP_FAILED",
+                comment: "Error shown when the wallet checkpoint could not be included in Signal Secure Backup.",
             )
         case OpenCsvPaymentsError.needTwoCoins:
             return OWSLocalizedString(

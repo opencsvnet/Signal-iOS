@@ -194,7 +194,7 @@ class AttachmentFormatPickerView: UIView {
             if !BuildFlags.pollOneOnOneSend {
                 casesToExclude.append(.poll)
             }
-            if !SSKEnvironment.shared.paymentsHelperRef.arePaymentsEnabled {
+            if BuildFlags.openCsvPayments || !SSKEnvironment.shared.paymentsHelperRef.arePaymentsEnabled {
                 casesToExclude.append(.payment)
             }
             if !BuildFlags.openCsvPayments {

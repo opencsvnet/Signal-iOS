@@ -117,11 +117,19 @@ public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
     }
 
     private var titleLabelConfig: CVLabelConfig {
-        CVLabelConfig.unstyledText(
+        let title = if openCsvPayment.verdict?.direction == .minted {
+            OWSLocalizedString(
+                "OPENCSV_MINT_TITLE",
+                comment: "Title of an OpenCSV asset issuance bubble in the conversation view.",
+            )
+        } else {
             OWSLocalizedString(
                 "OPENCSV_PAYMENT_TITLE",
                 comment: "Title of an OpenCSV payment bubble in the conversation view.",
-            ),
+            )
+        }
+        return CVLabelConfig.unstyledText(
+            title,
             font: .dynamicTypeCaption1,
             textColor: conversationStyle.bubbleSecondaryTextColor(isIncoming: isIncoming),
         )

@@ -13,6 +13,7 @@ final class OutgoingConfigurationSyncMessage: OutgoingSyncMessage {
     private let showTypingIndicators: Bool
     private let sendLinkPreviews: Bool
     private let provisioningVersion: UInt32
+    private let openCsvWatchAccount: Data?
 
     init(
         localThread: TSContactThread,
@@ -21,6 +22,7 @@ final class OutgoingConfigurationSyncMessage: OutgoingSyncMessage {
         showTypingIndicators: Bool,
         sendLinkPreviews: Bool,
         provisioningVersion: UInt32,
+        openCsvWatchAccount: Data?,
         tx: DBReadTransaction,
     ) {
         self.areReadReceiptsEnabled = areReadReceiptsEnabled
@@ -28,6 +30,7 @@ final class OutgoingConfigurationSyncMessage: OutgoingSyncMessage {
         self.showTypingIndicators = showTypingIndicators
         self.sendLinkPreviews = sendLinkPreviews
         self.provisioningVersion = provisioningVersion
+        self.openCsvWatchAccount = openCsvWatchAccount
         super.init(localThread: localThread, tx: tx)
     }
 
@@ -40,6 +43,7 @@ final class OutgoingConfigurationSyncMessage: OutgoingSyncMessage {
         coder.encode(NSNumber(value: self.sendLinkPreviews), forKey: "sendLinkPreviews")
         coder.encode(NSNumber(value: self.showTypingIndicators), forKey: "showTypingIndicators")
         coder.encode(NSNumber(value: self.showUnidentifiedDeliveryIndicators), forKey: "showUnidentifiedDeliveryIndicators")
+        coder.encode(self.openCsvWatchAccount, forKey: "openCsvWatchAccount")
     }
 
     required init?(coder: NSCoder) {
@@ -48,6 +52,7 @@ final class OutgoingConfigurationSyncMessage: OutgoingSyncMessage {
         self.sendLinkPreviews = coder.decodeObject(of: NSNumber.self, forKey: "sendLinkPreviews")?.boolValue ?? false
         self.showTypingIndicators = coder.decodeObject(of: NSNumber.self, forKey: "showTypingIndicators")?.boolValue ?? false
         self.showUnidentifiedDeliveryIndicators = coder.decodeObject(of: NSNumber.self, forKey: "showUnidentifiedDeliveryIndicators")?.boolValue ?? false
+        self.openCsvWatchAccount = coder.decodeObject(of: NSData.self, forKey: "openCsvWatchAccount") as Data?
         super.init(coder: coder)
     }
 
@@ -59,6 +64,7 @@ final class OutgoingConfigurationSyncMessage: OutgoingSyncMessage {
         hasher.combine(self.sendLinkPreviews)
         hasher.combine(self.showTypingIndicators)
         hasher.combine(self.showUnidentifiedDeliveryIndicators)
+        hasher.combine(self.openCsvWatchAccount)
         return hasher.finalize()
     }
 
@@ -70,6 +76,7 @@ final class OutgoingConfigurationSyncMessage: OutgoingSyncMessage {
         guard self.sendLinkPreviews == object.sendLinkPreviews else { return false }
         guard self.showTypingIndicators == object.showTypingIndicators else { return false }
         guard self.showUnidentifiedDeliveryIndicators == object.showUnidentifiedDeliveryIndicators else { return false }
+        guard self.openCsvWatchAccount == object.openCsvWatchAccount else { return false }
         return true
     }
 
@@ -80,6 +87,9 @@ final class OutgoingConfigurationSyncMessage: OutgoingSyncMessage {
         configurationBuilder.setTypingIndicators(self.showTypingIndicators)
         configurationBuilder.setLinkPreviews(self.sendLinkPreviews)
         configurationBuilder.setProvisioningVersion(self.provisioningVersion)
+        if let openCsvWatchAccount {
+            configurationBuilder.setOpenCsvWatchAccount(openCsvWatchAccount)
+        }
 
         let builder = SSKProtoSyncMessage.builder()
         builder.setConfiguration(configurationBuilder.buildInfallibly())

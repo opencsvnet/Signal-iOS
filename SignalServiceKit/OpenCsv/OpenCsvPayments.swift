@@ -7,8 +7,22 @@ import Foundation
 
 /// User-facing failures of the OpenCSV payment flows.
 public enum OpenCsvPaymentsError: Error {
-    /// No anchor server URL is configured (required to send).
-    case anchorServerNotConfigured
+    /// Signal Secure Backup is disabled or being disabled. Bitcoin-writing
+    /// operations remain frozen until a current wallet checkpoint is backed
+    /// up successfully.
+    case secureBackupRequired
+    /// A wallet checkpoint could not be included in a completed Signal
+    /// Secure Backup, so the corresponding operation was not signed.
+    case secureBackupFailed(underlying: String)
+    /// The Rust-owned operation reached a durable state but its consignment
+    /// is not independently observed and ready for Signal delivery yet.
+    case consignmentNotReady(operationId: String, state: String)
+    /// The RBF replacement is already signed/persisted/broadcast, but the
+    /// refreshed operation journal has not yet reached Secure Backup. The
+    /// UI must report this as committed and must not blindly retry it.
+    case feeBumpCommittedBackupPending(operationId: String, txid: String?)
+    /// A linked device has not yet received its public watch descriptors.
+    case linkedWalletNotProvisioned
     /// The wallet holds fewer than the two spendable coins a transfer needs.
     case needTwoCoins
     /// Unspent total is below the requested amount.
@@ -42,7 +56,7 @@ public enum OpenCsvPaymentsError: Error {
     case chainViewLagging(reason: String)
 }
 
-/// The OpenCSV payments service: owns the in-memory Rust wallet and runs the
+/// The OpenCSV payments service: owns the Rust account wallet and runs the
 /// receive pipeline (consignment attachment → verify → verdict → re-render)
 /// and the wallet half of the send pipeline (prove → publish anchor →
 /// finalize → persist). Transport stays with the caller: the send UI
@@ -66,6 +80,11 @@ public actor OpenCsvPayments {
     public static let maxConsignmentBytes = 1024 * 1024
 
     private var wallet: OpenCsvWallet?
+    /// Durable Signal-native account. This owns the Bitcoin fee wallet,
+    /// protocol keys, UTXO reservations, signed transactions, and operation
+    /// journal. The legacy in-memory wallet above remains receive-only while
+    /// stored prototype consignments are migrated.
+    private var accountWallet: OpenCsvAccountWallet?
     /// Set for the duration of a send. `sendPayment` releases the actor at
     /// every `await` (context reservation, anchor confirmation), so without
     /// this two concurrent sends would both read the same unspent set and
@@ -108,8 +127,15 @@ public actor OpenCsvPayments {
         /// The wallet's receiving key (share with senders; e.g. mint target).
         public let owner: String
         public let balances: [OpenCsvCredit]
-        public let unspentCoins: [OpenCsvCoin]
-        public let anchorServerUrl: URL?
+        public let operations: [OpenCsvAccountOperationSummary]
+        public let feeReserve: OpenCsvAccountStatus.FeeReserve
+        public let bitcoinDepositAddress: String
+        public let backupVerified: Bool
+        public let writeEnabled: Bool
+        public let accountRole: OpenCsvAccountRole
+        public let deviceBindingStatus: String
+        public let syncProvenance: OpenCsvAccountStatus.SyncProvenance
+        public let esploraUrl: URL?
         /// Bitcoin P2P peers powering self-scan and SPV point-verify.
         public let spvPeers: [String]
         /// Bitcoin network for the chain views ("signet" default).
@@ -319,13 +345,9 @@ public actor OpenCsvPayments {
         guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
             throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
         }
-        let wallet = try await ensureWallet()
+        let account = try ensureAccountWallet()
         let snapshot = try await fetchAndCacheSnapshot()
-        let verdict = try wallet.verify(
-            blob: blob,
-            snapshotJson: snapshot,
-            requiredConfirmations: Self.requiredConfirmations,
-        )
+        let verdict = try account.verify(blob: blob, snapshotJson: snapshot)
         return (verdict, snapshot)
     }
 
@@ -515,18 +537,17 @@ public actor OpenCsvPayments {
     }
 
     /// Sweep a thread's recent messages for consignment attachments that
-    /// never got a verdict — e.g. downloaded before the anchor server was
+    /// never got a verdict — e.g. downloaded before chain peers were
     /// configured, or arrived while the download hook could not verify —
     /// verifying downloaded ones and enqueueing downloads for the rest.
     /// Called when the wallet UI opens on a thread.
     /// Retry every consignment still lacking a verdict, across all
     /// conversations.
     ///
-    /// Verification needs the anchor server, which may be unreachable when
-    /// a consignment arrives (offline, server down, URL not yet set). Those
-    /// attempts deliberately store nothing, so this sweep — run whenever the
-    /// app becomes active — is what eventually settles them without the
-    /// user having to open any particular screen.
+    /// Verification needs a settled phone-owned chain view. Peers, generic
+    /// accelerators, or confirmations may be unavailable when a consignment
+    /// arrives; those attempts store nothing so this activation sweep can
+    /// settle them later without trusting a bespoke service.
     public func retryAllPendingVerifications() async {
         let threadUniqueIds: [String] = db.read { tx in
             var ids = [String]()
@@ -618,164 +639,280 @@ public actor OpenCsvPayments {
         }
         isSending = true
         defer { isSending = false }
-        let wallet = try await ensureWallet()
-
-        let unspent = try wallet.coins().filter(\.unspent)
-        guard !unspent.isEmpty else {
-            throw OpenCsvPaymentsError.insufficientFunds(available: 0)
+        let account = try ensureAccountWallet()
+        _ = try account.sync()
+        var status = try account.status()
+        if !status.backupVerified {
+            // Back up the root and empty/current checkpoint before Rust is
+            // allowed to reserve any Bitcoin UTXO or prove an asset spend.
+            try await backUpAccountCheckpoint(account: account)
+            status = try account.status()
         }
-        // Which asset to spend is a decision, not an accident of ordering.
-        // With one asset it is unambiguous; with several the caller must
-        // say, rather than us silently spending whichever sorted first.
-        let assetIds = Set(unspent.map(\.assetId))
+
+        let assetIds = Set(status.assets.map(\.assetId))
         guard let assetId = assetIds.count == 1 ? assetIds.first : assetIdHex else {
             throw OpenCsvPaymentsError.assetNotSpecified(available: assetIds.sorted())
         }
-        guard assetIds.contains(assetId) else {
+        guard let asset = status.assets.first(where: { $0.assetId == assetId }) else {
             throw OpenCsvPaymentsError.insufficientFunds(available: 0)
         }
-        // The transfer circuit is fixed at 2 inputs: pick the two largest
-        // coins of the asset (zero-value padding coins count).
-        let candidates = unspent.filter { $0.assetId == assetId }.sorted { $0.value > $1.value }
-        guard candidates.count >= 2 else {
-            throw OpenCsvPaymentsError.needTwoCoins
-        }
-        let inputs = Array(candidates.prefix(2))
-        let total = inputs.reduce(0) { $0 + $1.value }
-        guard total >= amount else {
-            throw OpenCsvPaymentsError.insufficientFunds(available: total)
+        guard asset.amount >= amount else {
+            throw OpenCsvPaymentsError.insufficientFunds(available: asset.amount)
         }
 
-        guard let anchorUrl = db.read(block: { store.anchorServerUrl(tx: $0) }) else {
-            throw OpenCsvPaymentsError.anchorServerNotConfigured
-        }
-        let provider = RemoteOpenCsvAnchorProvider(baseURL: anchorUrl)
-
-        let amounts = total == amount ? [amount] : [amount, total - amount]
-        let proved = try wallet.proveTransfer(
-            coinIds: inputs.map(\.id),
-            toOwnerHex: recipient,
-            amounts: amounts,
+        // Rust—not Swift—selects and reserves both protocol coins and the
+        // fee UTXO, derives change, binds the first input to the proof, and
+        // persists the proof-ready operation.
+        let prepared = try account.prepareTransfer(
+            assetId: assetId,
+            toOwner: recipient,
+            amount: amount,
         )
-        // Real chains own the transaction context: reserve one, rebind the
-        // (already proved) record to it, and publish. Demo chains return
-        // nil and keep the context the prover drew.
-        var recordHex = proved.anchorRecordHex
-        var ctxHex = proved.ctxHex
-        if let reserved = try await provider.reserveContext() {
-            recordHex = try wallet.rebind(pendingId: proved.pendingId, ctxHex: reserved)
-            ctxHex = reserved
+        let pending = OpenCsvWalletStore.PendingAccountOperation(
+            operationId: prepared.operationId,
+            threadUniqueId: threadUniqueId,
+            amount: amount,
+            currency: asset.currency,
+            assetId: assetId,
+            kind: "transfer",
+            createdAt: Date(),
+        )
+        return try await signPreparedOperation(
+            account: account,
+            prepared: prepared,
+            pending: pending,
+        )
+    }
+
+    /// Create a new issuer-controlled asset inside Signal and anchor its
+    /// first issuance with the same Rust-owned fee/backup policy as a send.
+    /// The resulting consignment is delivered into the current conversation
+    /// as the reproducible mint receipt.
+    public func mintAsset(
+        currency: String,
+        amount: UInt64,
+        threadUniqueId: String,
+    ) async throws -> OpenCsvWalletStore.PendingDelivery {
+        guard !isSending else {
+            throw OpenCsvPaymentsError.sendAlreadyInProgress
         }
-        // Everything below is irreversible or unrecoverable-from-memory, so
-        // persist the pending transaction first. The openings carry
-        // randomness that cannot be re-derived: without this, a crash
-        // between broadcasting the anchor and finalizing spends the coins
-        // on-chain and destroys the consignment the recipient needs.
-        let inFlightId = UUID().uuidString
+        let currency = currency.uppercased()
+        guard currency.utf8.count == 3, amount > 0 else {
+            throw OpenCsvClientError.ffi("mint requires a three-byte currency and positive amount")
+        }
+        isSending = true
+        defer { isSending = false }
+        let account = try ensureAccountWallet()
+        _ = try account.sync()
+        if try !account.status().backupVerified {
+            try await backUpAccountCheckpoint(account: account)
+        }
+        let prepared = try account.prepareMint(currency: currency, amounts: [amount])
+        guard let assetId = prepared.assetId else {
+            try? account.cancel(prepared.operationId)
+            throw OpenCsvClientError.decode("mint receipt omitted its derived asset id")
+        }
+        let pending = OpenCsvWalletStore.PendingAccountOperation(
+            operationId: prepared.operationId,
+            threadUniqueId: threadUniqueId,
+            amount: amount,
+            currency: currency,
+            assetId: assetId,
+            kind: "mint",
+            createdAt: Date(),
+        )
+        return try await signPreparedOperation(
+            account: account,
+            prepared: prepared,
+            pending: pending,
+        )
+    }
+
+    /// Replace an unconfirmed OpenCSV anchor with a protocol-safe RBF
+    /// transaction. There is intentionally no equivalent API accepting a
+    /// Bitcoin recipient, PSBT, raw transaction, or caller-selected UTXO.
+    public func feeBump(
+        operationId: String,
+        targetSatPerVb: UInt64,
+    ) async throws -> OpenCsvAccountOperation {
+        guard !isSending else {
+            throw OpenCsvPaymentsError.sendAlreadyInProgress
+        }
+        guard targetSatPerVb > 0 else {
+            throw OpenCsvClientError.ffi("fee rate must be positive")
+        }
+        isSending = true
+        defer { isSending = false }
+        let account = try ensureAccountWallet()
+        if try !account.status().backupVerified {
+            try await backUpAccountCheckpoint(account: account)
+        }
+        guard try account.operationSummaries().contains(where: {
+            $0.operationId == operationId
+                && ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
+        }) else {
+            throw OpenCsvClientError.ffi("operation is not an unconfirmed OpenCSV transaction")
+        }
+        let replacement = try account.feeBump(
+            operationId: operationId,
+            targetSatPerVb: targetSatPerVb,
+        )
         do {
-            let exportJson = try wallet.exportPending(pendingId: proved.pendingId)
+            // Capture the replacement txid/journal after Rust has persisted
+            // it. A failure here never makes the committed RBF safe to retry.
+            try await backUpAccountCheckpoint(account: account)
+        } catch {
+            Logger.error("OpenCSV fee bump committed but backup refresh failed: \(error)")
+            throw OpenCsvPaymentsError.feeBumpCommittedBackupPending(
+                operationId: operationId,
+                txid: replacement.txid,
+            )
+        }
+        return replacement
+    }
+
+    private func signPreparedOperation(
+        account: OpenCsvAccountWallet,
+        prepared: OpenCsvPreparedOperation,
+        pending: OpenCsvWalletStore.PendingAccountOperation,
+    ) async throws -> OpenCsvWalletStore.PendingDelivery {
+        do {
             try await db.awaitableWrite { tx in
-                try self.store.upsertInFlightSend(
-                    OpenCsvWalletStore.InFlightSend(
-                        id: inFlightId,
-                        exportJson: exportJson,
-                        threadUniqueId: threadUniqueId,
-                        amount: amount,
-                        currency: inputs.first?.currency,
-                        assetId: assetId,
-                        createdAt: Date(),
-                    ),
-                    tx: tx,
-                )
+                try self.store.upsertPendingAccountOperation(pending, tx: tx)
             }
         } catch {
-            // Refuse to anchor what we could not learn to recover.
+            // The Rust journal can recover the protocol state, but without
+            // this Signal metadata it cannot know which chat should receive
+            // the consignment. Cancel while cancellation is still legal.
+            try? account.cancel(prepared.operationId)
             throw OpenCsvPaymentsError.couldNotPersistPendingSend(underlying: "\(error)")
         }
 
-        let anchorRef = try await provider.publishAnchor(
-            recordHex: recordHex,
-            ctxHex: ctxHex,
-            onBroadcast: { txid in
-                // Spent from this moment, confirmed or not.
-                try? await self.db.awaitableWrite { tx in
-                    var broadcast = OpenCsvWalletStore.InFlightSend(
-                        id: inFlightId,
-                        exportJson: (try? wallet.exportPending(pendingId: proved.pendingId)) ?? "",
-                        threadUniqueId: threadUniqueId,
-                        amount: amount,
-                        currency: inputs.first?.currency,
-                        assetId: assetId,
-                        createdAt: Date(),
-                    )
-                    broadcast.txidHex = txid
-                    try self.store.upsertInFlightSend(broadcast, tx: tx)
-                }
-            },
+        try await backUpAccountCheckpoint(
+            account: account,
+            operationId: prepared.operationId,
+            expectedCheckpointHash: prepared.checkpointHash,
         )
-        // Record where it landed, so a crash before finalize can resume.
-        try? await db.awaitableWrite { tx in
-            guard var send = self.store.inFlightSends(tx: tx).first(where: { $0.id == inFlightId }) else { return }
-            send.txidHex = anchorRef.txid
-            send.height = anchorRef.height
-            send.position = anchorRef.position
-            try self.store.upsertInFlightSend(send, tx: tx)
-        }
-        let (blob, spends) = try wallet.finalize(pendingId: proved.pendingId, anchorRef: anchorRef)
-
-        // Carry our receiving key so the recipient's wallet can prefill
-        // the reply-to address from the chat itself.
-        var body = OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count)
-        if let owner = wallet.owners.first {
-            body += "\n" + OpenCsvAttachmentDetector.addressAnnouncement(owner: owner)
-        }
-
-        // The anchor is confirmed, so these coins are spent on-chain no
-        // matter what happens next. Persist the spend and the undelivered
-        // consignment *before* anything else — in particular before the
-        // snapshot fetch below, which is a network round trip that must not
-        // sit between an irreversible on-chain event and its record.
-        let currency = inputs.first?.currency
-        let deliveryId = UUID().uuidString
-        let createdAt = Date()
-        let recorded = try await db.awaitableWrite { tx -> OpenCsvWalletStore.PendingDelivery in
-            let entry = try self.store.recordOutgoing(blob: blob, spends: spends, tx: tx)
-            let recorded = OpenCsvWalletStore.PendingDelivery(
-                id: deliveryId,
-                threadUniqueId: threadUniqueId,
-                body: body,
-                replayEntry: entry,
-                amount: amount,
-                currency: currency,
-                assetId: assetId,
-                createdAt: createdAt,
+        do {
+            let operation = try account.signAndBroadcast(
+                operationId: prepared.operationId,
+                targetSatPerVb: 2,
             )
-            try self.store.addPendingDelivery(recorded, tx: tx)
-            // The consignment now exists and is durably queued, so the
-            // recovery record has done its job.
-            try self.store.removeInFlightSend(id: inFlightId, tx: tx)
-            return recorded
+            return try await persistDeliveryIfReady(operation: operation, pending: pending)
+        } catch {
+            if let operation = try? account.operationStatus(prepared.operationId),
+               operation.state == "signed_persisted"
+                || operation.state == "broadcast_unobserved"
+                || operation.state == "broadcast"
+            {
+                throw OpenCsvPaymentsError.consignmentNotReady(
+                    operationId: prepared.operationId,
+                    state: operation.state,
+                )
+            }
+            throw error
         }
-
-        // Cache-warm only: credit our own change output. Safe to fail — the
-        // replay entry above rebuilds it at next launch.
-        if let snapshot = try? await fetchAndCacheSnapshot() {
-            _ = try? wallet.verify(
-                blob: blob,
-                snapshotJson: snapshot,
-                requiredConfirmations: Self.requiredConfirmations,
-            )
-        }
-        return recorded
     }
 
-    /// Finish sends interrupted between anchoring and finalizing.
-    ///
-    /// A record with no txid was never broadcast — nothing was spent, so it
-    /// is simply dropped. One with a txid may have anchored, so the export
-    /// is re-imported and finalized against the confirmed anchor, turning a
-    /// lost payment back into a deliverable one.
+    private func persistDeliveryIfReady(
+        operation: OpenCsvAccountOperation,
+        pending: OpenCsvWalletStore.PendingAccountOperation,
+    ) async throws -> OpenCsvWalletStore.PendingDelivery {
+        if let existing = db.read(block: { tx in
+            self.store.pendingDeliveries(tx: tx).first { $0.operationId == operation.operationId }
+        }) {
+            return existing
+        }
+        guard
+            let receipt = operation.receipt,
+            receipt.deliveryReady == true,
+            let encoded = receipt.consignmentBase64,
+            let consignmentId = receipt.consignmentId,
+            let blob = Data(base64Encoded: encoded)
+        else {
+            throw OpenCsvPaymentsError.consignmentNotReady(
+                operationId: operation.operationId,
+                state: operation.state,
+            )
+        }
+        let owner = try ensureAccountWallet().status().owners.first
+        var body = OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count)
+        if let owner {
+            body += "\n" + OpenCsvAttachmentDetector.addressAnnouncement(owner: owner)
+        }
+        return try await db.awaitableWrite { tx in
+            // Keep one encrypted replay copy for the existing attachment
+            // transport and explorer. Rust remains the source of truth for
+            // spends and operation state.
+            let entry = try self.store.recordOutgoing(blob: blob, spends: [], tx: tx)
+            let delivery = OpenCsvWalletStore.PendingDelivery(
+                threadUniqueId: pending.threadUniqueId,
+                body: body,
+                replayEntry: entry,
+                amount: pending.amount,
+                currency: pending.currency,
+                assetId: pending.assetId,
+                operationKind: pending.kind,
+                operationId: operation.operationId,
+                deliveryNonce: operation.deliveryNonce,
+                consignmentId: consignmentId,
+                createdAt: pending.createdAt,
+            )
+            try self.store.addPendingDelivery(delivery, tx: tx)
+            return delivery
+        }
+    }
+
+    /// Resume Rust-durable operations and migrate any prototype-era sends.
     public func recoverInterruptedSends() async {
+        if let account = try? ensureAccountWallet() {
+            let operations = (try? db.read { try self.store.pendingAccountOperations(tx: $0) }) ?? []
+            for pending in operations {
+                do {
+                    var operation = try account.operationStatus(pending.operationId)
+                    if operation.state == "proof_ready", !operation.backupAcked,
+                       let checkpointHash = operation.checkpointHash
+                    {
+                        try await backUpAccountCheckpoint(
+                            account: account,
+                            operationId: operation.operationId,
+                            expectedCheckpointHash: checkpointHash,
+                        )
+                        operation = try account.operationStatus(pending.operationId)
+                    }
+                    if operation.state == "proof_ready", operation.backupAcked {
+                        operation = try account.signAndBroadcast(
+                            operationId: pending.operationId,
+                            targetSatPerVb: 2,
+                        )
+                    } else if operation.state == "signed_persisted"
+                        || operation.state == "broadcast_unobserved"
+                    {
+                        operation = try account.resume(pending.operationId)
+                    }
+                    if operation.state == "cancelled" || operation.state == "rejected" {
+                        try await db.awaitableWrite { tx in
+                            try self.store.removePendingAccountOperation(
+                                operationId: pending.operationId,
+                                tx: tx,
+                            )
+                        }
+                    } else if operation.state == "consignment_delivered" {
+                        try await finishDeliveryAcknowledgement(operationId: pending.operationId)
+                    } else {
+                        _ = try await persistDeliveryIfReady(operation: operation, pending: pending)
+                    }
+                } catch OpenCsvPaymentsError.consignmentNotReady {
+                    Logger.info("OpenCSV operation \(pending.operationId) is durable and awaiting observation")
+                } catch {
+                    Logger.warn("could not resume OpenCSV operation \(pending.operationId): \(error)")
+                }
+            }
+            await reconcileCommittedDeliveries(account: account)
+        }
+
+        // Retain recovery for already-persisted prototype sends. New sends
+        // never create these records or call a bespoke anchor server.
         let sends = db.read { self.store.inFlightSends(tx: $0) }
         guard !sends.isEmpty else { return }
         guard let wallet = try? await ensureWallet() else { return }
@@ -821,6 +958,10 @@ public actor OpenCsvPayments {
     /// retry limit. The app layer re-enqueues these on foreground.
     public func deliveriesNeedingRetry() -> [OpenCsvWalletStore.PendingDelivery] {
         db.read { self.store.pendingDeliveries(tx: $0) }.filter { delivery in
+            // The Signal message already exists. Foreground reconciliation
+            // will finish Rust's idempotent acknowledgement; never enqueue a
+            // second copy of the same payment attachment.
+            if delivery.enqueuedAt != nil { return false }
             if deliveriesInFlight.contains(delivery.id) { return false }
             if delivery.hasExhaustedRetries {
                 Logger.warn("OpenCSV delivery \(delivery.id) exhausted retries; leaving it queued")
@@ -858,11 +999,64 @@ public actor OpenCsvPayments {
             .setVerdict(record, blob: nil, attachmentId: attachmentId, tx: tx)
     }
 
-    /// Clear a delivered consignment inside the caller's transaction, so it
-    /// commits with the message rather than after it.
+    /// Mark a delivery enqueued inside the message-insertion transaction.
+    /// Account-era records remain until Rust acknowledges operation+nonce;
+    /// legacy records can be removed immediately.
     public nonisolated func clearDelivered(id: String, tx: DBWriteTransaction) throws {
-        try OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
-            .removePendingDelivery(id: id, tx: tx)
+        let store = OpenCsvWalletStore(
+            keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+        )
+        guard let delivery = store.pendingDeliveries(tx: tx).first(where: { $0.id == id }) else {
+            return
+        }
+        if delivery.operationId == nil {
+            try store.removePendingDelivery(id: id, tx: tx)
+        } else {
+            try store.markPendingDeliveryEnqueued(id: id, tx: tx)
+        }
+    }
+
+    /// Complete Rust's idempotent delivery acknowledgement after the Signal
+    /// transaction commits. If the app dies first, foreground recovery sees
+    /// `enqueuedAt` and performs this exact step without re-sending.
+    public func acknowledgeDelivered(_ delivery: OpenCsvWalletStore.PendingDelivery) async {
+        guard let operationId = delivery.operationId, let nonce = delivery.deliveryNonce else {
+            return
+        }
+        do {
+            let account = try ensureAccountWallet()
+            _ = try account.markDelivered(operationId: operationId, deliveryNonce: nonce)
+            try await finishDeliveryAcknowledgement(operationId: operationId)
+        } catch {
+            Logger.warn("could not acknowledge OpenCSV delivery \(delivery.id) yet: \(error)")
+        }
+    }
+
+    private func reconcileCommittedDeliveries(account: OpenCsvAccountWallet) async {
+        let deliveries = db.read { self.store.pendingDeliveries(tx: $0) }
+            .filter { $0.enqueuedAt != nil && $0.operationId != nil && $0.deliveryNonce != nil }
+        for delivery in deliveries {
+            do {
+                _ = try account.markDelivered(
+                    operationId: delivery.operationId!,
+                    deliveryNonce: delivery.deliveryNonce!,
+                )
+                try await finishDeliveryAcknowledgement(operationId: delivery.operationId!)
+            } catch {
+                Logger.warn("OpenCSV delivery acknowledgement remains retryable: \(error)")
+            }
+        }
+    }
+
+    private func finishDeliveryAcknowledgement(operationId: String) async throws {
+        try await db.awaitableWrite { tx in
+            for delivery in self.store.pendingDeliveries(tx: tx)
+                where delivery.operationId == operationId
+            {
+                try self.store.removePendingDelivery(id: delivery.id, tx: tx)
+            }
+            try self.store.removePendingAccountOperation(operationId: operationId, tx: tx)
+        }
     }
 
     /// The verdict to write for a consignment we sent, in the same
@@ -870,10 +1064,20 @@ public actor OpenCsvPayments {
     public nonisolated func outgoingVerdict(
         for delivery: OpenCsvWalletStore.PendingDelivery,
     ) -> OpenCsvVerdictRecord {
-        OpenCsvVerdictRecord(
+        if delivery.operationKind == "mint" {
+            return OpenCsvVerdictRecord(
+                mintedAmount: delivery.amount,
+                currency: delivery.currency,
+                assetId: delivery.assetId,
+                consignmentId: delivery.consignmentId,
+                date: Date(),
+            )
+        }
+        return OpenCsvVerdictRecord(
             sentAmount: delivery.amount,
             currency: delivery.currency,
             assetId: delivery.assetId,
+            consignmentId: delivery.consignmentId,
             date: Date(),
         )
     }
@@ -881,22 +1085,30 @@ public actor OpenCsvPayments {
     // MARK: - Settings / status
 
     public func walletSummary() async throws -> WalletSummary {
-        let wallet = try await ensureWallet()
-        let coins = try wallet.coins()
+        let account = try ensureAccountWallet()
+        let status = try account.status()
         return WalletSummary(
-            owner: wallet.owners.first ?? "",
-            balances: try wallet.balance(),
-            unspentCoins: coins.filter(\.unspent),
-            anchorServerUrl: db.read { store.anchorServerUrl(tx: $0) },
+            owner: status.owners.first ?? "",
+            balances: status.assets,
+            operations: try account.operationSummaries(),
+            feeReserve: status.feeReserve,
+            bitcoinDepositAddress: status.depositAddress,
+            backupVerified: status.backupVerified,
+            writeEnabled: status.writeEnabled,
+            accountRole: status.role,
+            deviceBindingStatus: status.deviceBinding.status,
+            syncProvenance: status.syncProvenance,
+            esploraUrl: db.read { URL(string: store.esploraUrl(tx: $0)) },
             spvPeers: db.read { store.spvPeers(tx: $0) },
-            network: db.read { store.network(tx: $0) },
+            network: status.network,
         )
     }
 
-    public func setAnchorServerUrl(_ urlString: String?) async {
+    public func setEsploraUrl(_ urlString: String?) async {
         await db.awaitableWrite { tx in
-            self.store.setAnchorServerUrl(urlString, tx: tx)
+            self.store.setEsploraUrl(urlString, tx: tx)
         }
+        accountWallet = nil
     }
 
     public func setSpvPeers(_ peers: [String]) async {
@@ -909,6 +1121,7 @@ public actor OpenCsvPayments {
             // not be silent: without peers, self-scan and SPV never run.
             Logger.error("could not persist SPV peers: \(error)")
         }
+        accountWallet = nil
     }
 
     public func setNetwork(_ network: String) async {
@@ -920,12 +1133,21 @@ public actor OpenCsvPayments {
         // persistent client's connections point at the wrong chain.
         scanSyncedThisLaunch = false
         closeCbfClient()
+        accountWallet = nil
     }
 
     /// A stored verdict, for the conversation cell (main-thread render path).
     public nonisolated func verdict(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> OpenCsvVerdictRecord? {
         OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
             .verdict(attachmentId: attachmentId, tx: tx)
+    }
+
+    public nonisolated func isCanonicalPresentationAttachment(
+        attachmentId: Attachment.IDType,
+        tx: DBReadTransaction,
+    ) -> Bool {
+        OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
+            .isCanonicalPresentationAttachment(attachmentId: attachmentId, tx: tx)
     }
 
     // MARK: - Explorer (the phone-as-explorer detail sheet)
@@ -1019,7 +1241,7 @@ public actor OpenCsvPayments {
     /// says right now; the stored verdict is not rewritten.
     public func reVerify(attachmentId: Attachment.IDType) async throws -> Bool {
         guard let blob = db.read(block: { tx in
-            self.store.replayBlobs(tx: tx).first { $0.entry == "a:\(attachmentId)" }?.blob
+            self.store.blobForAttachment(attachmentId: attachmentId, tx: tx)
         }) else {
             throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: 0)
         }
@@ -1030,6 +1252,201 @@ public actor OpenCsvPayments {
     }
 
     // MARK: - Wallet lifecycle
+
+    private static let defaultSignetPeers = [
+        "172.233.20.188:38333",
+        "15.204.114.107:38333",
+    ]
+
+    /// Open the durable Rust-owned account with only public policy in JSON.
+    /// Secret root/binding bytes cross the FFI in dedicated byte buffers;
+    /// linked devices receive public descriptors and no root at all.
+    private func ensureAccountWallet() throws -> OpenCsvAccountWallet {
+        if let accountWallet {
+            return accountWallet
+        }
+
+        let isPrimary = DependenciesBridge.shared.tsAccountManager
+            .registrationStateWithMaybeSneakyTransaction.isPrimaryDevice == true
+        let settings = try db.read { tx -> (
+            network: String,
+            esplora: String,
+            peers: [String],
+            backupPayload: OpenCsvSecureBackupPayload?,
+            linked: OpenCsvLinkedWatchAccount?
+        ) in
+            let network = store.network(tx: tx)
+            let configuredPeers = store.spvPeers(tx: tx)
+            let peers = configuredPeers.isEmpty && network == "signet"
+                ? Self.defaultSignetPeers
+                : configuredPeers
+            let backupPayload = try store.secureBackupPayload(tx: tx)
+            return (
+                network,
+                store.esploraUrl(tx: tx),
+                peers,
+                backupPayload,
+                try store.linkedWatchAccount(tx: tx),
+            )
+        }
+
+        let material: OpenCsvAccountMaterial?
+        let role: OpenCsvAccountRole
+        if isPrimary {
+            material = try store.createPrimaryAccountMaterial()
+            role = .primary
+        } else {
+            guard settings.linked != nil else {
+                throw OpenCsvPaymentsError.linkedWalletNotProvisioned
+            }
+            material = nil
+            role = .linked
+        }
+
+        let directory = OWSFileSystem.appSharedDataDirectoryURL()
+            .appendingPathComponent("opencsv", isDirectory: true)
+        guard OWSFileSystem.ensureDirectoryExists(directory.path) else {
+            throw OpenCsvPaymentsError.couldNotPersistPendingSend(
+                underlying: "could not create OpenCSV account directory",
+            )
+        }
+        let databasePath = directory
+            .appendingPathComponent(
+                isPrimary
+                    ? "account.sqlite"
+                    : "linked-account-\(settings.linked?.owner ?? "unprovisioned").sqlite",
+            )
+            .path
+        let config = OpenCsvAccountConfig(
+            network: settings.network,
+            esploraUrl: settings.esplora,
+            peers: settings.peers,
+            verificationPeers: settings.peers,
+            role: role,
+            // Rust persists successful verification. A fresh account always
+            // starts frozen until Signal completes an actual export below.
+            backupVerified: false,
+            expectedDeviceBindingCommitment: settings.backupPayload?.deviceBindingCommitment,
+            watchExternalDescriptor: settings.linked?.externalDescriptor,
+            watchInternalDescriptor: settings.linked?.internalDescriptor,
+            watchOwner: settings.linked?.owner,
+        )
+        let account = try OpenCsvAccountWallet(
+            config: config,
+            accountRoot: material?.accountRoot ?? Data(),
+            deviceBinding: material?.deviceBinding,
+            databasePath: databasePath,
+        )
+        if material?.isRestoredReadOnly == true, let payload = settings.backupPayload {
+            _ = try account.restoreCheckpoint(payload.checkpointJson)
+        }
+        if !secureBackupIsEnabled() {
+            _ = try account.setBackupState(verified: false, checkpointVersion: 1)
+        }
+        if isPrimary {
+            let status = try account.status()
+            guard let owner = status.owners.first else {
+                throw OpenCsvClientError.decode("primary account returned no owner identity")
+            }
+            let watchAccount = OpenCsvLinkedWatchAccount(
+                externalDescriptor: status.watchDescriptors.external,
+                internalDescriptor: status.watchDescriptors.internal,
+                owner: owner,
+            )
+            guard watchAccount.isValidForLinkedProvisioning else {
+                throw OpenCsvClientError.decode("primary account returned invalid public watch material")
+            }
+            let changed = try db.write { tx in
+                let changed = try store.linkedWatchAccount(tx: tx) != watchAccount
+                if changed {
+                    try store.setLinkedWatchAccount(watchAccount, tx: tx)
+                }
+                return changed
+            }
+            if changed {
+                SSKEnvironment.shared.syncManagerRef.sendConfigurationSyncMessage()
+            }
+        }
+        accountWallet = account
+        return account
+    }
+
+    /// A linked device received fresh public descriptors over Signal's
+    /// authenticated device-sync channel. Drop only the process-local handle;
+    /// the watch database is namespaced by owner and remains rebuildable.
+    public func linkedWatchAccountDidChange() {
+        accountWallet = nil
+    }
+
+    /// Refresh the read-rich fee wallet through its non-authoritative
+    /// Esplora accelerator. Selected spend state is still rechecked through
+    /// compact-filter/full-block verification by Rust before signing.
+    public func syncAccount() throws -> OpenCsvAccountSyncReport {
+        try ensureAccountWallet().sync()
+    }
+
+    private func secureBackupIsEnabled() -> Bool {
+        db.read { tx in
+            switch DependenciesBridge.shared.backupPlanManager.backupPlan(tx: tx) {
+            case .disabled, .disabling:
+                return false
+            case .free, .paid, .paidExpiringSoon, .paidAsTester:
+                return true
+            }
+        }
+    }
+
+    /// Stage the exact Rust checkpoint in Signal's backup frame and wait for
+    /// a completed manual export. Only then does Rust unfreeze writes or
+    /// acknowledge a prepared operation's exact checkpoint hash.
+    private func backUpAccountCheckpoint(
+        account: OpenCsvAccountWallet,
+        operationId: String? = nil,
+        expectedCheckpointHash: String? = nil,
+    ) async throws {
+        guard secureBackupIsEnabled() else {
+            _ = try? account.setBackupState(verified: false, checkpointVersion: 1)
+            throw OpenCsvPaymentsError.secureBackupRequired
+        }
+        guard let material = try store.accountMaterial() else {
+            throw OpenCsvPaymentsError.secureBackupFailed(underlying: "missing primary account root")
+        }
+        let checkpointJson = try account.checkpointJson()
+        let checkpoint = try account.checkpoint()
+        guard let commitment = checkpoint.checkpoint.deviceBindingCommitment else {
+            throw OpenCsvPaymentsError.secureBackupFailed(underlying: "checkpoint has no device binding")
+        }
+        if let expectedCheckpointHash, expectedCheckpointHash != checkpoint.checkpointHash {
+            throw OpenCsvPaymentsError.secureBackupFailed(
+                underlying: "prepared operation checkpoint does not match exported checkpoint",
+            )
+        }
+        let payload = try OpenCsvSecureBackupPayload(
+            version: checkpoint.checkpoint.version,
+            accountRoot: material.accountRoot,
+            checkpointJson: checkpointJson,
+            checkpointHash: checkpoint.checkpointHash,
+            deviceBindingCommitment: commitment,
+        )
+        do {
+            try await db.awaitableWrite { tx in
+                try self.store.setSecureBackupPayload(payload, tx: tx)
+            }
+            try await DependenciesBridge.shared.backupExportJobRunner
+                .startIfNecessary(mode: .manual).value
+            _ = try account.setBackupState(verified: true, checkpointVersion: payload.version)
+            if let operationId, let expectedCheckpointHash {
+                try account.acknowledgeBackup(
+                    operationId: operationId,
+                    checkpointHash: expectedCheckpointHash,
+                )
+            }
+        } catch let error as OpenCsvPaymentsError {
+            throw error
+        } catch {
+            throw OpenCsvPaymentsError.secureBackupFailed(underlying: "\(error)")
+        }
+    }
 
     /// Open (or create) the wallet and rebuild coin state by replaying
     /// stored consignment blobs against the cached snapshot.
@@ -1125,24 +1542,17 @@ public actor OpenCsvPayments {
                     }
                     return snapshot
                 } catch {
-                    Logger.warn("scan-index snapshot export failed; falling back to server/cache: \(error)")
+                    Logger.warn("scan-index snapshot export failed; falling back to cache: \(error)")
                 }
             }
         }
-        let anchorUrl = db.read { store.anchorServerUrl(tx: $0) }
-        guard let anchorUrl else {
-            // Demo mode: no server configured; verification runs against
-            // the cached (or empty) snapshot.
-            if let cached = db.read(block: { store.lastSnapshotJson(tx: $0) }) {
-                return cached
-            }
-            return try await DemoOpenCsvAnchorProvider().fetchSnapshotJson()
+        if let cached = db.read(block: { store.lastSnapshotJson(tx: $0) }) {
+            return cached
         }
-        let snapshot = try await RemoteOpenCsvAnchorProvider(baseURL: anchorUrl).fetchSnapshotJson()
-        await db.awaitableWrite { tx in
-            self.store.setLastSnapshotJson(snapshot, tx: tx)
-        }
-        return snapshot
+        // Empty demo snapshot is compatibility-only for a wallet with no
+        // stored history. Production verification never falls back from a
+        // missing phone-owned chain view to an OpenCSV-specific server.
+        return #"{"tip_height":0,"entries":[]}"#
     }
 
     private nonisolated func touchOwners(attachmentId: Attachment.IDType, tx: DBWriteTransaction) {

@@ -14,6 +14,10 @@ public class PaymentsProcessor: NSObject {
         self.appReadiness = appReadiness
         super.init()
 
+        guard !BuildFlags.openCsvPayments else {
+            return
+        }
+
         appReadiness.runNowOrWhenAppDidBecomeReadySync {
             DependenciesBridge.shared.databaseChangeObserver.appendDatabaseChangeDelegate(self)
         }
@@ -87,6 +91,7 @@ public class PaymentsProcessor: NSObject {
     // although the operations may fail to do so.
     @objc
     public func process() {
+        guard !BuildFlags.openCsvPayments else { return }
         DispatchQueue.global().async { [appReadiness] in
             guard !CurrentAppContext().isRunningTests else {
                 return

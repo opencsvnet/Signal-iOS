@@ -77,6 +77,7 @@ enum OpenCsvDelivery {
             _ = ThreadUtil.enqueueMessagePromise(message: prepared, transaction: tx)
             try OpenCsvPayments.shared.clearDelivered(id: delivery.id, tx: tx)
         }
+        await OpenCsvPayments.shared.acknowledgeDelivered(delivery)
         Logger.info("delivered OpenCSV consignment \(delivery.id)")
     }
 

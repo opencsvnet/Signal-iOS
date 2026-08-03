@@ -112,7 +112,8 @@ public enum OpenCsvAttachmentProcessor {
     }
 
     /// Settle consignments whose verification could not complete when they
-    /// arrived — typically because the anchor server was unreachable.
+    /// arrived — typically because chain peers or read accelerators were
+    /// unreachable or the phone's verified chain view was still behind.
     /// Called once the app is ready and again whenever it becomes active,
     /// so recovery never depends on the user opening a particular screen.
     public static func observeAppActivation(appReadiness: AppReadiness) {

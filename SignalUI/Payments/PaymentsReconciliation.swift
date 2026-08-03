@@ -14,6 +14,9 @@ public class PaymentsReconciliation {
 
     public init(appReadiness: AppReadiness) {
         self.appReadiness = appReadiness
+        guard !BuildFlags.openCsvPayments else {
+            return
+        }
         appReadiness.runNowOrWhenAppDidBecomeReadyAsync {
             // Note: this isn't how often we perform reconciliation, it's how often we
             // check whether we should perform reconciliation.
@@ -50,6 +53,9 @@ public class PaymentsReconciliation {
     }
 
     private static func shouldReconcile(appReadiness: AppReadiness) -> Bool {
+        guard !BuildFlags.openCsvPayments else {
+            return false
+        }
         guard !CurrentAppContext().isRunningTests else {
             return false
         }

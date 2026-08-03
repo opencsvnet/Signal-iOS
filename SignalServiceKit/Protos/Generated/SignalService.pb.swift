@@ -3083,6 +3083,18 @@ struct SignalServiceProtos_SyncMessage: @unchecked Sendable {
     /// Clears the value of `linkPreviews`. Subsequent reads from it will return its default value.
     mutating func clearLinkPreviews() {self._linkPreviews = nil}
 
+    /// Public-only OpenCSV watch account for linked Signal devices. JSON
+    /// contains BIP84 public descriptors and owner identity; never roots or
+    /// signing material. Experimental fork field, deliberately high-numbered.
+    var openCsvWatchAccount: Data {
+      get {_openCsvWatchAccount ?? Data()}
+      set {_openCsvWatchAccount = newValue}
+    }
+    /// Returns true if `openCsvWatchAccount` has been explicitly set.
+    var hasOpenCsvWatchAccount: Bool {self._openCsvWatchAccount != nil}
+    /// Clears the value of `openCsvWatchAccount`. Subsequent reads from it will return its default value.
+    mutating func clearOpenCsvWatchAccount() {self._openCsvWatchAccount = nil}
+
     var unknownFields = SwiftProtobuf.UnknownStorage()
 
     init() {}
@@ -3092,6 +3104,7 @@ struct SignalServiceProtos_SyncMessage: @unchecked Sendable {
     fileprivate var _typingIndicators: Bool? = nil
     fileprivate var _provisioningVersion: UInt32? = nil
     fileprivate var _linkPreviews: Bool? = nil
+    fileprivate var _openCsvWatchAccount: Data? = nil
   }
 
   struct StickerPackOperation: Sendable {
@@ -8165,7 +8178,7 @@ extension SignalServiceProtos_SyncMessage.Viewed: SwiftProtobuf.Message, SwiftPr
 
 extension SignalServiceProtos_SyncMessage.Configuration: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = SignalServiceProtos_SyncMessage.protoMessageName + ".Configuration"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}readReceipts\0\u{1}unidentifiedDeliveryIndicators\0\u{1}typingIndicators\0\u{2}\u{2}provisioningVersion\0\u{1}linkPreviews\0\u{c}\u{4}\u{1}")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}readReceipts\0\u{1}unidentifiedDeliveryIndicators\0\u{1}typingIndicators\0\u{2}\u{2}provisioningVersion\0\u{1}linkPreviews\0\u{2}_\u{1}openCsvWatchAccount\0\u{c}\u{4}\u{1}")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8178,6 +8191,7 @@ extension SignalServiceProtos_SyncMessage.Configuration: SwiftProtobuf.Message, 
       case 3: try { try decoder.decodeSingularBoolField(value: &self._typingIndicators) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self._provisioningVersion) }()
       case 6: try { try decoder.decodeSingularBoolField(value: &self._linkPreviews) }()
+      case 101: try { try decoder.decodeSingularBytesField(value: &self._openCsvWatchAccount) }()
       default: break
       }
     }
@@ -8203,6 +8217,9 @@ extension SignalServiceProtos_SyncMessage.Configuration: SwiftProtobuf.Message, 
     try { if let v = self._linkPreviews {
       try visitor.visitSingularBoolField(value: v, fieldNumber: 6)
     } }()
+    try { if let v = self._openCsvWatchAccount {
+      try visitor.visitSingularBytesField(value: v, fieldNumber: 101)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8212,6 +8229,7 @@ extension SignalServiceProtos_SyncMessage.Configuration: SwiftProtobuf.Message, 
     if lhs._typingIndicators != rhs._typingIndicators {return false}
     if lhs._provisioningVersion != rhs._provisioningVersion {return false}
     if lhs._linkPreviews != rhs._linkPreviews {return false}
+    if lhs._openCsvWatchAccount != rhs._openCsvWatchAccount {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -393,6 +393,15 @@ public struct BackupProto_AccountData: @unchecked Sendable {
   /// Clears the value of `iosSpecificSettings`. Subsequent reads from it will return its default value.
   public mutating func clearIosSpecificSettings() {_uniqueStorage()._iosSpecificSettings = nil}
 
+  public var openCsvWallet: BackupProto_AccountData.OpenCsvWallet {
+    get {_storage._openCsvWallet ?? BackupProto_AccountData.OpenCsvWallet()}
+    set {_uniqueStorage()._openCsvWallet = newValue}
+  }
+  /// Returns true if `openCsvWallet` has been explicitly set.
+  public var hasOpenCsvWallet: Bool {_storage._openCsvWallet != nil}
+  /// Clears the value of `openCsvWallet`. Subsequent reads from it will return its default value.
+  public mutating func clearOpenCsvWallet() {_uniqueStorage()._openCsvWallet = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public enum PhoneNumberSharingMode: SwiftProtobuf.Enum, Swift.CaseIterable {
@@ -1020,6 +1029,31 @@ public struct BackupProto_AccountData: @unchecked Sendable {
     // methods supported on all messages.
 
     public var isSystemCallLogEnabled: Bool = false
+
+    public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+    public init() {}
+  }
+
+  /// Signal-native OpenCSV recovery material. The account root and compact
+  /// Rust checkpoint are encrypted by the surrounding Signal backup. The
+  /// device-binding secret is deliberately absent: a restored primary must
+  /// open read/export-only until an explicit recovery/rekey flow runs.
+  public struct OpenCsvWallet: Sendable {
+    // SwiftProtobuf.Message conformance is added in an extension below. See the
+    // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+    // methods supported on all messages.
+
+    public var version: UInt32 = 0
+
+    /// Exactly 32 bytes.
+    public var accountRoot: Data = Data()
+
+    public var checkpointJson: String = String()
+
+    public var checkpointHash: String = String()
+
+    public var deviceBindingCommitment: String = String()
 
     public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -6845,7 +6879,7 @@ extension BackupProto_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplem
 
 extension BackupProto_AccountData: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AccountData"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}profileKey\0\u{1}username\0\u{1}usernameLink\0\u{1}givenName\0\u{1}familyName\0\u{1}avatarUrlPath\0\u{1}donationSubscriberData\0\u{2}\u{2}accountSettings\0\u{1}backupsSubscriberData\0\u{1}svrPin\0\u{1}androidSpecificSettings\0\u{1}bioText\0\u{1}bioEmoji\0\u{2}\u{2}iosSpecificSettings\0\u{c}\u{8}\u{1}\u{c}\u{f}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}profileKey\0\u{1}username\0\u{1}usernameLink\0\u{1}givenName\0\u{1}familyName\0\u{1}avatarUrlPath\0\u{1}donationSubscriberData\0\u{2}\u{2}accountSettings\0\u{1}backupsSubscriberData\0\u{1}svrPin\0\u{1}androidSpecificSettings\0\u{1}bioText\0\u{1}bioEmoji\0\u{2}\u{2}iosSpecificSettings\0\u{1}openCsvWallet\0\u{c}\u{8}\u{1}\u{c}\u{f}\u{1}")
 
   fileprivate class _StorageClass {
     var _profileKey: Data = Data()
@@ -6862,6 +6896,7 @@ extension BackupProto_AccountData: SwiftProtobuf.Message, SwiftProtobuf._Message
     var _bioText: String = String()
     var _bioEmoji: String = String()
     var _iosSpecificSettings: BackupProto_AccountData.IOSSpecificSettings? = nil
+    var _openCsvWallet: BackupProto_AccountData.OpenCsvWallet? = nil
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -6886,6 +6921,7 @@ extension BackupProto_AccountData: SwiftProtobuf.Message, SwiftProtobuf._Message
       _bioText = source._bioText
       _bioEmoji = source._bioEmoji
       _iosSpecificSettings = source._iosSpecificSettings
+      _openCsvWallet = source._openCsvWallet
     }
   }
 
@@ -6918,6 +6954,7 @@ extension BackupProto_AccountData: SwiftProtobuf.Message, SwiftProtobuf._Message
         case 13: try { try decoder.decodeSingularStringField(value: &_storage._bioText) }()
         case 14: try { try decoder.decodeSingularStringField(value: &_storage._bioEmoji) }()
         case 16: try { try decoder.decodeSingularMessageField(value: &_storage._iosSpecificSettings) }()
+        case 17: try { try decoder.decodeSingularMessageField(value: &_storage._openCsvWallet) }()
         default: break
         }
       }
@@ -6972,6 +7009,9 @@ extension BackupProto_AccountData: SwiftProtobuf.Message, SwiftProtobuf._Message
       try { if let v = _storage._iosSpecificSettings {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
       } }()
+      try { if let v = _storage._openCsvWallet {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 17)
+      } }()
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -6995,6 +7035,7 @@ extension BackupProto_AccountData: SwiftProtobuf.Message, SwiftProtobuf._Message
         if _storage._bioText != rhs_storage._bioText {return false}
         if _storage._bioEmoji != rhs_storage._bioEmoji {return false}
         if _storage._iosSpecificSettings != rhs_storage._iosSpecificSettings {return false}
+        if _storage._openCsvWallet != rhs_storage._openCsvWallet {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -7557,6 +7598,56 @@ extension BackupProto_AccountData.IOSSpecificSettings: SwiftProtobuf.Message, Sw
 
   public static func ==(lhs: BackupProto_AccountData.IOSSpecificSettings, rhs: BackupProto_AccountData.IOSSpecificSettings) -> Bool {
     if lhs.isSystemCallLogEnabled != rhs.isSystemCallLogEnabled {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension BackupProto_AccountData.OpenCsvWallet: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = BackupProto_AccountData.protoMessageName + ".OpenCsvWallet"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}version\0\u{1}accountRoot\0\u{1}checkpointJson\0\u{1}checkpointHash\0\u{1}deviceBindingCommitment\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.version) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.accountRoot) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.checkpointJson) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.checkpointHash) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.deviceBindingCommitment) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.version != 0 {
+      try visitor.visitSingularUInt32Field(value: self.version, fieldNumber: 1)
+    }
+    if !self.accountRoot.isEmpty {
+      try visitor.visitSingularBytesField(value: self.accountRoot, fieldNumber: 2)
+    }
+    if !self.checkpointJson.isEmpty {
+      try visitor.visitSingularStringField(value: self.checkpointJson, fieldNumber: 3)
+    }
+    if !self.checkpointHash.isEmpty {
+      try visitor.visitSingularStringField(value: self.checkpointHash, fieldNumber: 4)
+    }
+    if !self.deviceBindingCommitment.isEmpty {
+      try visitor.visitSingularStringField(value: self.deviceBindingCommitment, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: BackupProto_AccountData.OpenCsvWallet, rhs: BackupProto_AccountData.OpenCsvWallet) -> Bool {
+    if lhs.version != rhs.version {return false}
+    if lhs.accountRoot != rhs.accountRoot {return false}
+    if lhs.checkpointJson != rhs.checkpointJson {return false}
+    if lhs.checkpointHash != rhs.checkpointHash {return false}
+    if lhs.deviceBindingCommitment != rhs.deviceBindingCommitment {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

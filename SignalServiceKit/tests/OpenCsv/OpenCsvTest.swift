@@ -8,6 +8,21 @@ import Testing
 
 @testable import SignalServiceKit
 
+private enum OpenCsvTestContext {
+    static let installed: Void = {
+        // The Signal app test host installs MainAppContext, whose application
+        // group container is unavailable to an unsigned simulator build.
+        // InMemoryDB migrations consult that path, so install Signal's
+        // purpose-built test context before the first database is created.
+        SetCurrentAppContext(TestAppContext(), isRunningTests: true)
+    }()
+}
+
+private func makeOpenCsvTestDatabase() -> InMemoryDB {
+    _ = OpenCsvTestContext.installed
+    return InMemoryDB()
+}
+
 struct OpenCsvAttachmentDetectorTest {
     @Test
     func detectsByFilename() {
@@ -79,7 +94,8 @@ struct OpenCsvVerdictParsingTest {
     @Test
     func decodesVerifiedVerdict() throws {
         let json = """
-        {"status":"verified","credits":[{"asset_id":"ab12","currency":"USD","amount":100}],
+        {"status":"verified","consignment_id":"canonical-1",
+         "credits":[{"asset_id":"ab12","currency":"USD","amount":100}],
          "coins":[{"id":"c0ffee","asset_id":"ab12","currency":"USD","value":100,"unspent":true}],
          "anchor":{"height":4,"position":0}}
         """
@@ -91,6 +107,7 @@ struct OpenCsvVerdictParsingTest {
         #expect(verdict.credits?.first?.currency == "USD")
         #expect(verdict.coins?.first?.unspent == true)
         #expect(verdict.anchor?.height == 4)
+        #expect(verdict.consignmentId == "canonical-1")
 
         let record = OpenCsvVerdictRecord(verdict: verdict, date: Date(timeIntervalSince1970: 0))
         #expect(record.isVerified)
@@ -100,7 +117,7 @@ struct OpenCsvVerdictParsingTest {
 
     @Test
     func decodesRejectedVerdict() throws {
-        let json = #"{"status":"rejected","reason":"InsufficientConfirmations { have: 1, required: 6 }"}"#
+        let json = #"{"status":"rejected","consignment_id":"canonical-2","reason":"InsufficientConfirmations { have: 1, required: 6 }"}"#
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let verdict = try decoder.decode(OpenCsvVerdict.self, from: Data(json.utf8))
@@ -109,18 +126,120 @@ struct OpenCsvVerdictParsingTest {
         #expect(!record.isVerified)
         #expect(record.amount == 0)
         #expect(record.reason?.contains("InsufficientConfirmations") == true)
+        #expect(verdict.consignmentId == "canonical-2")
     }
 }
 
-struct OpenCsvWalletStoreTest {
-    private let db = InMemoryDB()
-    private let store = OpenCsvWalletStore(keychainStorage: MockKeychainStorage())
+@Suite(.serialized)
+final class OpenCsvWalletStoreTest {
+    // Swift Testing may construct suite instances concurrently before a
+    // serialized suite starts running. Defer Signal's process-global test DB
+    // setup until the individual test has entered the serialized executor.
+    private lazy var db = makeOpenCsvTestDatabase()
+    private lazy var store = OpenCsvWalletStore(keychainStorage: MockKeychainStorage())
+
+    @Test
+    func linkedProvisioningCarriesOnlyValidatedPublicMaterial() throws {
+        let watch = OpenCsvLinkedWatchAccount(
+            externalDescriptor: "wpkh([fingerprint/84h/1h/0h]xpub-external/0/*)",
+            internalDescriptor: "wpkh([fingerprint/84h/1h/0h]xpub-internal/1/*)",
+            owner: String(repeating: "ab", count: 32),
+        )
+        #expect(watch.isValidForLinkedProvisioning)
+        let encoded = try JSONEncoder().encode(watch)
+        let encodedText = String(decoding: encoded, as: UTF8.self)
+        #expect(!encodedText.contains("root"))
+        #expect(!encodedText.contains("secret"))
+        try db.write { tx in try store.setLinkedWatchAccount(watch, tx: tx) }
+        db.read { tx in
+            let storedWatch = try! store.linkedWatchAccount(tx: tx)
+            #expect(storedWatch == watch)
+        }
+
+        let secretShaped = OpenCsvLinkedWatchAccount(
+            externalDescriptor: "wpkh([fingerprint/84h/1h/0h]tprv-private/0/*)",
+            internalDescriptor: "wpkh([fingerprint/84h/1h/0h]tprv-private/1/*)",
+            owner: String(repeating: "cd", count: 32),
+        )
+        #expect(!secretShaped.isValidForLinkedProvisioning)
+    }
 
     @Test
     func secretsRoundTripThroughKeychain() throws {
         #expect(try store.walletSecrets() == nil)
         try store.setWalletSecrets(#"{"version":1}"#)
         #expect(try store.walletSecrets() == #"{"version":1}"#)
+    }
+
+    @Test
+    func freshAccountMaterialCreatesRootAndBindingTogether() throws {
+        let keychain = MockKeychainStorage()
+        let store = OpenCsvWalletStore(keychainStorage: keychain)
+        var generatedByte: UInt8 = 0
+        let material = try store.createPrimaryAccountMaterial { count in
+            generatedByte += 1
+            return Data(repeating: generatedByte, count: count)
+        }
+
+        #expect(material.accountRoot == Data(repeating: 1, count: 32))
+        #expect(material.deviceBinding == Data(repeating: 2, count: 32))
+        #expect(!material.isRestoredReadOnly)
+        #expect(try store.accountMaterial() == material)
+
+        let reopened = try store.createPrimaryAccountMaterial { count in
+            Data(repeating: 9, count: count)
+        }
+        #expect(reopened == material)
+    }
+
+    @Test
+    func restoredRootNeverManufacturesAReplacementBinding() throws {
+        let store = OpenCsvWalletStore(keychainStorage: MockKeychainStorage())
+        let root = Data(repeating: 3, count: 32)
+        try store.installRestoredAccountRoot(root)
+        var generatorWasCalled = false
+
+        let material = try store.createPrimaryAccountMaterial { count in
+            generatorWasCalled = true
+            return Data(repeating: 4, count: count)
+        }
+
+        #expect(!generatorWasCalled)
+        #expect(material.accountRoot == root)
+        #expect(material.deviceBinding == nil)
+        #expect(material.isRestoredReadOnly)
+    }
+
+    @Test
+    func restoredRootCannotReplaceExistingAccount() throws {
+        let store = OpenCsvWalletStore(keychainStorage: MockKeychainStorage())
+        _ = try store.createPrimaryAccountMaterial { count in
+            Data(repeating: 5, count: count)
+        }
+
+        #expect(throws: OpenCsvAccountMaterialError.conflictingAccountRoot) {
+            try store.installRestoredAccountRoot(Data(repeating: 6, count: 32))
+        }
+    }
+
+    @Test
+    func secureBackupPayloadCarriesRootButNoDeviceBinding() throws {
+        let root = Data(repeating: 7, count: 32)
+        let payload = try OpenCsvSecureBackupPayload(
+            version: 1,
+            accountRoot: root,
+            checkpointJson: #"{"checkpoint":{"version":1}}"#,
+            checkpointHash: "checkpoint-hash",
+            deviceBindingCommitment: "public-binding-commitment",
+        )
+        try db.write { tx in
+            try store.setSecureBackupPayload(payload, tx: tx)
+        }
+        let restored = try db.read { tx in
+            try store.secureBackupPayload(tx: tx)
+        }
+        #expect(restored == payload)
+        #expect(restored?.accountRoot == root)
     }
 
     @Test
@@ -158,6 +277,35 @@ struct OpenCsvWalletStoreTest {
         }
         db.read { tx in
             #expect(store.replayBlobs(tx: tx).count == 2)
+        }
+    }
+
+    @Test
+    func canonicalConsignmentIdentityDeduplicatesTransportEncodings() throws {
+        let canonicalId = String(repeating: "cd", count: 32)
+        let record = OpenCsvVerdictRecord(
+            verdict: OpenCsvVerdict(
+                status: "verified",
+                reason: nil,
+                credits: [OpenCsvCredit(assetId: "ab", currency: "USD", amount: 7)],
+                coins: nil,
+                anchor: nil,
+                consignmentId: canonicalId,
+            ),
+            date: Date(timeIntervalSince1970: 0),
+        )
+        db.write { tx in
+            store.setVerdict(record, blob: Data([1]), attachmentId: 42, tx: tx)
+            store.setVerdict(record, blob: Data([2]), attachmentId: 43, tx: tx)
+        }
+        db.read { tx in
+            #expect(store.verdict(attachmentId: 42, tx: tx) == record)
+            #expect(store.verdict(attachmentId: 43, tx: tx) == record)
+            #expect(store.replayBlobs(tx: tx).map(\.entry) == ["c:\(canonicalId)"])
+            #expect(store.blobForAttachment(attachmentId: 42, tx: tx) == Data([2]))
+            #expect(store.blobForAttachment(attachmentId: 43, tx: tx) == Data([2]))
+            #expect(store.isCanonicalPresentationAttachment(attachmentId: 42, tx: tx))
+            #expect(!store.isCanonicalPresentationAttachment(attachmentId: 43, tx: tx))
         }
     }
 
@@ -228,6 +376,7 @@ struct OpenCsvWalletStoreTest {
             amount: 5,
             currency: "USD",
             assetId: "ab",
+            operationKind: "mint",
             createdAt: Date(timeIntervalSince1970: 0),
         )
         try db.write { tx in
@@ -243,6 +392,53 @@ struct OpenCsvWalletStoreTest {
 
         try db.write { tx in try store.removePendingDelivery(id: delivery.id, tx: tx) }
         db.read { tx in #expect(store.pendingDeliveries(tx: tx).isEmpty) }
+    }
+
+    @Test
+    func accountDeliveryCommitIsCrashRecoverableAndNotReenqueued() throws {
+        let operation = OpenCsvWalletStore.PendingAccountOperation(
+            operationId: "operation-1",
+            threadUniqueId: "thread-1",
+            amount: 5,
+            currency: "USD",
+            assetId: "ab",
+            kind: "mint",
+            createdAt: Date(timeIntervalSince1970: 0),
+        )
+        let delivery = OpenCsvWalletStore.PendingDelivery(
+            threadUniqueId: "thread-1",
+            body: "OpenCSV consignment",
+            replayEntry: "o:1",
+            amount: 5,
+            currency: "USD",
+            assetId: "ab",
+            operationKind: operation.kind,
+            operationId: operation.operationId,
+            deliveryNonce: "nonce-1",
+            consignmentId: "consignment-1",
+            createdAt: operation.createdAt,
+        )
+        try db.write { tx in
+            try store.upsertPendingAccountOperation(operation, tx: tx)
+            try store.addPendingDelivery(delivery, tx: tx)
+            try store.markPendingDeliveryEnqueued(id: delivery.id, tx: tx)
+        }
+        db.read { tx in
+            let stored = store.pendingDeliveries(tx: tx).first
+            let pendingOperations = try! store.pendingAccountOperations(tx: tx)
+            #expect(stored?.enqueuedAt != nil)
+            #expect(stored?.operationKind == "mint")
+            #expect(pendingOperations == [operation])
+        }
+        try db.write { tx in
+            try store.removePendingDelivery(id: delivery.id, tx: tx)
+            try store.removePendingAccountOperation(operationId: operation.operationId, tx: tx)
+        }
+        db.read { tx in
+            let pendingOperations = try! store.pendingAccountOperations(tx: tx)
+            #expect(store.pendingDeliveries(tx: tx).isEmpty)
+            #expect(pendingOperations.isEmpty)
+        }
     }
 
     /// A delivery that can never succeed must stop being retried rather
@@ -389,6 +585,18 @@ struct OpenCsvWalletStoreTest {
 
 /// Exercises the real Rust FFI linked into SignalServiceKit.
 struct OpenCsvClientFfiTest {
+    private func accountConfig(backupVerified: Bool = false) -> OpenCsvAccountConfig {
+        OpenCsvAccountConfig(
+            network: "regtest",
+            esploraUrl: "http://127.0.0.1:3002",
+            peers: ["127.0.0.1:18444"],
+            verificationPeers: ["127.0.0.1:18444"],
+            role: .primary,
+            backupVerified: backupVerified,
+            requiredConfirmations: 1,
+        )
+    }
+
     @Test
     func createOpenAndQueryWallet() throws {
         let secrets = try OpenCsvWallet.createSecrets()
@@ -426,6 +634,102 @@ struct OpenCsvClientFfiTest {
             snapshotJson: #"{"tip_height":0,"entries":[]}"#,
         )
         #expect(supply == 0)
+    }
+
+    @Test
+    func accountWalletOpensWithNoCallerSelectedBitcoinState() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("opencsv-account-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databasePath = directory.appendingPathComponent("account.sqlite").path
+        let root = Data(repeating: 8, count: 32)
+        let binding = Data(repeating: 9, count: 32)
+
+        do {
+            let wallet = try OpenCsvAccountWallet(
+                config: accountConfig(),
+                accountRoot: root,
+                deviceBinding: binding,
+                databasePath: databasePath,
+            )
+            let status = try wallet.status()
+            #expect(status.role == .primary)
+            #expect(status.deviceBinding.status == "bound")
+            #expect(!status.backupVerified)
+            #expect(!status.writeEnabled)
+            #expect(status.feeReserve.totalSats == 0)
+            #expect(status.depositAddress.hasPrefix("bcrt1"))
+            let checkpoint = try wallet.checkpoint()
+            #expect(checkpoint.checkpoint.version == 1)
+            #expect(checkpoint.checkpoint.deviceBindingCommitment == status.deviceBinding.commitment)
+        }
+
+        // Losing a ThisDeviceOnly binding is sticky. Reopening once without
+        // it, then supplying a new value, must never re-arm the same DB.
+        do {
+            let restored = try OpenCsvAccountWallet(
+                config: accountConfig(backupVerified: true),
+                accountRoot: root,
+                deviceBinding: nil,
+                databasePath: databasePath,
+            )
+            let restoredStatus = try restored.status()
+            #expect(restoredStatus.deviceBinding.status == "mismatch_read_only")
+            #expect(!restoredStatus.writeEnabled)
+        }
+        do {
+            let replacementAttempt = try OpenCsvAccountWallet(
+                config: accountConfig(backupVerified: true),
+                accountRoot: root,
+                deviceBinding: Data(repeating: 10, count: 32),
+                databasePath: databasePath,
+            )
+            let replacementStatus = try replacementAttempt.status()
+            #expect(replacementStatus.deviceBinding.status == "mismatch_read_only")
+            #expect(!replacementStatus.writeEnabled)
+        }
+    }
+
+    @Test
+    func accountCheckpointRestoresOnlyIntoMatchingReadOnlyAccount() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("opencsv-restore-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let root = Data(repeating: 18, count: 32)
+        let binding = Data(repeating: 19, count: 32)
+        let original = try OpenCsvAccountWallet(
+            config: accountConfig(),
+            accountRoot: root,
+            deviceBinding: binding,
+            databasePath: directory.appendingPathComponent("original.sqlite").path,
+        )
+        let originalStatus = try original.status()
+        let checkpointJson = try original.checkpointJson()
+        let commitment = try #require(originalStatus.deviceBinding.commitment)
+        let restored = try OpenCsvAccountWallet(
+            config: OpenCsvAccountConfig(
+                network: "regtest",
+                esploraUrl: "http://127.0.0.1:3002",
+                peers: ["127.0.0.1:18444"],
+                verificationPeers: ["127.0.0.1:18444"],
+                role: .primary,
+                backupVerified: false,
+                expectedDeviceBindingCommitment: commitment,
+                requiredConfirmations: 1,
+            ),
+            accountRoot: root,
+            deviceBinding: nil,
+            databasePath: directory.appendingPathComponent("restored.sqlite").path,
+        )
+        let status = try restored.restoreCheckpoint(checkpointJson)
+        #expect(status.rootFingerprint == originalStatus.rootFingerprint)
+        #expect(status.deviceBinding.status == "mismatch_read_only")
+        #expect(status.backupVerified)
+        #expect(!status.writeEnabled)
+        // The same exact backup is idempotent.
+        #expect(try restored.restoreCheckpoint(checkpointJson).rootFingerprint == status.rootFingerprint)
     }
 }
 
@@ -481,7 +785,7 @@ struct OpenCsvPipelineTransitionTest {
             date: Date(timeIntervalSince1970: 0),
         )
 
-        let db = InMemoryDB()
+        let db = makeOpenCsvTestDatabase()
         let store = OpenCsvWalletStore(keychainStorage: MockKeychainStorage())
         db.write { tx in store.setVerdict(record, blob: nil, attachmentId: 7, tx: tx) }
         db.read { tx in
@@ -495,6 +799,20 @@ struct OpenCsvPipelineTransitionTest {
         // recorded the consignment under its own entry, and storing it
         // twice was the duplication this replaced.
         db.read { tx in #expect(store.replayBlobs(tx: tx).isEmpty) }
+    }
+
+    @Test
+    func mintedVerdictIsAnIssuerCreditNotAnOutgoingDebit() {
+        let record = OpenCsvVerdictRecord(
+            mintedAmount: 100,
+            currency: "USD",
+            assetId: "asset",
+            consignmentId: "mint-consignment",
+            date: Date(timeIntervalSince1970: 0),
+        )
+        #expect(record.direction == .minted)
+        #expect(record.amount == 100)
+        #expect(record.isVerified)
     }
 }
 

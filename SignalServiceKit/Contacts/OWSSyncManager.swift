@@ -90,6 +90,13 @@ extension OWSSyncManager: SyncManagerProtocolObjc {
         let readReceipts = OWSReceiptManager.areReadReceiptsEnabled(transaction: tx)
         let sealedSenderIndicators = SSKEnvironment.shared.preferencesRef.shouldShowUnidentifiedDeliveryIndicators(transaction: tx)
         let typingIndicators = SSKEnvironment.shared.typingIndicatorsRef.areTypingIndicatorsEnabled()
+        let openCsvWatchAccount: Data? = if BuildFlags.openCsvPayments {
+            try? OpenCsvWalletStore(
+                keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+            ).linkedWatchAccount(tx: tx).map { try JSONEncoder().encode($0) }
+        } else {
+            nil
+        }
 
         let configurationSyncMessage = OutgoingConfigurationSyncMessage(
             localThread: thread,
@@ -98,6 +105,7 @@ extension OWSSyncManager: SyncManagerProtocolObjc {
             showTypingIndicators: typingIndicators,
             sendLinkPreviews: linkPreviews,
             provisioningVersion: LinkingProvisioningMessage.Constants.provisioningVersion,
+            openCsvWatchAccount: openCsvWatchAccount,
             tx: tx,
         )
         let preparedMessage = PreparedOutgoingMessage.preprepared(
@@ -612,6 +620,29 @@ extension OWSSyncManager: SyncManagerProtocol, SyncManagerProtocolSwift {
         if syncMessage.hasLinkPreviews {
             let linkPreviewSettingStore = DependenciesBridge.shared.linkPreviewSettingStore
             linkPreviewSettingStore.setAreLinkPreviewsEnabled(syncMessage.linkPreviews, tx: transaction)
+        }
+        if BuildFlags.openCsvPayments, let openCsvWatchAccount = syncMessage.openCsvWatchAccount {
+            let isLinked = DependenciesBridge.shared.tsAccountManager
+                .registrationState(tx: transaction).isPrimaryDevice == false
+            if isLinked {
+                do {
+                    let watch = try JSONDecoder().decode(
+                        OpenCsvLinkedWatchAccount.self,
+                        from: openCsvWatchAccount,
+                    )
+                    guard watch.isValidForLinkedProvisioning else {
+                        throw OWSAssertionError("invalid OpenCSV linked watch account")
+                    }
+                    try OpenCsvWalletStore(
+                        keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+                    ).setLinkedWatchAccount(watch, tx: transaction)
+                    transaction.addSyncCompletion {
+                        Task { await OpenCsvPayments.shared.linkedWatchAccountDidChange() }
+                    }
+                } catch {
+                    owsFailDebug("Could not import OpenCSV linked watch account: \(error)")
+                }
+            }
         }
         transaction.addSyncCompletion {
             NotificationCenter.default.postOnMainThread(name: .syncManagerConfigurationSyncDidComplete, object: nil)
