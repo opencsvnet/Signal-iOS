@@ -62,9 +62,9 @@ public enum OpenCsvPaymentsError: Error {
 /// finalize → persist). Transport stays with the caller: the send UI
 /// enqueues the returned blob through the normal message pipeline.
 ///
-/// An actor: FFI wallet handles are not thread-safe, and proving takes
-/// ~0.5–1 s on phone hardware, so all wallet work is serialized off the
-/// main thread here.
+/// An actor: FFI wallet handles are not thread-safe, and the production
+/// first-hop transfer receipt measured 11.253 s on the iPhone 16e, so all
+/// wallet work is serialized off the main thread here.
 public actor OpenCsvPayments {
     public static let shared = OpenCsvPayments()
 

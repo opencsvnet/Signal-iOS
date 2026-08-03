@@ -29,7 +29,10 @@ The stable Swift boundary sends action intent only:
 2. Rust reserves the fee input, selects OpenCSV coins, fixes Bitcoin input 0,
    and generates the proof.
 3. Signal backs up the exact prepared checkpoint and acknowledges its hash.
-4. Rust signs and persists the complete transaction before P2P relay.
+4. Rust signs and persists the complete transaction before P2P relay. A
+   successful socket write is a submission receipt, not proof of mempool
+   acceptance; unless the transaction is independently observable, Rust also
+   submits the same persisted bytes through the configured generic relay.
 5. Independent observation makes the consignment deliverable through the
    ordinary Signal attachment pipeline.
 6. Signal atomically inserts the message and marks the operation/nonce
@@ -54,6 +57,14 @@ The operation journal and pending Signal delivery metadata make every crash
 boundary resumable. Cancellation ends at the first broadcast attempt. A
 signed-but-unobserved transaction is reported as durable and is never silently
 re-armed as a fresh spend.
+
+## Performance and progress
+
+The production first-hop transfer receipt measured 11.253 seconds on the
+iPhone 16e. Proof work is serialized by the wallet actor and never belongs on
+Signal's main actor; the send flow must keep showing durable progress rather
+than treating that interval as a network stall. Debug prover builds can take
+minutes and are not a field-performance receipt.
 
 ## Legacy MobileCoin state
 
