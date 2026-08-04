@@ -1492,8 +1492,18 @@ public class BackupArchiveManagerImpl: BackupArchiveManager {
                     return try FileHandle(forReadingFrom: fileUrl)
                 },
             )
-            if result.fields.count > 0 {
-                throw OWSAssertionError("Unknown fields during Backup validation! \(result.fields)")
+            let includesOpenCsvWallet = db.read { tx in
+                let store = OpenCsvWalletStore(
+                    keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+                )
+                return (try? store.secureBackupPayload(tx: tx)) != nil
+            }
+            let unexpectedFields = Self.unexpectedUnknownBackupFields(
+                result.fields,
+                includesOpenCsvWallet: includesOpenCsvWallet,
+            )
+            if unexpectedFields.count > 0 {
+                throw OWSAssertionError("Unknown fields during Backup validation! \(unexpectedFields)")
             }
         } catch let validationError as MessageBackupValidationError {
             await db.awaitableWrite { tx in
@@ -1504,6 +1514,45 @@ public class BackupArchiveManagerImpl: BackupArchiveManager {
         } catch {
             throw OWSAssertionError("Backup validation failed! \(error)")
         }
+    }
+
+    /// The OpenCSV fork extends AccountData with tag 17. The pinned libsignal
+    /// validator intentionally uses Signal's upstream schema, so it reports
+    /// that one field as unknown even after validating every standard frame.
+    /// Accept only the exact fork-owned field, only when this export actually
+    /// contains a staged wallet payload, and never accept duplicates or any
+    /// neighboring/nested unknown field. Once libsignal learns this extension,
+    /// it returns no unknown field and this compatibility seam becomes inert.
+    static func unexpectedUnknownBackupFields(
+        _ fields: [String],
+        includesOpenCsvWallet: Bool,
+    ) -> [String] {
+        guard includesOpenCsvWallet else {
+            return fields
+        }
+        let openCsvFields = fields.filter(Self.isOpenCsvWalletUnknownField)
+        guard openCsvFields.count == 1 else {
+            return fields
+        }
+        var didRemoveOpenCsvField = false
+        return fields.filter { field in
+            if !didRemoveOpenCsvField, Self.isOpenCsvWalletUnknownField(field) {
+                didRemoveOpenCsvField = true
+                return false
+            }
+            return true
+        }
+    }
+
+    private static func isOpenCsvWalletUnknownField(_ field: String) -> Bool {
+        let prefix = "in frame "
+        let suffix = ", item.account has unknown field with tag 17"
+        guard field.hasPrefix(prefix), field.hasSuffix(suffix) else {
+            return false
+        }
+        let frameEnd = field.index(field.endIndex, offsetBy: -suffix.count)
+        let frameText = field[field.index(field.startIndex, offsetBy: prefix.count)..<frameEnd]
+        return UInt(frameText) != nil
     }
 
     // MARK: -

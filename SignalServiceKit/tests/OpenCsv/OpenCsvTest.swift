@@ -23,6 +23,50 @@ private func makeOpenCsvTestDatabase() -> InMemoryDB {
     return InMemoryDB()
 }
 
+struct OpenCsvSecureBackupValidationTest {
+    private static let extensionField =
+        "in frame 1, item.account has unknown field with tag 17"
+
+    @Test
+    func permitsOneStagedForkExtension() {
+        #expect(BackupArchiveManagerImpl.unexpectedUnknownBackupFields(
+            [Self.extensionField],
+            includesOpenCsvWallet: true,
+        ).isEmpty)
+    }
+
+    @Test
+    func neverPermitsExtensionWithoutStagedPayload() {
+        #expect(BackupArchiveManagerImpl.unexpectedUnknownBackupFields(
+            [Self.extensionField],
+            includesOpenCsvWallet: false,
+        ) == [Self.extensionField])
+    }
+
+    @Test
+    func retainsEveryUnrelatedOrMalformedUnknownField() {
+        let fields = [
+            Self.extensionField,
+            "in frame 1, item.account has unknown field with tag 18",
+            "in frame nope, item.account has unknown field with tag 17",
+            "in frame 2, item.account.iosSpecificSettings has unknown field with tag 17",
+        ]
+        #expect(BackupArchiveManagerImpl.unexpectedUnknownBackupFields(
+            fields,
+            includesOpenCsvWallet: true,
+        ) == Array(fields.dropFirst()))
+    }
+
+    @Test
+    func rejectsDuplicateForkExtensions() {
+        let fields = [Self.extensionField, Self.extensionField]
+        #expect(BackupArchiveManagerImpl.unexpectedUnknownBackupFields(
+            fields,
+            includesOpenCsvWallet: true,
+        ) == fields)
+    }
+}
+
 struct OpenCsvAttachmentDetectorTest {
     @Test
     func detectsByFilename() {
