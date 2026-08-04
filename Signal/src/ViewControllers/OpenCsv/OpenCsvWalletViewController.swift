@@ -377,15 +377,29 @@ class OpenCsvWalletViewController: OWSViewController {
                 let confirmingCount = summary.incomingActivities.lazy
                     .filter { $0.state == .confirming }
                     .count
-                self.balanceStatusLabel.text = confirmingCount == 0
-                    ? balanceStatus
-                    : balanceStatus + "\n" + String.nonPluralLocalizedStringWithFormat(
+                let unconfirmedAvailableCount = summary.incomingActivities.lazy
+                    .filter { $0.state == .availableUnconfirmed }
+                    .count
+                var statusLines = [balanceStatus]
+                if unconfirmedAvailableCount > 0 {
+                    statusLines.append(String.nonPluralLocalizedStringWithFormat(
+                        OWSLocalizedString(
+                            "OPENCSV_WALLET_UNCONFIRMED_AVAILABLE_COUNT_FORMAT",
+                            comment: "Wallet status for spendable incoming OpenCSV payments that are not settled. Embeds the count.",
+                        ),
+                        "\(unconfirmedAvailableCount)",
+                    ))
+                }
+                if confirmingCount > 0 {
+                    statusLines.append(String.nonPluralLocalizedStringWithFormat(
                         OWSLocalizedString(
                             "OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT",
-                            comment: "Wallet status for incoming OpenCSV payments that are visible but not spendable. Embeds the count.",
+                            comment: "Wallet status for incoming OpenCSV payments still being verified. Embeds the count.",
                         ),
                         "\(confirmingCount)",
-                    )
+                    ))
+                }
+                self.balanceStatusLabel.text = statusLines.joined(separator: "\n")
                 self.instrumentDetailsLabel.text = Self.renderHoldings(
                     summary.balances,
                     instruments: summary.instruments,
@@ -581,7 +595,22 @@ class OpenCsvWalletViewController: OWSViewController {
                 "OPENCSV_WALLET_ACTIVITY_CONFIRMING",
                 comment: "Incoming wallet activity that is visible but not spendable.",
             )
-        case .available:
+        case .availableUnconfirmed:
+            guard let amount = activity.amount else {
+                return OWSLocalizedString(
+                    "OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED",
+                    comment: "Incoming wallet activity that is spendable before Bitcoin confirmation.",
+                )
+            }
+            return String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED_FORMAT",
+                    comment: "Incoming wallet activity spendable before Bitcoin confirmation. Embeds amount and currency.",
+                ),
+                OpenCsvUsdAmount.format(amount),
+                activity.currency ?? "USD",
+            )
+        case .available, .settled:
             guard let amount = activity.amount else {
                 return OWSLocalizedString(
                     "OPENCSV_WALLET_ACTIVITY_AVAILABLE",

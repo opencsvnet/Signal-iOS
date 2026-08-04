@@ -151,8 +151,9 @@ public actor OpenCsvPayments {
         /// The wallet's receiving key (share with senders and external issuers).
         public let owner: String
         public let balances: [OpenCsvCredit]
-        /// Incoming transport state. Confirming entries are presentation
-        /// only and are never included in `balances` or Rust coin selection.
+        /// Incoming transport/finality state. Confirming entries are not in
+        /// balances. Available-unconfirmed entries are real Rust-selected
+        /// coins whose exact parent transaction is rechecked before signing.
         public let incomingActivities: [OpenCsvIncomingActivity]
         public let instruments: [OpenCsvInstrumentRecord]
         public let operations: [OpenCsvAccountOperationSummary]
@@ -285,7 +286,7 @@ public actor OpenCsvPayments {
                             attachmentId: attachmentId,
                             threadUniqueId: candidate.threadUniqueId,
                             messageUniqueId: candidate.messageUniqueId,
-                            state: .available,
+                            state: record.finality == "unconfirmed" ? .availableUnconfirmed : .settled,
                             amount: record.amount,
                             currency: record.currency,
                             tx: tx,
@@ -310,15 +311,24 @@ public actor OpenCsvPayments {
                 self.touchOwners(attachmentId: attachmentId, tx: tx)
             }
             lastWithheldReason[attachmentId] = nil
-            if record.direction == .incoming, record.isVerified, priorActivityState != .available {
+            let acceptedState: OpenCsvIncomingActivityState = record.finality == "unconfirmed"
+                ? .availableUnconfirmed
+                : .settled
+            if record.direction == .incoming, record.isVerified, priorActivityState != acceptedState {
+                let notificationFormat = record.finality == "unconfirmed"
+                    ? OWSLocalizedString(
+                        "OPENCSV_NOTIFICATION_AVAILABLE_UNCONFIRMED_FORMAT",
+                        comment: "Notification that a verified OpenCSV payment is spendable before confirmation. Embeds the amount and currency.",
+                    )
+                    : OWSLocalizedString(
+                        "OPENCSV_NOTIFICATION_SETTLED_FORMAT",
+                        comment: "Notification that an OpenCSV payment reached settlement depth. Embeds the amount and currency.",
+                    )
                 notifyPaymentStatus(
                     threadUniqueId: candidate.threadUniqueId,
                     messageUniqueId: candidate.messageUniqueId,
                     body: String.nonPluralLocalizedStringWithFormat(
-                        OWSLocalizedString(
-                            "OPENCSV_NOTIFICATION_AVAILABLE_FORMAT",
-                            comment: "Notification that a verified OpenCSV payment is now spendable. Embeds the amount and currency.",
-                        ),
+                        notificationFormat,
                         OpenCsvUsdAmount.format(record.amount),
                         record.currency ?? "USD",
                     ),
@@ -342,6 +352,8 @@ public actor OpenCsvPayments {
             )
         } catch {
             lastWithheldReason[attachmentId] = "\(error)"
+            let lostUnconfirmedParent = priorActivityState == .availableUnconfirmed
+                && "\(error)".contains("unconfirmed anchor")
             if
                 let paymentError = error as? OpenCsvPaymentsError,
                 case .chainViewLagging = paymentError
@@ -356,6 +368,26 @@ public actor OpenCsvPayments {
                         tx: tx,
                     )
                 }
+            } else if lostUnconfirmedParent {
+                try? await db.awaitableWrite { tx in
+                    try self.store.upsertIncomingActivity(
+                        attachmentId: attachmentId,
+                        threadUniqueId: candidate.threadUniqueId,
+                        messageUniqueId: candidate.messageUniqueId,
+                        state: .needsAttention,
+                        detail: "unconfirmed parent disappeared or was replaced",
+                        tx: tx,
+                    )
+                }
+                notifyPaymentStatus(
+                    threadUniqueId: candidate.threadUniqueId,
+                    messageUniqueId: candidate.messageUniqueId,
+                    body: OWSLocalizedString(
+                        "OPENCSV_NOTIFICATION_UNCONFIRMED_CHANGED",
+                        comment: "Notification that a zero-confirmation payment dependency disappeared or was replaced.",
+                    ),
+                    wantsSound: false,
+                )
             }
             Logger.warn("consignment \(attachmentId) not verifiable yet: \(error)")
         }
@@ -396,6 +428,7 @@ public actor OpenCsvPayments {
         }
 
         let plan = Self.chainViewPlan(peerCount: peers.count, indexerCount: indexers.count)
+        var settlementLagReason: String?
         switch plan {
         case .selfScan:
             // The phone's own filter-synced occurrence index; no server is
@@ -415,10 +448,12 @@ public actor OpenCsvPayments {
             }
             guard scanned.isVerified else {
                 if Self.isChainLagReason(scanned.reason) {
-                    // Still behind after a resync: infrastructure, never a
-                    // final verdict — the sweep re-runs when the chain
-                    // catches up. A lagging tip must not reject a payment.
-                    throw OpenCsvPaymentsError.chainViewLagging(reason: scanned.reason ?? "?")
+                    // A confirmed-only scan cannot see mempool anchors. Keep
+                    // its settled history as the exclusion prefix and let
+                    // the account wallet attempt the distinct exact-txid
+                    // provisional capability below.
+                    settlementLagReason = scanned.reason
+                    break
                 }
                 var verdict = OpenCsvVerdict(
                     status: "rejected",
@@ -474,11 +509,18 @@ public actor OpenCsvPayments {
         // snapshot's claimed anchor up against the chain itself.
         var (verdict, snapshotJson) = try await verifyBlobReturningSnapshot(blob)
         if !verdict.isVerified, Self.isChainLagReason(verdict.reason) {
-            // A single fresh snapshot can legitimately trail the payment
-            // message or its confirmations. Withhold, then let a later
-            // conversation/wallet sweep retry; never turn lag into a durable
-            // rejection.
-            throw OpenCsvPaymentsError.chainViewLagging(reason: verdict.reason ?? "?")
+            guard plan == .selfScan else {
+                throw OpenCsvPaymentsError.chainViewLagging(reason: verdict.reason ?? "?")
+            }
+            let account = try await ensureAccountWallet()
+            verdict = try account.verifyUnconfirmed(
+                blob: blob,
+                confirmedSnapshotJson: snapshotJson,
+            )
+            Logger.info(
+                "accepted exact mempool anchor with zero-confirmation dependency"
+                + (settlementLagReason.map { " after settled view reported \($0)" } ?? ""),
+            )
         }
         verdict.chainView = plan.rawValue
         return try await spvPointVerifyIfConfigured(verdict, snapshotJson: snapshotJson)
@@ -516,7 +558,8 @@ public actor OpenCsvPayments {
     /// remain stable and are not replayed.
     static func shouldRetryStoredVerdict(_ verdict: OpenCsvVerdictRecord?) -> Bool {
         guard let verdict else { return true }
-        return !verdict.isVerified && isChainLagReason(verdict.reason)
+        return verdict.finality == "unconfirmed"
+            || (!verdict.isVerified && isChainLagReason(verdict.reason))
     }
 
     /// Verify a consignment blob against the current anchor snapshot,
@@ -554,7 +597,7 @@ public actor OpenCsvPayments {
         _ verdict: OpenCsvVerdict,
         snapshotJson: String,
     ) async throws -> OpenCsvVerdict {
-        guard verdict.isVerified, let anchor = verdict.anchor else {
+        guard verdict.isVerified, verdict.finality != "unconfirmed", let anchor = verdict.anchor else {
             return verdict
         }
         let (peers, network) = db.read {
@@ -1501,7 +1544,7 @@ public actor OpenCsvPayments {
             )
         }
         var anchor: OpenCsvVerdict.Anchor?
-        var txid: String?
+        var txid: String? = record?.anchorTxid
         var recordHex: String?
         var ctx: String?
         var confirmations: UInt64?
@@ -1535,8 +1578,8 @@ public actor OpenCsvPayments {
         return ExplorerDetail(
             verdict: record,
             withheldReason: record == nil ? lastWithheldReason[attachmentId] : nil,
-            anchorHeight: anchor?.height,
-            anchorPosition: anchor?.position,
+            anchorHeight: anchor?.height ?? (record?.finality == "unconfirmed" ? 0 : nil),
+            anchorPosition: anchor?.position ?? (record?.finality == "unconfirmed" ? 0 : nil),
             txidHex: txid,
             recordHex: recordHex,
             ctxHex: ctx,

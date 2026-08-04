@@ -111,22 +111,29 @@ class OpenCsvPaymentExplorerViewController: OWSViewController {
         let provenance: String
         if let verdict = detail.verdict {
             if verdict.isVerified {
-                switch verdict.chainView {
-                case "self-scan":
+                if verdict.finality == "unconfirmed" {
                     provenance = OWSLocalizedString(
-                        "OPENCSV_EXPLORER_PROVENANCE_SELF_SCAN",
-                        comment: "Provenance line for a payment this phone verified against the chain with no server.",
+                        "OPENCSV_EXPLORER_PROVENANCE_UNCONFIRMED",
+                        comment: "Provenance for a proof-verified payment whose exact mempool anchor is spendable before settlement.",
                     )
-                case "cross-check":
-                    provenance = OWSLocalizedString(
-                        "OPENCSV_EXPLORER_PROVENANCE_CROSS_CHECK",
-                        comment: "Provenance line for a payment verified by cross-checking independent indexers.",
-                    )
-                default:
-                    provenance = OWSLocalizedString(
-                        "OPENCSV_EXPLORER_PROVENANCE_SNAPSHOT",
-                        comment: "Provenance line for a payment verified against a single anchor snapshot.",
-                    )
+                } else {
+                    switch verdict.chainView {
+                    case "self-scan":
+                        provenance = OWSLocalizedString(
+                            "OPENCSV_EXPLORER_PROVENANCE_SELF_SCAN",
+                            comment: "Provenance line for a payment this phone verified against the chain with no server.",
+                        )
+                    case "cross-check":
+                        provenance = OWSLocalizedString(
+                            "OPENCSV_EXPLORER_PROVENANCE_CROSS_CHECK",
+                            comment: "Provenance line for a payment verified by cross-checking independent indexers.",
+                        )
+                    default:
+                        provenance = OWSLocalizedString(
+                            "OPENCSV_EXPLORER_PROVENANCE_SNAPSHOT",
+                            comment: "Provenance line for a payment verified against a single anchor snapshot.",
+                        )
+                    }
                 }
             } else {
                 let format = OWSLocalizedString(
@@ -150,10 +157,16 @@ class OpenCsvPaymentExplorerViewController: OWSViewController {
         addBody(provenance, emphasized: detail.verdict?.isVerified == true)
 
         if detail.verdict?.isVerified == true {
-            addBody(OWSLocalizedString(
-                "OPENCSV_EXPLORER_EXCLUSION",
-                comment: "Plain-language double-spend result shown for a verified OpenCSV payment.",
-            ), emphasized: false)
+            let exclusion = detail.verdict?.finality == "unconfirmed"
+                ? OWSLocalizedString(
+                    "OPENCSV_EXPLORER_EXCLUSION_UNCONFIRMED",
+                    comment: "Plain-language mempool ordering and replacement disclosure for a zero-confirmation payment.",
+                )
+                : OWSLocalizedString(
+                    "OPENCSV_EXPLORER_EXCLUSION",
+                    comment: "Plain-language double-spend result shown for a settled OpenCSV payment.",
+                )
+            addBody(exclusion, emphasized: false)
         }
     }
 

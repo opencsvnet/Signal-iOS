@@ -6703,6 +6703,9 @@
 /* Status shown in an OpenCSV payment bubble when the proof verified. */
 "OPENCSV_PAYMENT_STATUS_VERIFIED" = "verified";
 
+/* Status shown when the proof and exact mempool anchor verified, so the payment is spendable before settlement. */
+"OPENCSV_PAYMENT_STATUS_AVAILABLE_UNCONFIRMED" = "available before confirmation · replacement risk";
+
 /* Status shown in an OpenCSV payment bubble when the proof verified against the phone's own chain scan, trusting no server. */
 "OPENCSV_PAYMENT_STATUS_VERIFIED_SELF_SCAN" = "fully verified by this phone";
 
@@ -6712,11 +6715,20 @@
 /* Title of an OpenCSV payment status notification. */
 "OPENCSV_NOTIFICATION_TITLE" = "OpenCSV payment";
 
-/* Notification that an incoming OpenCSV payment is confirming and is not spendable yet. */
-"OPENCSV_NOTIFICATION_CONFIRMING" = "Payment received and confirming on Bitcoin. It is not spendable yet.";
+/* Notification that an incoming OpenCSV attachment is still being verified. */
+"OPENCSV_NOTIFICATION_CONFIRMING" = "Payment received. Verifying its proof and Bitcoin anchor…";
 
 /* Notification that a verified OpenCSV payment is now spendable. Embeds amount and currency. */
 "OPENCSV_NOTIFICATION_AVAILABLE_FORMAT" = "%1$@ %2$@ is verified and now available.";
+
+/* Notification that a verified OpenCSV payment is spendable before Bitcoin confirmation. Embeds amount and currency. */
+"OPENCSV_NOTIFICATION_AVAILABLE_UNCONFIRMED_FORMAT" = "%1$@ %2$@ is verified and available before confirmation.";
+
+/* Notification that a previously spendable-unconfirmed OpenCSV payment reached settlement depth. Embeds amount and currency. */
+"OPENCSV_NOTIFICATION_SETTLED_FORMAT" = "%1$@ %2$@ is now settled on Bitcoin.";
+
+/* Notification that an unconfirmed payment's exact parent transaction disappeared or was replaced. */
+"OPENCSV_NOTIFICATION_UNCONFIRMED_CHANGED" = "An unconfirmed payment changed on Bitcoin. Dependent spending is frozen while Signal repairs it.";
 
 /* Notification that an OpenCSV payment could not be accepted. */
 "OPENCSV_NOTIFICATION_NEEDS_ATTENTION" = "A payment could not be verified. Open the conversation for details.";
@@ -6744,6 +6756,12 @@
 
 /* Plain-language double-spend result shown for a verified OpenCSV payment. */
 "OPENCSV_EXPLORER_EXCLUSION" = "No earlier occurrence of this coin was found on the chain.";
+
+/* Zero-confirmation exclusion disclosure: settled history is checked, while mempool order and replacement remain risks. */
+"OPENCSV_EXPLORER_EXCLUSION_UNCONFIRMED" = "No earlier confirmed occurrence was found. Mempool ordering is not consensus; this payment can still be replaced or conflict before settlement.";
+
+/* Provenance for a proof-verified payment whose exact raw transaction is observed but not settled. */
+"OPENCSV_EXPLORER_PROVENANCE_UNCONFIRMED" = "Proof, ownership, anchor binding, and exact mempool transaction verified · spendable before confirmation · replacement risk";
 
 /* Provenance line for a payment verified by cross-checking independent indexers. */
 "OPENCSV_EXPLORER_PROVENANCE_CROSS_CHECK" = "Verified by cross-checking independent indexers";
@@ -6856,8 +6874,11 @@
 /* Status below the USD balance when at least one reviewed issuer is configured. */
 "OPENCSV_WALLET_USD_READY" = "Available balance";
 
-/* Wallet status for incoming OpenCSV payments that are visible but not spendable. Embeds the count. */
-"OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT" = "%@ incoming payment(s) confirming · not included above";
+/* Wallet status for incoming OpenCSV payments that are still being verified. Embeds the count. */
+"OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT" = "%@ incoming payment(s) still verifying · not included above";
+
+/* Wallet status for spendable incoming OpenCSV payments that are not yet settled. Embeds the count. */
+"OPENCSV_WALLET_UNCONFIRMED_AVAILABLE_COUNT_FORMAT" = "%@ payment(s) available before confirmation · replacement risk";
 
 /* Status below the USD balance when this build has no reviewed issuer configured. */
 "OPENCSV_WALLET_USD_NOT_AVAILABLE" = "USD is not available in this build yet";
@@ -6922,14 +6943,20 @@
 /* Shown when there are no OpenCSV wallet operations yet. */
 "OPENCSV_WALLET_NO_ACTIVITY" = "No OpenCSV transactions yet.";
 
-/* Incoming wallet activity that is visible but not spendable. */
-"OPENCSV_WALLET_ACTIVITY_CONFIRMING" = "Incoming payment · confirming · not spendable";
+/* Incoming wallet activity that is still being verified and is not spendable. */
+"OPENCSV_WALLET_ACTIVITY_CONFIRMING" = "Incoming payment · verifying proof and anchor";
+
+/* Incoming wallet activity that is spendable before Bitcoin confirmation, with unknown amount. */
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED" = "Incoming payment · available before confirmation · replacement risk";
+
+/* Incoming wallet activity that is spendable before Bitcoin confirmation. Embeds amount and currency. */
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED_FORMAT" = "+%1$@ %2$@ · available before confirmation · replacement risk";
 
 /* Incoming wallet activity that has become spendable without an available amount. */
-"OPENCSV_WALLET_ACTIVITY_AVAILABLE" = "Incoming payment · verified · available";
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE" = "Incoming payment · settled on Bitcoin";
 
 /* Incoming wallet activity that has become spendable. Embeds amount and currency. */
-"OPENCSV_WALLET_ACTIVITY_AVAILABLE_FORMAT" = "+%1$@ %2$@ · verified · available";
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE_FORMAT" = "+%1$@ %2$@ · settled on Bitcoin";
 
 /* Incoming wallet activity that failed definitive verification. */
 "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION" = "Incoming payment · needs attention · not spendable";

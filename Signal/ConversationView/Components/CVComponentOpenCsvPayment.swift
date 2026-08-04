@@ -88,6 +88,12 @@ public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
                     comment: "Status for a verified OpenCSV payment that credits neither party in this chat.",
                 )
             }
+            if verdict.finality == "unconfirmed" {
+                return OWSLocalizedString(
+                    "OPENCSV_PAYMENT_STATUS_AVAILABLE_UNCONFIRMED",
+                    comment: "Status for a verified payment that is spendable before Bitcoin confirmation.",
+                )
+            }
             // Self-scan means the phone checked the chain itself and
             // believed no server — a strictly stronger claim, so say so.
             if verdict.chainView == "self-scan" {

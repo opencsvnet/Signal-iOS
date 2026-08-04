@@ -525,7 +525,7 @@ final class OpenCsvWalletStoreTest {
     }
 
     @Test
-    func incomingActivityIsVisibleBeforeButSpendableOnlyAfterVerification() throws {
+    func incomingActivitySeparatesVerifyingUnconfirmedAndSettled() throws {
         let firstSeen = Date(timeIntervalSince1970: 10)
         try db.write { tx in
             try store.upsertIncomingActivity(
@@ -551,7 +551,7 @@ final class OpenCsvWalletStoreTest {
                 attachmentId: 42,
                 threadUniqueId: nil,
                 messageUniqueId: nil,
-                state: .available,
+                state: .availableUnconfirmed,
                 amount: 25_000_000,
                 currency: "USD",
                 now: Date(timeIntervalSince1970: 20),
@@ -560,31 +560,33 @@ final class OpenCsvWalletStoreTest {
         }
         db.read { tx in
             let activity = store.incomingActivities(tx: tx).first
-            #expect(activity?.state == .available)
+            #expect(activity?.state == .availableUnconfirmed)
+            #expect(activity?.state.isSpendable == true)
+            #expect(activity?.state.isSettled == false)
             #expect(activity?.amount == 25_000_000)
             #expect(activity?.threadUniqueId == "thread-1")
             #expect(activity?.messageUniqueId == "message-1")
             #expect(activity?.firstSeenAt == firstSeen)
         }
 
-        // A reorg or replacement may force re-verification. The presentation
-        // can return to pending, but the formerly verified amount must not be
-        // carried into that non-spendable state.
+        // Confirmation promotes the same spendable value to settled.
         try db.write { tx in
             try store.upsertIncomingActivity(
                 attachmentId: 42,
                 threadUniqueId: nil,
                 messageUniqueId: nil,
-                state: .confirming,
-                detail: "re-verifying replacement",
+                state: .settled,
+                amount: 25_000_000,
+                currency: "USD",
                 now: Date(timeIntervalSince1970: 30),
                 tx: tx,
             )
         }
         db.read { tx in
             let activity = store.incomingActivities(tx: tx).first
-            #expect(activity?.state == .confirming)
-            #expect(activity?.amount == nil)
+            #expect(activity?.state == .settled)
+            #expect(activity?.state.isSettled == true)
+            #expect(activity?.amount == 25_000_000)
             #expect(store.verdict(attachmentId: 42, tx: tx) == nil)
             #expect(store.replayBlobs(tx: tx).isEmpty)
         }
@@ -1453,6 +1455,20 @@ struct OpenCsvChainViewTest {
         #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
             record(status: "verified", reason: nil),
         ))
+        let provisional = OpenCsvVerdictRecord(
+            verdict: OpenCsvVerdict(
+                status: "verified",
+                reason: nil,
+                credits: [],
+                coins: nil,
+                anchor: .init(height: 0, position: 0),
+                finality: "unconfirmed",
+                spendable: true,
+                anchorTxid: String(repeating: "ab", count: 32),
+            ),
+            date: Date(timeIntervalSince1970: 0),
+        )
+        #expect(OpenCsvPayments.shouldRetryStoredVerdict(provisional))
     }
 
     /// The explorer sheet's evidence join: full snapshot entry (txid,
@@ -1493,6 +1509,7 @@ struct OpenCsvChainViewTest {
         let record = try JSONDecoder().decode(OpenCsvVerdictRecord.self, from: Data(legacy.utf8))
         #expect(record.isVerified)
         #expect(record.chainView == nil)
+        #expect(record.finality == nil)
     }
 
     @Test

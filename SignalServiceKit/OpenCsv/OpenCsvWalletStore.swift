@@ -19,14 +19,31 @@ public enum OpenCsvPaymentDirection: String, Codable {
     case thirdParty
 }
 
-/// Wallet activity for an incoming consignment before and after it becomes
-/// spendable. Only `.available` entries have passed the complete accept
-/// driver; `.confirming` is deliberately display-only and never contributes
-/// to balances or coin selection.
+/// Wallet activity for an incoming consignment. Transport/download remains
+/// `.confirming` and nonspendable. `.availableUnconfirmed` has passed the
+/// complete proof, ownership, binding and settled-history checks and is in
+/// Rust coin selection with an exact mempool-parent dependency. `.settled`
+/// has met confirmation policy. The older `.available` spelling remains
+/// decodable as settled activity for existing installs.
 public enum OpenCsvIncomingActivityState: String, Codable {
     case confirming
+    case availableUnconfirmed
     case available
+    case settled
     case needsAttention
+
+    public var isSpendable: Bool {
+        switch self {
+        case .availableUnconfirmed, .available, .settled:
+            return true
+        case .confirming, .needsAttention:
+            return false
+        }
+    }
+
+    public var isSettled: Bool {
+        self == .available || self == .settled
+    }
 }
 
 public struct OpenCsvIncomingActivity: Codable, Equatable {
@@ -60,6 +77,9 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
     /// byte-distinct attachments encoding the same consignment share this
     /// identity and therefore one logical verdict/payment cell.
     public let consignmentId: String?
+    public let finality: String?
+    public let spendable: Bool?
+    public let anchorTxid: String?
 
     public var isVerified: Bool { status == "verified" }
 
@@ -78,6 +98,9 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.verifiedAt = date
         self.chainView = verdict.chainView
         self.consignmentId = verdict.consignmentId
+        self.finality = verdict.finality
+        self.spendable = verdict.spendable
+        self.anchorTxid = verdict.anchorTxid
     }
 
     /// A verdict for a consignment we sent. The amount is what the
@@ -99,6 +122,9 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.verifiedAt = date
         self.chainView = nil
         self.consignmentId = consignmentId
+        self.finality = "settled"
+        self.spendable = true
+        self.anchorTxid = nil
     }
 
     /// A verdict retained for a legacy issuer operation created before
@@ -120,6 +146,9 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.verifiedAt = date
         self.chainView = nil
         self.consignmentId = consignmentId
+        self.finality = "settled"
+        self.spendable = true
+        self.anchorTxid = nil
     }
 }
 
@@ -557,7 +586,7 @@ public struct OpenCsvWalletStore {
         // Amounts are ledger facts, not hints from an unverified envelope.
         // Never carry an earlier amount backward into a confirming row.
         let resolvedAmount: UInt64? = switch state {
-        case .available:
+        case .availableUnconfirmed, .available, .settled:
             amount ?? existing?.amount
         case .confirming, .needsAttention:
             nil

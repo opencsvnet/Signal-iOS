@@ -182,6 +182,8 @@ public struct OpenCsvCoin: Codable, Equatable {
     public let currency: String?
     public let value: UInt64
     public let unspent: Bool
+    public let finality: String?
+    public let anchorTxid: String?
 }
 
 /// Verification outcome for a received consignment.
@@ -196,6 +198,13 @@ public struct OpenCsvVerdict: Codable, Equatable {
     public let credits: [OpenCsvCredit]?
     public let coins: [OpenCsvCoin]?
     public let anchor: Anchor?
+    /// `unconfirmed` means the proof and exact mempool transaction verified
+    /// and Rust may select the coins, but every child signing must re-observe
+    /// that exact parent. `settled` met the configured confirmation depth.
+    public let finality: String?
+    public let spendable: Bool?
+    public let risk: String?
+    public let anchorTxid: String?
     /// Stable identity over Rust's canonical consignment encoding. Signal
     /// keys verdict and rendered-cell state by this value, never by an
     /// attachment id or delivery-attempt nonce.
@@ -214,6 +223,10 @@ public struct OpenCsvVerdict: Codable, Equatable {
         coins: [OpenCsvCoin]?,
         anchor: Anchor?,
         consignmentId: String? = nil,
+        finality: String? = nil,
+        spendable: Bool? = nil,
+        risk: String? = nil,
+        anchorTxid: String? = nil,
     ) {
         self.status = status
         self.reason = reason
@@ -221,6 +234,10 @@ public struct OpenCsvVerdict: Codable, Equatable {
         self.coins = coins
         self.anchor = anchor
         self.consignmentId = consignmentId
+        self.finality = finality
+        self.spendable = spendable
+        self.risk = risk
+        self.anchorTxid = anchorTxid
     }
 }
 
@@ -535,6 +552,25 @@ public final class OpenCsvAccountWallet {
         return try blob.withUnsafeBytes { bytes in
             try snapshotJson.withCString { snapshot in
                 try Self.take(opencsv_account_verify_consignment(
+                    handle,
+                    bytes.bindMemory(to: UInt8.self).baseAddress,
+                    blob.count,
+                    snapshot,
+                ))
+            }
+        }
+    }
+
+    /// Verify and credit an exact mempool-observed anchor without pretending
+    /// it is settled. Rust validates the transaction layout, tags every coin
+    /// with its parent txid, and rechecks that dependency before child sends.
+    public func verifyUnconfirmed(blob: Data, confirmedSnapshotJson: String) throws -> OpenCsvVerdict {
+        guard !blob.isEmpty else {
+            throw OpenCsvClientError.ffi("consignment is empty")
+        }
+        return try blob.withUnsafeBytes { bytes in
+            try confirmedSnapshotJson.withCString { snapshot in
+                try Self.take(opencsv_account_verify_consignment_unconfirmed(
                     handle,
                     bytes.bindMemory(to: UInt8.self).baseAddress,
                     blob.count,
