@@ -20,6 +20,8 @@ class OpenCsvWalletViewController: OWSViewController {
     private let stack = UIStackView()
     private let scrollView = UIScrollView()
     private let balanceLabel = UILabel()
+    private let balanceStatusLabel = UILabel()
+    private let receiveDetailsStack = UIStackView()
     private let qrImageView = UIImageView()
     private let ownerLabel = UILabel()
     private let feeReserveLabel = UILabel()
@@ -27,6 +29,7 @@ class OpenCsvWalletViewController: OWSViewController {
     private let bitcoinAddressLabel = UILabel()
     private let utxoLabel = UILabel()
     private let operationHistoryLabel = UILabel()
+    private let instrumentDetailsLabel = UILabel()
     private let walletPolicyLabel = UILabel()
     private let feeReserveExplanationLabel = UILabel()
     private let feeReserveDetailsStack = UIStackView()
@@ -38,6 +41,7 @@ class OpenCsvWalletViewController: OWSViewController {
     private var bitcoinDepositAddress: String?
     private var latestExplorerUrl: URL?
     private var feeBumpButton: UIButton?
+    private var receiveButton: UIButton?
     private var feeReserveDetailsButton: UIButton?
     private var advancedButton: UIButton?
     private var feeBumpCandidates = [OpenCsvAccountOperationSummary]()
@@ -57,7 +61,7 @@ class OpenCsvWalletViewController: OWSViewController {
         view.backgroundColor = Theme.backgroundColor
 
         stack.axis = .vertical
-        stack.spacing = 12
+        stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
@@ -67,7 +71,7 @@ class OpenCsvWalletViewController: OWSViewController {
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 20),
+            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 24),
             stack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
             stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
@@ -77,25 +81,97 @@ class OpenCsvWalletViewController: OWSViewController {
         advancedStack.spacing = 12
         advancedStack.isHidden = true
 
-        // Holdings are exact issuer-backed instruments. A display code is
-        // never treated as identity and prototype assets remain explicit.
-        addHeader(OWSLocalizedString(
-            "OPENCSV_WALLET_ASSETS",
-            comment: "Section header for the assets held by the OpenCSV wallet.",
-        ))
-        balanceLabel.font = .dynamicTypeBody
+        // The first screen is intentionally a consumer wallet, not a protocol
+        // inspector. Exact issuer instruments remain visible under Wallet
+        // details, but the primary hierarchy is one USD balance and two tasks.
+        let balanceCard = UIView()
+        balanceCard.backgroundColor = Theme.secondaryBackgroundColor
+        balanceCard.layer.cornerRadius = 20
+        balanceCard.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: 24,
+            leading: 20,
+            bottom: 24,
+            trailing: 20,
+        )
+        let balanceStack = UIStackView()
+        balanceStack.axis = .vertical
+        balanceStack.alignment = .center
+        balanceStack.spacing = 6
+        balanceStack.translatesAutoresizingMaskIntoConstraints = false
+        balanceCard.addSubview(balanceStack)
+        NSLayoutConstraint.activate([
+            balanceStack.topAnchor.constraint(equalTo: balanceCard.layoutMarginsGuide.topAnchor),
+            balanceStack.leadingAnchor.constraint(equalTo: balanceCard.layoutMarginsGuide.leadingAnchor),
+            balanceStack.trailingAnchor.constraint(equalTo: balanceCard.layoutMarginsGuide.trailingAnchor),
+            balanceStack.bottomAnchor.constraint(equalTo: balanceCard.layoutMarginsGuide.bottomAnchor),
+        ])
+        let currencyLabel = UILabel()
+        currencyLabel.text = "USD"
+        currencyLabel.font = .dynamicTypeFootnote
+        currencyLabel.textColor = Theme.secondaryTextAndIconColor
+        balanceStack.addArrangedSubview(currencyLabel)
+        balanceLabel.font = UIFontMetrics(forTextStyle: .largeTitle).scaledFont(
+            for: UIFont.systemFont(ofSize: 44, weight: .semibold),
+        )
         balanceLabel.numberOfLines = 0
-        stack.addArrangedSubview(balanceLabel)
+        balanceLabel.adjustsFontForContentSizeCategory = true
+        balanceLabel.textAlignment = .center
+        balanceLabel.text = "—"
+        balanceStack.addArrangedSubview(balanceLabel)
+        balanceStatusLabel.font = .dynamicTypeFootnote
+        balanceStatusLabel.numberOfLines = 0
+        balanceStatusLabel.textAlignment = .center
+        balanceStatusLabel.textColor = Theme.secondaryTextAndIconColor
+        balanceStatusLabel.text = OWSLocalizedString(
+            "OPENCSV_WALLET_CHECKING",
+            comment: "Status shown while the OpenCSV wallet is loading.",
+        )
+        balanceStack.addArrangedSubview(balanceStatusLabel)
+        stack.addArrangedSubview(balanceCard)
 
-        // Receive: the QR is the interface; hex is a detail.
-        addHeader(OWSLocalizedString(
-            "OPENCSV_WALLET_RECEIVE",
-            comment: "Section header for receiving payments (this wallet's key).",
-        ))
+        let actionsStack = UIStackView()
+        actionsStack.axis = .horizontal
+        actionsStack.distribution = .fillEqually
+        actionsStack.spacing = 12
+        receiveButton = makeActionButton(
+            title: OWSLocalizedString(
+                "OPENCSV_WALLET_RECEIVE",
+                comment: "Action for revealing the OpenCSV receiving code.",
+            ),
+            subtitle: "USD",
+            imageName: "qrcode",
+            action: #selector(didTapReceive),
+        )
+        actionsStack.addArrangedSubview(receiveButton!)
+        feeReserveDetailsButton = makeActionButton(
+            title: OWSLocalizedString(
+                "OPENCSV_WALLET_NETWORK_FEES",
+                comment: "Action for viewing and funding the Bitcoin fee reserve.",
+            ),
+            subtitle: nil,
+            imageName: "bolt.fill",
+            action: #selector(didTapFeeReserveDetails),
+        )
+        actionsStack.addArrangedSubview(feeReserveDetailsButton!)
+        stack.addArrangedSubview(actionsStack)
+
+        // Receive details stay collapsed until the user chooses Receive.
+        receiveDetailsStack.axis = .vertical
+        receiveDetailsStack.alignment = .center
+        receiveDetailsStack.spacing = 12
+        receiveDetailsStack.isHidden = true
+        addHeader(
+            OWSLocalizedString(
+                "OPENCSV_WALLET_RECEIVE_USD",
+                comment: "Heading above the OpenCSV receiving QR code.",
+            ),
+            to: receiveDetailsStack,
+        )
         qrImageView.contentMode = .scaleAspectFit
         qrImageView.layer.magnificationFilter = .nearest
         qrImageView.heightAnchor.constraint(equalToConstant: 160).isActive = true
-        stack.addArrangedSubview(qrImageView)
+        qrImageView.widthAnchor.constraint(equalTo: qrImageView.heightAnchor).isActive = true
+        receiveDetailsStack.addArrangedSubview(qrImageView)
         ownerLabel.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         ownerLabel.numberOfLines = 2
         ownerLabel.lineBreakMode = .byCharWrapping
@@ -104,7 +180,7 @@ class OpenCsvWalletViewController: OWSViewController {
         ownerLabel.addGestureRecognizer(
             UITapGestureRecognizer(target: self, action: #selector(didTapCopyKey)),
         )
-        stack.addArrangedSubview(ownerLabel)
+        receiveDetailsStack.addArrangedSubview(ownerLabel)
         if thread != nil {
             addButton(
                 OWSLocalizedString(
@@ -112,19 +188,28 @@ class OpenCsvWalletViewController: OWSViewController {
                     comment: "Button that posts this wallet's receiving key into the chat.",
                 ),
                 action: #selector(didTapShareKey),
+                to: receiveDetailsStack,
             )
         }
+        stack.addArrangedSubview(receiveDetailsStack)
 
-        // Bitcoin is a visible fee reserve, not a general-purpose wallet.
-        // Funding is receive-only in Swift; every spend action remains an
-        // OpenCSV transfer/fee-bump request enforced by Rust.
-        addHeader(OWSLocalizedString(
-            "OPENCSV_WALLET_FEE_RESERVE",
-            comment: "Section header for the Bitcoin reserve used only for OpenCSV protocol fees.",
-        ))
+        // Bitcoin stays policy-restricted in Rust. The UI reveals it only
+        // when the user explicitly asks about network fees.
+        feeReserveDetailsStack.axis = .vertical
+        feeReserveDetailsStack.alignment = .center
+        feeReserveDetailsStack.spacing = 12
+        feeReserveDetailsStack.isHidden = true
+        addHeader(
+            OWSLocalizedString(
+                "OPENCSV_WALLET_NETWORK_FEES",
+                comment: "Heading above Bitcoin fee-reserve details.",
+            ),
+            to: feeReserveDetailsStack,
+        )
         feeReserveLabel.font = .dynamicTypeBody
         feeReserveLabel.numberOfLines = 0
-        stack.addArrangedSubview(feeReserveLabel)
+        feeReserveLabel.textAlignment = .center
+        feeReserveDetailsStack.addArrangedSubview(feeReserveLabel)
         feeReserveExplanationLabel.font = .dynamicTypeFootnote
         feeReserveExplanationLabel.numberOfLines = 0
         feeReserveExplanationLabel.textColor = Theme.secondaryTextAndIconColor
@@ -132,17 +217,8 @@ class OpenCsvWalletViewController: OWSViewController {
             "OPENCSV_WALLET_FEE_RESERVE_EXPLANATION",
             comment: "Explanation of the restricted Bitcoin fee reserve.",
         )
-        stack.addArrangedSubview(feeReserveExplanationLabel)
-        feeReserveDetailsButton = addButton(
-            OWSLocalizedString(
-                "OPENCSV_WALLET_SHOW_FUNDING_ADDRESS",
-                comment: "Button that reveals the Bitcoin fee-reserve funding address.",
-            ),
-            action: #selector(didTapFeeReserveDetails),
-        )
-        feeReserveDetailsStack.axis = .vertical
-        feeReserveDetailsStack.spacing = 12
-        feeReserveDetailsStack.isHidden = true
+        feeReserveExplanationLabel.textAlignment = .center
+        feeReserveDetailsStack.addArrangedSubview(feeReserveExplanationLabel)
         bitcoinQrImageView.contentMode = .scaleAspectFit
         bitcoinQrImageView.layer.magnificationFilter = .nearest
         bitcoinQrImageView.heightAnchor.constraint(equalToConstant: 160).isActive = true
@@ -165,6 +241,11 @@ class OpenCsvWalletViewController: OWSViewController {
         walletPolicyLabel.numberOfLines = 0
         walletPolicyLabel.textColor = Theme.secondaryTextAndIconColor
         advancedStack.addArrangedSubview(walletPolicyLabel)
+
+        instrumentDetailsLabel.font = .dynamicTypeFootnote
+        instrumentDetailsLabel.numberOfLines = 0
+        instrumentDetailsLabel.textColor = Theme.secondaryTextAndIconColor
+        advancedStack.addArrangedSubview(instrumentDetailsLabel)
         addHeader(OWSLocalizedString(
             "OPENCSV_WALLET_ACTIVITY",
             comment: "Section header for OpenCSV wallet operation history.",
@@ -182,6 +263,7 @@ class OpenCsvWalletViewController: OWSViewController {
         )
         explorerButton.tag = 7301
         explorerButton.isEnabled = false
+        explorerButton.isHidden = true
         feeBumpButton = addButton(
             OWSLocalizedString(
                 "OPENCSV_WALLET_FEE_BUMP",
@@ -190,12 +272,16 @@ class OpenCsvWalletViewController: OWSViewController {
             action: #selector(didTapFeeBump),
         )
         feeBumpButton?.isEnabled = false
+        feeBumpButton?.isHidden = true
 
         if SUIEnvironment.shared.paymentsRef.paymentsEntropy != nil {
-            addHeader(OWSLocalizedString(
-                "OPENCSV_LEGACY_MOBILECOIN_TITLE",
-                comment: "Section header for legacy MobileCoin recovery material.",
-            ))
+            addHeader(
+                OWSLocalizedString(
+                    "OPENCSV_LEGACY_MOBILECOIN_TITLE",
+                    comment: "Section header for legacy MobileCoin recovery material.",
+                ),
+                to: advancedStack,
+            )
             let warning = UILabel()
             warning.font = .dynamicTypeCaption1
             warning.numberOfLines = 0
@@ -204,13 +290,14 @@ class OpenCsvWalletViewController: OWSViewController {
                 "OPENCSV_LEGACY_MOBILECOIN_WARNING",
                 comment: "Read-only warning shown when legacy MobileCoin recovery material remains on the device.",
             )
-            stack.addArrangedSubview(warning)
+            advancedStack.addArrangedSubview(warning)
             addButton(
                 OWSLocalizedString(
                     "OPENCSV_LEGACY_MOBILECOIN_EXPORT",
                     comment: "Button opening the protected export flow for a legacy MobileCoin recovery phrase.",
                 ),
                 action: #selector(didTapLegacyMobileCoinExport),
+                to: advancedStack,
             )
         }
 
@@ -219,8 +306,8 @@ class OpenCsvWalletViewController: OWSViewController {
         // changed.
         advancedButton = addButton(
             OWSLocalizedString(
-                "OPENCSV_WALLET_ADVANCED",
-                comment: "Disclosure button revealing advanced chain configuration.",
+                "OPENCSV_WALLET_DETAILS",
+                comment: "Disclosure button revealing wallet and chain details.",
             ),
             action: #selector(didTapAdvanced),
         )
@@ -265,7 +352,21 @@ class OpenCsvWalletViewController: OWSViewController {
                 _ = try? await OpenCsvPayments.shared.syncAccount()
                 let summary = try await OpenCsvPayments.shared.walletSummary()
                 self.owner = summary.owner
-                self.balanceLabel.text = Self.renderHoldings(
+                let usdSummary = Self.usdSummary(
+                    summary.balances,
+                    instruments: summary.instruments,
+                )
+                self.balanceLabel.text = OpenCsvUsdAmount.format(usdSummary.total)
+                self.balanceStatusLabel.text = usdSummary.hasConfiguredIssuer
+                    ? OWSLocalizedString(
+                        "OPENCSV_WALLET_USD_READY",
+                        comment: "Status below the USD balance when at least one reviewed issuer is configured.",
+                    )
+                    : OWSLocalizedString(
+                        "OPENCSV_WALLET_USD_NOT_AVAILABLE",
+                        comment: "Status below the USD balance when this build has no reviewed issuer configured.",
+                    )
+                self.instrumentDetailsLabel.text = Self.renderHoldings(
                     summary.balances,
                     instruments: summary.instruments,
                 )
@@ -288,6 +389,10 @@ class OpenCsvWalletViewController: OWSViewController {
                     ),
                     "\(summary.feeReserve.totalSats)",
                     "\(summary.feeReserve.confirmedSats)",
+                )
+                self.updateFeeAction(
+                    totalSats: summary.feeReserve.totalSats,
+                    confirmedSats: summary.feeReserve.confirmedSats,
                 )
                 self.utxoLabel.text = summary.feeReserve.utxos.isEmpty
                     ? OWSLocalizedString(
@@ -334,7 +439,15 @@ class OpenCsvWalletViewController: OWSViewController {
                 self.spvPeersField.text = summary.spvPeers.joined(separator: ", ")
                 self.networkField.text = summary.network
             } catch {
-                self.balanceLabel.text = "\(error)"
+                self.balanceLabel.text = "—"
+                self.balanceStatusLabel.text = OWSLocalizedString(
+                    "OPENCSV_WALLET_SETUP_INCOMPLETE",
+                    comment: "Status shown when the OpenCSV wallet has not been provisioned on this device.",
+                )
+                self.operationHistoryLabel.text = OWSLocalizedString(
+                    "OPENCSV_WALLET_NO_ACTIVITY",
+                    comment: "Shown when there are no OpenCSV wallet operations yet.",
+                )
             }
         }
     }
@@ -435,6 +548,33 @@ class OpenCsvWalletViewController: OWSViewController {
         return sections.joined(separator: "\n\n")
     }
 
+    private struct UsdSummary {
+        let total: UInt64
+        let hasConfiguredIssuer: Bool
+    }
+
+    private static func usdSummary(
+        _ balances: [OpenCsvCredit],
+        instruments: [OpenCsvInstrumentRecord],
+    ) -> UsdSummary {
+        let trustedIds = Set(instruments.compactMap { instrument -> String? in
+            guard
+                instrument.profile == "trusted_usd_v1",
+                instrument.trustState == "trusted_configuration",
+                instrument.manifest?.terms.unitCode == "USD",
+                instrument.manifest?.terms.decimals == 6
+            else { return nil }
+            return instrument.assetId
+        })
+        let total = balances.lazy
+            .filter { trustedIds.contains($0.assetId) }
+            .reduce(UInt64(0)) { partial, balance in
+                let (combined, overflow) = partial.addingReportingOverflow(balance.amount)
+                return overflow ? UInt64.max : combined
+            }
+        return UsdSummary(total: total, hasConfiguredIssuer: !trustedIds.isEmpty)
+    }
+
     private static func displayAmount(_ baseUnits: UInt64, decimals: UInt8) -> String {
         guard decimals > 0 else { return "\(baseUnits)" }
         let divisor = (0..<decimals).reduce(UInt64(1)) { value, _ in value * 10 }
@@ -445,6 +585,29 @@ class OpenCsvWalletViewController: OWSViewController {
     }
 
     // MARK: - Actions
+
+    @objc
+    private func didTapReceive() {
+        let shouldShow = receiveDetailsStack.isHidden
+        setReceiveDetailsVisible(shouldShow)
+        if shouldShow {
+            setFeeReserveDetailsVisible(false)
+            setAdvancedVisible(false)
+        }
+    }
+
+    private func setReceiveDetailsVisible(_ isVisible: Bool) {
+        receiveDetailsStack.isHidden = !isVisible
+        receiveButton?.configuration?.title = isVisible
+            ? OWSLocalizedString(
+                "OPENCSV_WALLET_HIDE_RECEIVE",
+                comment: "Action for hiding the OpenCSV receiving code.",
+            )
+            : OWSLocalizedString(
+                "OPENCSV_WALLET_RECEIVE",
+                comment: "Action for revealing the OpenCSV receiving code.",
+            )
+    }
 
     @objc
     private func didTapCopyKey() {
@@ -488,22 +651,42 @@ class OpenCsvWalletViewController: OWSViewController {
 
     @objc
     private func didTapFeeReserveDetails() {
-        feeReserveDetailsStack.isHidden.toggle()
-        let key = feeReserveDetailsStack.isHidden
-            ? "OPENCSV_WALLET_SHOW_FUNDING_ADDRESS"
-            : "OPENCSV_WALLET_HIDE_FUNDING_ADDRESS"
-        feeReserveDetailsButton?.setTitle(
-            OWSLocalizedString(key, comment: "Button that toggles the Bitcoin fee-reserve funding address."),
-            for: .normal,
-        )
+        let shouldShow = feeReserveDetailsStack.isHidden
+        setFeeReserveDetailsVisible(shouldShow)
+        if shouldShow {
+            setReceiveDetailsVisible(false)
+            setAdvancedVisible(false)
+        }
+    }
+
+    private func setFeeReserveDetailsVisible(_ isVisible: Bool) {
+        feeReserveDetailsStack.isHidden = !isVisible
+        feeReserveDetailsButton?.configuration?.title = isVisible
+            ? OWSLocalizedString(
+                "OPENCSV_WALLET_HIDE_NETWORK_FEES",
+                comment: "Action for hiding Bitcoin fee-reserve details.",
+            )
+            : OWSLocalizedString(
+                "OPENCSV_WALLET_NETWORK_FEES",
+                comment: "Action for viewing and funding the Bitcoin fee reserve.",
+            )
     }
 
     @objc
     private func didTapAdvanced() {
-        advancedStack.isHidden.toggle()
-        let key = advancedStack.isHidden
-            ? "OPENCSV_WALLET_ADVANCED"
-            : "OPENCSV_WALLET_HIDE_ADVANCED"
+        let shouldShow = advancedStack.isHidden
+        setAdvancedVisible(shouldShow)
+        if shouldShow {
+            setReceiveDetailsVisible(false)
+            setFeeReserveDetailsVisible(false)
+        }
+    }
+
+    private func setAdvancedVisible(_ isVisible: Bool) {
+        advancedStack.isHidden = !isVisible
+        let key = isVisible
+            ? "OPENCSV_WALLET_HIDE_DETAILS"
+            : "OPENCSV_WALLET_DETAILS"
         advancedButton?.setTitle(
             OWSLocalizedString(key, comment: "Button that toggles advanced OpenCSV wallet settings."),
             for: .normal,
@@ -665,13 +848,68 @@ class OpenCsvWalletViewController: OWSViewController {
 
     // MARK: - Helpers
 
-    private func addHeader(_ text: String) {
+    private func addHeader(_ text: String, to parent: UIStackView? = nil) {
         let label = UILabel()
         label.text = text.uppercased()
         label.font = .dynamicTypeCaption1
         label.textColor = Theme.secondaryTextAndIconColor
-        stack.setCustomSpacing(24, after: stack.arrangedSubviews.last ?? label)
-        stack.addArrangedSubview(label)
+        let target = parent ?? stack
+        target.setCustomSpacing(24, after: target.arrangedSubviews.last ?? label)
+        target.addArrangedSubview(label)
+    }
+
+    private func makeActionButton(
+        title: String,
+        subtitle: String?,
+        imageName: String,
+        action: Selector,
+    ) -> UIButton {
+        let button = UIButton(type: .system)
+        var configuration = UIButton.Configuration.gray()
+        configuration.title = title
+        configuration.subtitle = subtitle
+        configuration.image = UIImage(systemName: imageName)
+        configuration.imagePlacement = .top
+        configuration.imagePadding = 8
+        configuration.baseForegroundColor = Theme.primaryTextColor
+        configuration.cornerStyle = .large
+        configuration.contentInsets = NSDirectionalEdgeInsets(
+            top: 14,
+            leading: 12,
+            bottom: 14,
+            trailing: 12,
+        )
+        button.configuration = configuration
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 92).isActive = true
+        return button
+    }
+
+    private func updateFeeAction(totalSats: UInt64, confirmedSats: UInt64) {
+        let subtitle: String
+        if totalSats == 0 {
+            subtitle = OWSLocalizedString(
+                "OPENCSV_WALLET_FEES_EMPTY",
+                comment: "Network-fee action subtitle when the Bitcoin fee reserve is empty.",
+            )
+        } else if confirmedSats == 0 {
+            subtitle = String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_FEES_PENDING_FORMAT",
+                    comment: "Network-fee action subtitle for unconfirmed sats. Embeds {{ total sats }}.",
+                ),
+                "\(totalSats)",
+            )
+        } else {
+            subtitle = String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_FEES_READY_FORMAT",
+                    comment: "Network-fee action subtitle for confirmed sats. Embeds {{ confirmed sats }}.",
+                ),
+                "\(confirmedSats)",
+            )
+        }
+        feeReserveDetailsButton?.configuration?.subtitle = subtitle
     }
 
     @discardableResult

@@ -6808,11 +6808,23 @@
 /* Disclosure button revealing advanced chain configuration. */
 "OPENCSV_WALLET_ADVANCED" = "Show advanced settings";
 
+/* Disclosure button revealing wallet, issuer, recovery, and chain details. */
+"OPENCSV_WALLET_DETAILS" = "Wallet details";
+
+/* Disclosure button hiding wallet, issuer, recovery, and chain details. */
+"OPENCSV_WALLET_HIDE_DETAILS" = "Hide wallet details";
+
 /* Disclosure button hiding advanced chain configuration. */
 "OPENCSV_WALLET_HIDE_ADVANCED" = "Hide advanced settings";
 
 /* Section header for receiving payments (this wallet's key). */
 "OPENCSV_WALLET_RECEIVE" = "Receive";
+
+/* Heading above the OpenCSV receiving QR code. */
+"OPENCSV_WALLET_RECEIVE_USD" = "Receive USD";
+
+/* Action for hiding the OpenCSV receiving QR code. */
+"OPENCSV_WALLET_HIDE_RECEIVE" = "Hide receive code";
 
 /* Abbreviated OpenCSV receiving key. Embeds key prefix and key suffix. */
 "OPENCSV_WALLET_RECEIVE_KEY_FORMAT" = "%1$@…%2$@ · tap to copy";
@@ -6829,6 +6841,18 @@
 /* State shown when no reviewed USD issuer manifests are configured. */
 "OPENCSV_WALLET_NO_TRUSTED_USD_ISSUERS" = "No reviewed USD issuers configured";
 
+/* Status below the USD balance when at least one reviewed issuer is configured. */
+"OPENCSV_WALLET_USD_READY" = "Available balance";
+
+/* Status below the USD balance when this build has no reviewed issuer configured. */
+"OPENCSV_WALLET_USD_NOT_AVAILABLE" = "USD is not available in this build yet";
+
+/* Status shown while the OpenCSV wallet is loading. */
+"OPENCSV_WALLET_CHECKING" = "Checking wallet…";
+
+/* Status shown when the OpenCSV wallet has not been provisioned on this device. */
+"OPENCSV_WALLET_SETUP_INCOMPLETE" = "Finish wallet setup to see your balance";
+
 /* Count of configured issuer instruments under USD. Embeds the issuer count. */
 "OPENCSV_WALLET_USD_ISSUER_COUNT_FORMAT" = "%@ reviewed issuer instrument(s)";
 
@@ -6843,6 +6867,21 @@
 
 /* Section header for the Bitcoin reserve used only for OpenCSV protocol fees. */
 "OPENCSV_WALLET_FEE_RESERVE" = "Bitcoin fee reserve";
+
+/* Action and heading for the Bitcoin reserve used only for OpenCSV protocol fees. */
+"OPENCSV_WALLET_NETWORK_FEES" = "Network fees";
+
+/* Action for hiding the Bitcoin fee-reserve details. */
+"OPENCSV_WALLET_HIDE_NETWORK_FEES" = "Hide network fees";
+
+/* Network-fee action subtitle when the Bitcoin fee reserve is empty. */
+"OPENCSV_WALLET_FEES_EMPTY" = "Add signet sats";
+
+/* Network-fee action subtitle for unconfirmed sats. Embeds the total sats. */
+"OPENCSV_WALLET_FEES_PENDING_FORMAT" = "%1$@ sats pending";
+
+/* Network-fee action subtitle for confirmed sats. Embeds the confirmed sats. */
+"OPENCSV_WALLET_FEES_READY_FORMAT" = "%1$@ sats ready";
 
 /* Explanation of the restricted Bitcoin fee reserve. */
 "OPENCSV_WALLET_FEE_RESERVE_EXPLANATION" = "Used only to anchor OpenCSV operations. This wallet cannot send Bitcoin to arbitrary recipients.";
