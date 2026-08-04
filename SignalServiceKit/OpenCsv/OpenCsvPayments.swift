@@ -1439,10 +1439,10 @@ public actor OpenCsvPayments {
             watchExternalDescriptor: settings.linked?.externalDescriptor,
             watchInternalDescriptor: settings.linked?.internalDescriptor,
             watchOwner: settings.linked?.owner,
-            // Deliberately empty until an issuer publishes an exact,
-            // reviewed manifest. Never manufacture an OpenCSV or Tether
-            // identity from a ticker, and never put issuer keys in Signal.
-            usdIssuers: [],
+            // Exact public manifests reviewed into this build. The signet
+            // preview is test-only; mainnet deliberately remains empty.
+            // Issuer keys and issuance operations never enter Signal.
+            usdIssuers: OpenCsvReviewedUsdIssuers.policies(for: settings.network),
         )
         let account = try OpenCsvAccountWallet(
             config: config,

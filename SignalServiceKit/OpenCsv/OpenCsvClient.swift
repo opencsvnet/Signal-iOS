@@ -98,6 +98,39 @@ public struct OpenCsvUsdIssuerPolicy: Codable, Equatable {
     }
 }
 
+/// Public issuer identities reviewed into this build. These entries grant
+/// wallet presentation trust only; they contain no issuer secret and cannot
+/// authorize minting. Mainnet remains empty until an issuer relationship and
+/// manifest have received a separate production review.
+public enum OpenCsvReviewedUsdIssuers {
+    public static func policies(for network: String) -> [OpenCsvUsdIssuerPolicy] {
+        guard network == "signet" else { return [] }
+        return [
+            OpenCsvUsdIssuerPolicy(
+                manifest: OpenCsvInstrumentManifest(
+                    terms: OpenCsvInstrumentTerms(
+                        network: "signet",
+                        displayName: "OpenCSV USD Preview",
+                        unitCode: "USD",
+                        decimals: 6,
+                        issuerName: "OpenCSV Preview Issuer",
+                        termsUri: "https://opencsv.net/usd-preview/terms-v1",
+                        redemptionSummary: "Test-only units with no monetary value; not redeemable for dollars or USDT.",
+                        testOnly: true,
+                    ),
+                    genesis: .init(
+                        issuerPk: [226, 105, 214, 37, 119, 106, 218, 34, 250, 56, 114, 13, 17, 174, 51, 115, 254, 25, 253, 22, 249, 142, 75, 9, 95, 4, 45, 16, 59, 88, 197, 23],
+                        currencyCode: Array("USD".utf8),
+                        termsHash: [94, 85, 229, 66, 220, 52, 56, 13, 53, 48, 201, 83, 61, 40, 101, 90, 67, 49, 125, 115, 35, 212, 140, 90, 208, 161, 74, 111, 128, 30, 71, 100],
+                        nonce: 1,
+                    ),
+                ),
+                priority: 0,
+            ),
+        ]
+    }
+}
+
 /// Exact instrument identity and local trust classification. Proof validity
 /// never upgrades `trustState`; that is a separate recipient decision.
 public struct OpenCsvInstrumentRecord: Codable, Equatable {

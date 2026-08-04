@@ -827,6 +827,29 @@ final class OpenCsvWalletStoreTest {
     }
 }
 
+struct OpenCsvReviewedUsdIssuersTest {
+    @Test
+    func signetPinsTheExactTestOnlyPreviewManifest() throws {
+        let policies = OpenCsvReviewedUsdIssuers.policies(for: "signet")
+        #expect(policies.count == 1)
+        let policy = try #require(policies.first)
+        #expect(policy.priority == 0)
+        #expect(policy.manifest.terms.network == "signet")
+        #expect(policy.manifest.terms.unitCode == "USD")
+        #expect(policy.manifest.terms.decimals == 6)
+        #expect(policy.manifest.terms.testOnly)
+        #expect(policy.manifest.genesis.currencyCode == Array("USD".utf8))
+        #expect(policy.manifest.genesis.issuerPk.count == 32)
+        #expect(policy.manifest.genesis.termsHash.count == 32)
+    }
+
+    @Test
+    func productionNetworksDoNotTrustThePreviewIssuer() {
+        #expect(OpenCsvReviewedUsdIssuers.policies(for: "mainnet").isEmpty)
+        #expect(OpenCsvReviewedUsdIssuers.policies(for: "regtest").isEmpty)
+    }
+}
+
 /// Exercises the real Rust FFI linked into SignalServiceKit.
 struct OpenCsvClientFfiTest {
     private func accountConfig(backupVerified: Bool = false) -> OpenCsvAccountConfig {
