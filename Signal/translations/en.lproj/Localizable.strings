@@ -6823,74 +6823,23 @@
 /* Section header for the assets held by the OpenCSV wallet. */
 "OPENCSV_WALLET_ASSETS" = "Assets";
 
-/* Button opening the fixed USD preview issuer control. */
-"OPENCSV_WALLET_ISSUER_TOOLS" = "USD preview issuer";
+/* Disclosure that one USD product can contain exact issuer-specific claims. */
+"OPENCSV_WALLET_USD_DISCLOSURE" = "One wallet balance · issuer-specific claims are kept distinct";
 
-/* Disclosure that USD Preview is a valueless signet test and not USDT. */
-"OPENCSV_WALLET_USD_PREVIEW_DISCLOSURE" = "Test only · no monetary value · not USDT";
+/* State shown when no reviewed USD issuer manifests are configured. */
+"OPENCSV_WALLET_NO_TRUSTED_USD_ISSUERS" = "No reviewed USD issuers configured";
 
-/* State shown before the USD preview issuer definition exists. */
-"OPENCSV_WALLET_USD_PREVIEW_NOT_ACTIVATED" = "Activates on the first issuance";
+/* Count of configured issuer instruments under USD. Embeds the issuer count. */
+"OPENCSV_WALLET_USD_ISSUER_COUNT_FORMAT" = "%@ reviewed issuer instrument(s)";
 
-/* Title for a manifested custom instrument no longer supported by the preview wallet. */
-"OPENCSV_WALLET_UNSUPPORTED_INSTRUMENT" = "Read-only custom prototype";
+/* Title for a manifested instrument outside the reviewed issuer configuration. */
+"OPENCSV_WALLET_UNTRUSTED_INSTRUMENT" = "Untrusted issuer claim";
 
 /* Title for a legacy asset with no committed instrument manifest. */
 "OPENCSV_WALLET_PROTOTYPE_ASSET" = "Unverified prototype asset";
 
 /* Warning label for a test-only instrument. */
 "OPENCSV_WALLET_TEST_INSTRUMENT" = "Test only · no monetary value";
-
-/* Title of the fixed USD preview issuer screen. */
-"OPENCSV_ISSUER_TOOLS_TITLE" = "USD Preview";
-
-/* Explanation of the fixed, test-only USD preview issuer action. */
-"OPENCSV_ISSUER_TOOLS_EXPLANATION" = "OpenCSV currently supports one built-in test instrument. Its definition is fixed in the wallet; only the issuance amount is editable.";
-
-/* Section title for the fixed USD preview instrument. */
-"OPENCSV_ISSUER_INSTRUMENTS" = "Built-in instrument";
-
-/* Warning that production instrument activation needs explicit owner approval. */
-"OPENCSV_ISSUER_MAINNET_DISABLED" = "USD Preview cannot be issued on mainnet. A production issuer requires a separately authenticated asset version and explicit owner approval.";
-
-/* Button opening an instrument's complete terms document. */
-"OPENCSV_ISSUER_OPEN_TERMS" = "Open complete terms";
-
-/* Button issuing the fixed test-only USD preview instrument. */
-"OPENCSV_ISSUER_ISSUE_UNITS" = "Issue test USD";
-
-/* Placeholder for a human USD preview amount. */
-"OPENCSV_ISSUER_BASE_UNITS_PLACEHOLDER" = "0.00 USD";
-
-/* Warning shown before issuing test-only USD preview units. */
-"OPENCSV_ISSUER_USD_PREVIEW_WARNING" = "These signet units have no monetary value and are not dollars or USDT. The first issuance activates the fixed definition and secures it in Signal Backup.";
-
-/* Instruction to open USD issuance from a Signal conversation. */
-"OPENCSV_ISSUER_CONVERSATION_REQUIRED" = "Open the wallet from a Signal conversation to issue and deliver USD Preview.";
-
-/* Button confirming an exact instrument issuance. */
-"OPENCSV_ISSUER_REVIEW_ISSUANCE" = "Issue USD Preview";
-
-/* Confirmation after instrument units are issued and delivery is queued. */
-"OPENCSV_ISSUER_ISSUANCE_COMMITTED" = "Issuance committed and receipt queued.";
-
-/* Title of the instrument definition form. */
-"OPENCSV_ISSUER_DEFINE_INSTRUMENT" = "Define instrument";
-
-/* Warning that signet and regtest instruments are valueless tests. */
-"OPENCSV_ISSUER_TEST_DEFINITION_WARNING" = "This definition is test-only and represents no backing or monetary value. A unit code is a label, not an asset identity.";
-
-/* Button reviewing an instrument definition before activation. */
-"OPENCSV_ISSUER_REVIEW_DEFINITION" = "Review definition";
-
-/* Confirmation creating the reviewed instrument definition. */
-"OPENCSV_ISSUER_CREATE_DEFINITION" = "Create definition";
-
-/* Error shown when an instrument definition is incomplete. */
-"OPENCSV_ISSUER_DEFINITION_INCOMPLETE" = "Complete every field and enter decimals from 0 through 18.";
-
-/* Error shown for an invalid unit code or terms URL. */
-"OPENCSV_ISSUER_DEFINITION_INVALID" = "Use exactly three uppercase letters for the unit code and an HTTPS terms URL.";
 
 /* Section header for the Bitcoin reserve used only for OpenCSV protocol fees. */
 "OPENCSV_WALLET_FEE_RESERVE" = "Bitcoin fee reserve";
@@ -6911,7 +6860,7 @@
 "OPENCSV_WALLET_FEE_ADDRESS_COPIED" = "Fee-reserve address copied.";
 
 /* Error shown when the Bitcoin fee reserve cannot yet fund an OpenCSV operation. Embeds the minimum output value in sats. */
-"OPENCSV_WALLET_FEE_RESERVE_REQUIRED_FORMAT" = "Add at least %1$@ sats to the fee-reserve address and wait for confirmation before issuing or sending.";
+"OPENCSV_WALLET_FEE_RESERVE_REQUIRED_FORMAT" = "Add at least %1$@ sats to the fee-reserve address and wait for confirmation before sending.";
 
 /* Section header for OpenCSV wallet operation history. */
 "OPENCSV_WALLET_ACTIVITY" = "Activity";
@@ -7000,8 +6949,17 @@
 /* Error shown when the recipient key is not valid hex. */
 "OPENCSV_SEND_ERROR_BAD_RECIPIENT" = "That recipient key is not valid.";
 
-/* Error shown if the exact built-in USD Preview identity cannot be resolved. */
-"OPENCSV_SEND_ERROR_MULTIPLE_ASSETS" = "USD Preview identity is unavailable. Refresh Wallet and try again.";
+/* Error shown when USD is sufficient only by combining issuers. Embeds the total USD. */
+"OPENCSV_SEND_ERROR_ISSUER_SPLIT_FORMAT" = "You have %@ USD across multiple issuers, but this version sends from one issuer at a time. Send a smaller amount.";
+
+/* Title reviewing an issuer-specific USD payment. */
+"OPENCSV_SEND_REVIEW_TITLE" = "Review USD payment";
+
+/* USD send review naming the exact issuer. Embeds amount and issuer name. */
+"OPENCSV_SEND_REVIEW_ISSUER_FORMAT" = "Send %1$@ USD issued by %2$@? The receipt will record this exact issuer.";
+
+/* Button confirming an issuer-specific USD payment. */
+"OPENCSV_SEND_CONFIRM" = "Send";
 
 /* Status shown when the recipient key was prefilled. Embeds {{ who announced it }}. */
 "OPENCSV_SEND_RECIPIENT_FROM_CHAT_FORMAT" = "Using the key shared by %@.";
@@ -7013,7 +6971,7 @@
 "OPENCSV_SEND_NO_BALANCE" = "No balance";
 
 /* Explanation shown in the OpenCSV send sheet when the wallet has no assets. */
-"OPENCSV_SEND_EMPTY_STATE" = "No spendable USD Preview yet. Open Wallet from this conversation and issue test USD first.";
+"OPENCSV_SEND_EMPTY_STATE" = "No spendable USD yet. Signal cannot mint it; receive USD from a reviewed issuer first.";
 
 /* Placeholder for the recipient owner key field in the OpenCSV send sheet. */
 "OPENCSV_SEND_RECIPIENT_PLACEHOLDER" = "Recipient owner key (hex)";

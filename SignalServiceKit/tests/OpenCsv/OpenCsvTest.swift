@@ -68,82 +68,156 @@ struct OpenCsvSecureBackupValidationTest {
 }
 
 struct OpenCsvSendAssetSelectionTest {
-    private let usd = OpenCsvCredit(
+    private let openCsvUsd = OpenCsvCredit(
         assetId: String(repeating: "11", count: 32),
         currency: "USD",
         amount: 40,
     )
-    private let eur = OpenCsvCredit(
+    private let tetherUsd = OpenCsvCredit(
         assetId: String(repeating: "22", count: 32),
-        currency: "EUR",
-        amount: 25,
+        currency: "USD",
+        amount: 100,
     )
 
-    @Test
-    func singleAssetNeedsNoExplicitChoice() throws {
-        #expect(try OpenCsvPayments.resolveSendAsset([usd], requestedAssetId: nil) == usd)
+    private func instrument(
+        assetId: String,
+        issuer: String,
+        priority: UInt32,
+        profile: String = "trusted_usd_v1",
+        trustState: String = "trusted_configuration",
+    ) -> OpenCsvInstrumentRecord {
+        OpenCsvInstrumentRecord(
+            assetId: assetId,
+            trustState: trustState,
+            profile: profile,
+            issuerPriority: priority,
+            manifest: OpenCsvInstrumentManifest(
+                terms: OpenCsvInstrumentTerms(
+                    network: "signet",
+                    displayName: "\(issuer) USD",
+                    unitCode: "USD",
+                    decimals: 6,
+                    issuerName: issuer,
+                    termsUri: "https://example.com/terms",
+                    redemptionSummary: "test",
+                    testOnly: true,
+                ),
+                genesis: .init(
+                    issuerPk: Array(repeating: 1, count: 32),
+                    currencyCode: Array("USD".utf8),
+                    termsHash: Array(repeating: 2, count: 32),
+                    nonce: UInt64(priority),
+                ),
+            ),
+        )
     }
 
     @Test
-    func multipleAssetsResolveOnlyTheExactChoice() throws {
-        #expect(try OpenCsvPayments.resolveSendAsset(
-            [usd, eur],
-            requestedAssetId: eur.assetId,
-        ) == eur)
+    func priorityChoosesFirstIssuerThatCoversTheWholeSend() throws {
+        let instruments = [
+            instrument(assetId: openCsvUsd.assetId, issuer: "OpenCSV", priority: 0),
+            instrument(assetId: tetherUsd.assetId, issuer: "Tether", priority: 10),
+        ]
+        #expect(try OpenCsvPayments.resolveUsdSendAsset(
+            [tetherUsd, openCsvUsd],
+            instruments: instruments,
+            amount: 30,
+            requestedAssetId: nil,
+        ).credit == openCsvUsd)
+        #expect(try OpenCsvPayments.resolveUsdSendAsset(
+            [openCsvUsd, tetherUsd],
+            instruments: instruments,
+            amount: 50,
+            requestedAssetId: nil,
+        ).credit == tetherUsd)
     }
 
     @Test
-    func multipleAssetsWithoutChoiceReportsStableIds() {
+    func exactReviewedIssuerChoiceNeverFallsThrough() throws {
+        let instruments = [
+            instrument(assetId: openCsvUsd.assetId, issuer: "OpenCSV", priority: 0),
+            instrument(assetId: tetherUsd.assetId, issuer: "Tether", priority: 10),
+        ]
+        #expect(try OpenCsvPayments.resolveUsdSendAsset(
+            [openCsvUsd, tetherUsd],
+            instruments: instruments,
+            amount: 20,
+            requestedAssetId: tetherUsd.assetId,
+        ).credit == tetherUsd)
+    }
+
+    @Test
+    func neverSilentlyCombinesIssuerClaims() {
+        let smallerTether = OpenCsvCredit(
+            assetId: tetherUsd.assetId,
+            currency: "USD",
+            amount: 25,
+        )
         do {
-            _ = try OpenCsvPayments.resolveSendAsset([eur, usd], requestedAssetId: nil)
-            Issue.record("expected an explicit asset choice")
-        } catch OpenCsvPaymentsError.assetNotSpecified(let available) {
-            #expect(available == [usd.assetId, eur.assetId])
+            _ = try OpenCsvPayments.resolveUsdSendAsset(
+                [openCsvUsd, smallerTether],
+                instruments: [
+                    instrument(assetId: openCsvUsd.assetId, issuer: "OpenCSV", priority: 0),
+                    instrument(assetId: tetherUsd.assetId, issuer: "Tether", priority: 10),
+                ],
+                amount: 60,
+                requestedAssetId: nil,
+            )
+            Issue.record("expected an issuer split rejection")
+        } catch OpenCsvPaymentsError.issuerSplitRequired(let totalAvailable) {
+            #expect(totalAvailable == 65)
         } catch {
             Issue.record("unexpected error: \(error)")
         }
     }
 
     @Test
-    func emptyOrStaleChoiceNeverSelectsAnotherAsset() {
-        for (assets, requested) in [
-            ([OpenCsvCredit](), nil),
-            ([usd, eur], String(repeating: "33", count: 32)),
-        ] {
-            do {
-                _ = try OpenCsvPayments.resolveSendAsset(assets, requestedAssetId: requested)
-                Issue.record("expected zero available funds")
-            } catch OpenCsvPaymentsError.insufficientFunds(let available) {
-                #expect(available == 0)
-            } catch {
-                Issue.record("unexpected error: \(error)")
-            }
+    func untrustedTickerLookalikeAndStaleChoiceAreExcluded() {
+        let untrusted = instrument(
+            assetId: openCsvUsd.assetId,
+            issuer: "Impostor",
+            priority: 0,
+            profile: "untrusted_manifest",
+            trustState: "untrusted",
+        )
+        do {
+            _ = try OpenCsvPayments.resolveUsdSendAsset(
+                [openCsvUsd],
+                instruments: [untrusted],
+                amount: 1,
+                requestedAssetId: String(repeating: "33", count: 32),
+            )
+            Issue.record("expected zero trusted funds")
+        } catch OpenCsvPaymentsError.insufficientFunds(let available) {
+            #expect(available == 0)
+        } catch {
+            Issue.record("unexpected error: \(error)")
         }
     }
 }
 
-struct OpenCsvUsdPreviewAmountTest {
+struct OpenCsvUsdAmountTest {
     @Test
     func parsesHumanAmountsExactly() {
-        #expect(OpenCsvUsdPreviewAmount.parse("1") == 1_000_000)
-        #expect(OpenCsvUsdPreviewAmount.parse("1.25") == 1_250_000)
-        #expect(OpenCsvUsdPreviewAmount.parse("0.000001") == 1)
-        #expect(OpenCsvUsdPreviewAmount.parse(" 42.5 ") == 42_500_000)
+        #expect(OpenCsvUsdAmount.parse("1") == 1_000_000)
+        #expect(OpenCsvUsdAmount.parse("1.25") == 1_250_000)
+        #expect(OpenCsvUsdAmount.parse("0.000001") == 1)
+        #expect(OpenCsvUsdAmount.parse(" 42.5 ") == 42_500_000)
     }
 
     @Test
     func rejectsAmbiguousInvalidOrOverflowingAmounts() {
         for invalid in ["", ".5", "1.", "-1", "1.0000001", "1,25", "USD 1"] {
-            #expect(OpenCsvUsdPreviewAmount.parse(invalid) == nil)
+            #expect(OpenCsvUsdAmount.parse(invalid) == nil)
         }
-        #expect(OpenCsvUsdPreviewAmount.parse("18446744073709551615") == nil)
+        #expect(OpenCsvUsdAmount.parse("18446744073709551615") == nil)
     }
 
     @Test
     func formatsWithoutInventingPrecision() {
-        #expect(OpenCsvUsdPreviewAmount.format(0) == "0")
-        #expect(OpenCsvUsdPreviewAmount.format(1) == "0.000001")
-        #expect(OpenCsvUsdPreviewAmount.format(1_250_000) == "1.25")
+        #expect(OpenCsvUsdAmount.format(0) == "0")
+        #expect(OpenCsvUsdAmount.format(1) == "0.000001")
+        #expect(OpenCsvUsdAmount.format(1_250_000) == "1.25")
     }
 }
 

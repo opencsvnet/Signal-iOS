@@ -62,10 +62,40 @@ public struct OpenCsvInstrumentManifest: Codable, Equatable {
         public let currencyCode: [UInt8]
         public let termsHash: [UInt8]
         public let nonce: UInt64
+
+        public init(
+            issuerPk: [UInt8],
+            currencyCode: [UInt8],
+            termsHash: [UInt8],
+            nonce: UInt64,
+        ) {
+            self.issuerPk = issuerPk
+            self.currencyCode = currencyCode
+            self.termsHash = termsHash
+            self.nonce = nonce
+        }
     }
 
     public let terms: OpenCsvInstrumentTerms
     public let genesis: Genesis
+
+    public init(terms: OpenCsvInstrumentTerms, genesis: Genesis) {
+        self.terms = terms
+        self.genesis = genesis
+    }
+}
+
+/// One issuer-specific instrument admitted under Signal's single USD
+/// product. The manifest is public; issuer signing material never enters
+/// Signal. Lower priorities are preferred when one issuer can cover a send.
+public struct OpenCsvUsdIssuerPolicy: Codable, Equatable {
+    public let manifest: OpenCsvInstrumentManifest
+    public let priority: UInt32
+
+    public init(manifest: OpenCsvInstrumentManifest, priority: UInt32 = 0) {
+        self.manifest = manifest
+        self.priority = priority
+    }
 }
 
 /// Exact instrument identity and local trust classification. Proof validity
@@ -76,12 +106,13 @@ public struct OpenCsvInstrumentRecord: Codable, Equatable {
     /// Wallet product policy, assigned by Rust from the exact committed
     /// manifest. Swift never infers identity from the `USD` display code.
     public let profile: String
+    public let issuerPriority: UInt32?
     public let manifest: OpenCsvInstrumentManifest?
 }
 
-/// Exact decimal conversion for the built-in USD Preview presentation. The
-/// protocol stores six-decimal base units; UI code never uses floating point.
-public enum OpenCsvUsdPreviewAmount {
+/// Exact decimal conversion for Signal's USD product. The protocol stores
+/// six-decimal base units; UI code never uses floating point.
+public enum OpenCsvUsdAmount {
     public static let baseUnitsPerUnit: UInt64 = 1_000_000
 
     public static func parse(_ rawValue: String) -> UInt64? {
@@ -187,6 +218,10 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
     public let watchExternalDescriptor: String?
     public let watchInternalDescriptor: String?
     public let watchOwner: String?
+    /// Reviewed, public issuer manifests admitted under the single USD
+    /// product. App review/configuration is the current trust root; this
+    /// never contains issuer secrets or enables issuance.
+    public let usdIssuers: [OpenCsvUsdIssuerPolicy]
 
     public init(
         version: UInt32 = 1,
@@ -205,6 +240,7 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         watchExternalDescriptor: String? = nil,
         watchInternalDescriptor: String? = nil,
         watchOwner: String? = nil,
+        usdIssuers: [OpenCsvUsdIssuerPolicy] = [],
     ) {
         self.version = version
         self.network = network
@@ -222,6 +258,7 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         self.watchExternalDescriptor = watchExternalDescriptor
         self.watchInternalDescriptor = watchInternalDescriptor
         self.watchOwner = watchOwner
+        self.usdIssuers = usdIssuers
     }
 }
 
@@ -273,6 +310,8 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
     public let watchDescriptors: WatchDescriptors
     public let backupVerified: Bool
     public let writeEnabled: Bool
+    /// Always false for Signal's owner-only wallet boundary.
+    public let issuanceEnabled: Bool
     public let deviceBinding: DeviceBinding
     public let syncProvenance: SyncProvenance
     public let rootFingerprint: String
@@ -296,13 +335,6 @@ public struct OpenCsvPreparedOperation: Codable, Equatable {
     public let toOwner: String?
     public let checkpointHash: String
     public let backupAckRequired: Bool
-}
-
-public struct OpenCsvCreatedInstrument: Codable, Equatable {
-    public let assetId: String
-    public let manifest: OpenCsvInstrumentManifest
-    public let checkpointHash: String
-    public let backupRequired: Bool
 }
 
 public struct OpenCsvAccountOperation: Codable, Equatable {
@@ -476,28 +508,6 @@ public final class OpenCsvAccountWallet {
                 ))
             }
         }
-    }
-
-    /// Ensure the fixed test-only USD preview definition exists. No custom
-    /// terms cross the FFI boundary.
-    public func ensurePreviewUsd() throws -> OpenCsvCreatedInstrument {
-        try Self.take(opencsv_preview_usd_ensure(handle))
-    }
-
-    public func prepareIssuance(
-        assetId: String,
-        amounts: [UInt64],
-        toOwner: String? = nil,
-    ) throws -> OpenCsvPreparedOperation {
-        struct Request: Codable {
-            let assetId: String
-            let toOwner: String?
-            let amounts: [UInt64]
-        }
-        return try callJson(
-            Request(assetId: assetId, toOwner: toOwner, amounts: amounts),
-            opencsv_issuance_prepare,
-        )
     }
 
     public func prepareTransfer(assetId: String, toOwner: String, amount: UInt64) throws -> OpenCsvPreparedOperation {

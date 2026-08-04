@@ -25,7 +25,9 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private let errorLabel = UILabel()
 
     private var resolvedRecipientKey: String?
-    private var selectedAssetId: String?
+    private var usdBalances = [OpenCsvCredit]()
+    private var usdInstruments = [OpenCsvInstrumentRecord]()
+    private var hasUsdBalance = false
 
     init(thread: TSThread) {
         self.thread = thread
@@ -166,11 +168,19 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             do {
                 _ = try? await OpenCsvPayments.shared.syncAccount()
                 let summary = try await OpenCsvPayments.shared.walletSummary()
-                let usdInstrument = summary.instruments.first { $0.profile == "usd_preview_v1" }
-                let usdBalance = usdInstrument.flatMap { instrument in
-                    summary.balances.first { $0.assetId == instrument.assetId }
+                let trustedUsd = summary.instruments.filter {
+                    $0.profile == "trusted_usd_v1"
+                        && $0.trustState == "trusted_configuration"
+                        && $0.manifest?.terms.unitCode == "USD"
+                        && $0.manifest?.terms.decimals == 6
                 }
-                self.balanceLabel.text = usdBalance == nil
+                let trustedIds = Set(trustedUsd.map(\.assetId))
+                let usdBalances = summary.balances.filter { trustedIds.contains($0.assetId) }
+                let total = usdBalances.reduce(UInt64(0)) { partial, credit in
+                    let (combined, overflow) = partial.addingReportingOverflow(credit.amount)
+                    return overflow ? UInt64.max : combined
+                }
+                self.balanceLabel.text = total == 0
                     ? OWSLocalizedString(
                         "OPENCSV_SEND_EMPTY_STATE",
                         comment: "Explanation shown in the OpenCSV send sheet when the wallet has no assets.",
@@ -180,11 +190,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                             "OPENCSV_SEND_BALANCE_FORMAT",
                             comment: "Balance line on the send sheet. Embeds {{ the balance }}.",
                         ),
-                        "\(OpenCsvUsdPreviewAmount.format(usdBalance?.amount ?? 0)) USD Preview",
+                        "\(OpenCsvUsdAmount.format(total)) USD",
                     )
-                self.balanceLabel.font = usdBalance == nil ? .dynamicTypeBody : .dynamicTypeFootnote
-                self.balanceLabel.textAlignment = usdBalance == nil ? .center : .natural
-                self.configureUsdAsset(summary.balances, instruments: summary.instruments)
+                self.balanceLabel.font = total == 0 ? .dynamicTypeBody : .dynamicTypeFootnote
+                self.balanceLabel.textAlignment = total == 0 ? .center : .natural
+                self.configureUsdProduct(usdBalances, instruments: trustedUsd)
                 self.resolveRecipient(ownKey: summary.owner)
             } catch {
                 self.showError("\(error)")
@@ -192,14 +202,15 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         }
     }
 
-    /// Select only the exact Rust-classified USD Preview identity. Legacy or
-    /// custom assets never enter the send form, even if their label is USD.
-    private func configureUsdAsset(
+    /// Show one USD product while retaining exact issuer instruments for
+    /// deterministic selection and review. Ticker lookalikes never enter it.
+    private func configureUsdProduct(
         _ balances: [OpenCsvCredit],
         instruments: [OpenCsvInstrumentRecord],
     ) {
-        let usdAssetId = instruments.first { $0.profile == "usd_preview_v1" }?.assetId
-        selectedAssetId = balances.first { $0.assetId == usdAssetId }?.assetId
+        usdBalances = balances
+        usdInstruments = instruments
+        hasUsdBalance = balances.contains { $0.amount > 0 }
         renderFormAvailability()
     }
 
@@ -207,12 +218,12 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     /// invite an amount or show a blue send action until an exact asset and
     /// recipient are both available.
     private func renderFormAvailability() {
-        let hasAssets = selectedAssetId != nil
+        let hasAssets = hasUsdBalance
         amountField.isHidden = !hasAssets
         recipientLabel.isHidden = !hasAssets
         shareKeyButton.isHidden = !hasAssets || resolvedRecipientKey != nil
         sendButton.isHidden = !hasAssets || resolvedRecipientKey == nil
-        sendButton.isEnabled = hasAssets && selectedAssetId != nil && resolvedRecipientKey != nil
+        sendButton.isEnabled = hasAssets && resolvedRecipientKey != nil
         if !hasAssets {
             errorLabel.text = nil
             amountField.resignFirstResponder()
@@ -315,7 +326,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         guard let recipient = resolvedRecipientKey else { return }
         guard
             let amountText = amountField.text,
-            let amount = OpenCsvUsdPreviewAmount.parse(amountText),
+            let amount = OpenCsvUsdAmount.parse(amountText),
             amount > 0
         else {
             showError(OWSLocalizedString(
@@ -324,13 +335,53 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             ))
             return
         }
-        guard let selectedAssetId else {
-            showError(OWSLocalizedString(
-                "OPENCSV_SEND_NO_BALANCE",
-                comment: "Error shown when no spendable USD Preview balance exists.",
-            ))
+        let selection: OpenCsvUsdSendSelection
+        do {
+            selection = try OpenCsvPayments.resolveUsdSendAsset(
+                usdBalances,
+                instruments: usdInstruments,
+                amount: amount,
+                requestedAssetId: nil,
+            )
+        } catch {
+            showError(Self.userFacingMessage(for: error))
             return
         }
+        let issuer = selection.instrument.manifest?.terms.issuerName ?? "Unknown issuer"
+        let format = OWSLocalizedString(
+            "OPENCSV_SEND_REVIEW_ISSUER_FORMAT",
+            comment: "USD send review naming the exact issuer. Embeds amount and issuer name.",
+        )
+        let alert = UIAlertController(
+            title: OWSLocalizedString(
+                "OPENCSV_SEND_REVIEW_TITLE",
+                comment: "Title reviewing an issuer-specific USD payment.",
+            ),
+            message: String.nonPluralLocalizedStringWithFormat(
+                format,
+                OpenCsvUsdAmount.format(amount),
+                issuer,
+            ),
+            preferredStyle: .alert,
+        )
+        alert.addAction(UIAlertAction(title: CommonStrings.cancelButton, style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: OWSLocalizedString(
+                "OPENCSV_SEND_CONFIRM",
+                comment: "Button confirming an issuer-specific USD payment.",
+            ),
+            style: .default,
+        ) { [weak self] _ in
+            self?.send(
+                amount: amount,
+                recipient: recipient,
+                assetId: selection.credit.assetId,
+            )
+        })
+        present(alert, animated: true)
+    }
+
+    private func send(amount: UInt64, recipient: String, assetId: String) {
         // Past proving, the coins are spent on-chain: the button never
         // re-arms after anchoring (tapping again would spend a second
         // pair of coins) — the states make that visible.
@@ -343,7 +394,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                     toOwnerHex: recipient,
                     amount: amount,
                     threadUniqueId: thread.uniqueId,
-                    assetIdHex: selectedAssetId,
+                    assetIdHex: assetId,
                 )
                 self.setSendState(.sent)
                 do {
@@ -390,16 +441,23 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 "OPENCSV_SEND_ERROR_INSUFFICIENT_FORMAT",
                 comment: "Error shown when the amount exceeds the balance. Embeds {{ available amount }}.",
             )
-            return String.nonPluralLocalizedStringWithFormat(format, "\(available)")
+            return String.nonPluralLocalizedStringWithFormat(
+                format,
+                OpenCsvUsdAmount.format(available),
+            )
         case OpenCsvPaymentsError.malformedRecipient:
             return OWSLocalizedString(
                 "OPENCSV_SEND_ERROR_BAD_RECIPIENT",
                 comment: "Error shown when the recipient key is not valid hex.",
             )
-        case OpenCsvPaymentsError.assetNotSpecified:
-            return OWSLocalizedString(
-                "OPENCSV_SEND_ERROR_MULTIPLE_ASSETS",
-                comment: "Error shown when the wallet holds several assets and none was chosen.",
+        case OpenCsvPaymentsError.issuerSplitRequired(let totalAvailable):
+            let format = OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_ISSUER_SPLIT_FORMAT",
+                comment: "Error shown when USD is sufficient only by combining issuers. Embeds total USD.",
+            )
+            return String.nonPluralLocalizedStringWithFormat(
+                format,
+                OpenCsvUsdAmount.format(totalAvailable),
             )
         case OpenCsvPaymentsError.sendAlreadyInProgress:
             return OWSLocalizedString(

@@ -79,9 +79,9 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.consignmentId = consignmentId
     }
 
-    /// A verdict for an issuer operation created by this account. A mint is
-    /// an asset credit, not an outgoing transfer, so the conversation must
-    /// never render it with a debit sign.
+    /// A verdict retained for a legacy issuer operation created before
+    /// Signal became owner-only. It is a credit, not an outgoing transfer,
+    /// so old conversation receipts must never render it with a debit sign.
     public init(
         mintedAmount: UInt64,
         currency: String?,

@@ -37,14 +37,10 @@ class OpenCsvWalletViewController: OWSViewController {
     private var owner: String?
     private var bitcoinDepositAddress: String?
     private var latestExplorerUrl: URL?
-    private var usdIssuerButton: UIButton?
     private var feeBumpButton: UIButton?
     private var feeReserveDetailsButton: UIButton?
     private var advancedButton: UIButton?
     private var feeBumpCandidates = [OpenCsvAccountOperationSummary]()
-    private var usdPreviewInstrument: OpenCsvInstrumentRecord?
-    private var walletNetwork = "signet"
-    private var accountRole = OpenCsvAccountRole.primary
     private var writeInProgress = false
 
     init(thread: TSThread?) {
@@ -121,7 +117,7 @@ class OpenCsvWalletViewController: OWSViewController {
 
         // Bitcoin is a visible fee reserve, not a general-purpose wallet.
         // Funding is receive-only in Swift; every spend action remains an
-        // OpenCSV mint/transfer/fee-bump request enforced by Rust.
+        // OpenCSV transfer/fee-bump request enforced by Rust.
         addHeader(OWSLocalizedString(
             "OPENCSV_WALLET_FEE_RESERVE",
             comment: "Section header for the Bitcoin reserve used only for OpenCSV protocol fees.",
@@ -169,15 +165,6 @@ class OpenCsvWalletViewController: OWSViewController {
         walletPolicyLabel.numberOfLines = 0
         walletPolicyLabel.textColor = Theme.secondaryTextAndIconColor
         advancedStack.addArrangedSubview(walletPolicyLabel)
-        usdIssuerButton = addButton(
-            OWSLocalizedString(
-                "OPENCSV_WALLET_ISSUER_TOOLS",
-                comment: "Button opening the fixed USD preview issuer control.",
-            ),
-            action: #selector(didTapUsdIssuer),
-            to: advancedStack,
-        )
-
         addHeader(OWSLocalizedString(
             "OPENCSV_WALLET_ACTIVITY",
             comment: "Section header for OpenCSV wallet operation history.",
@@ -278,11 +265,6 @@ class OpenCsvWalletViewController: OWSViewController {
                 _ = try? await OpenCsvPayments.shared.syncAccount()
                 let summary = try await OpenCsvPayments.shared.walletSummary()
                 self.owner = summary.owner
-                self.usdPreviewInstrument = summary.instruments.first {
-                    $0.profile == "usd_preview_v1"
-                }
-                self.walletNetwork = summary.network
-                self.accountRole = summary.accountRole
                 self.balanceLabel.text = Self.renderHoldings(
                     summary.balances,
                     instruments: summary.instruments,
@@ -344,8 +326,6 @@ class OpenCsvWalletViewController: OWSViewController {
                 self.stack.viewWithTag(7301)?.isUserInteractionEnabled = self.latestExplorerUrl != nil
                 (self.stack.viewWithTag(7301) as? UIButton)?.isEnabled = self.latestExplorerUrl != nil
                 self.stack.viewWithTag(7301)?.isHidden = self.latestExplorerUrl == nil
-                self.usdIssuerButton?.isEnabled = summary.accountRole == .primary
-                    && !self.writeInProgress
                 self.feeBumpButton?.isHidden = self.feeBumpCandidates.isEmpty
                 self.feeBumpButton?.isEnabled = summary.writeEnabled
                     && !self.writeInProgress
@@ -373,26 +353,63 @@ class OpenCsvWalletViewController: OWSViewController {
         instruments: [OpenCsvInstrumentRecord],
     ) -> String {
         let records = Dictionary(uniqueKeysWithValues: instruments.map { ($0.assetId, $0) })
-        let preview = instruments.first { $0.profile == "usd_preview_v1" }
-        let previewBalance = preview.flatMap { instrument in
-            balances.first { $0.assetId == instrument.assetId }
-        }?.amount ?? 0
+        let trustedUsd = instruments.filter {
+            $0.profile == "trusted_usd_v1"
+                && $0.trustState == "trusted_configuration"
+                && $0.manifest?.terms.unitCode == "USD"
+                && $0.manifest?.terms.decimals == 6
+        }.sorted {
+            let left = ($0.issuerPriority ?? UInt32.max, $0.assetId)
+            let right = ($1.issuerPriority ?? UInt32.max, $1.assetId)
+            return left < right
+        }
+        let trustedIds = Set(trustedUsd.map(\.assetId))
+        let trustedBalances = balances.filter { trustedIds.contains($0.assetId) }
+        let total = trustedBalances.reduce(UInt64(0)) { partial, balance in
+            let (combined, overflow) = partial.addingReportingOverflow(balance.amount)
+            return overflow ? UInt64.max : combined
+        }
         var sections = [[
-            "OpenCSV USD Preview",
-            "\(displayAmount(previewBalance, decimals: 6)) USD",
+            "USD",
+            "\(OpenCsvUsdAmount.format(total)) USD",
             OWSLocalizedString(
-                "OPENCSV_WALLET_USD_PREVIEW_DISCLOSURE",
-                comment: "Disclosure that USD Preview is a valueless signet test and not USDT.",
+                "OPENCSV_WALLET_USD_DISCLOSURE",
+                comment: "Disclosure that one USD product can contain exact issuer-specific claims.",
             ),
-            preview.map { "\($0.assetId.prefix(12).lowercased())…\($0.assetId.suffix(6).lowercased())" }
-                ?? OWSLocalizedString(
-                    "OPENCSV_WALLET_USD_PREVIEW_NOT_ACTIVATED",
-                    comment: "State shown before the USD preview issuer definition exists.",
+            trustedUsd.isEmpty
+                ? OWSLocalizedString(
+                    "OPENCSV_WALLET_NO_TRUSTED_USD_ISSUERS",
+                    comment: "State shown when no reviewed USD issuer manifests are configured.",
+                )
+                : String.nonPluralLocalizedStringWithFormat(
+                    OWSLocalizedString(
+                        "OPENCSV_WALLET_USD_ISSUER_COUNT_FORMAT",
+                        comment: "Count of configured issuer instruments under USD.",
+                    ),
+                    "\(trustedUsd.count)",
                 ),
         ].joined(separator: "\n")]
 
+        sections += trustedUsd.map { instrument in
+            let manifest = instrument.manifest!
+            let balance = trustedBalances.first { $0.assetId == instrument.assetId }?.amount ?? 0
+            let shortId = "\(instrument.assetId.prefix(12).lowercased())…\(instrument.assetId.suffix(6).lowercased())"
+            let backing = manifest.terms.testOnly
+                ? OWSLocalizedString(
+                    "OPENCSV_WALLET_TEST_INSTRUMENT",
+                    comment: "Warning label for a test-only instrument.",
+                )
+                : manifest.terms.redemptionSummary
+            return [
+                manifest.terms.issuerName,
+                "\(OpenCsvUsdAmount.format(balance)) USD",
+                "\(manifest.terms.displayName) · \(backing)",
+                shortId,
+            ].joined(separator: "\n")
+        }
+
         sections += balances.compactMap { balance in
-            if balance.assetId == preview?.assetId { return nil }
+            if trustedIds.contains(balance.assetId) { return nil }
             let shortId = "\(balance.assetId.prefix(12).lowercased())…\(balance.assetId.suffix(6).lowercased())"
             guard let record = records[balance.assetId], let manifest = record.manifest else {
                 let oldLabel = balance.currency.map { " · legacy label \($0)" } ?? ""
@@ -407,11 +424,11 @@ class OpenCsvWalletViewController: OWSViewController {
             }
             return [
                 OWSLocalizedString(
-                    "OPENCSV_WALLET_UNSUPPORTED_INSTRUMENT",
-                    comment: "Title for a manifested custom instrument no longer supported by the preview wallet.",
+                    "OPENCSV_WALLET_UNTRUSTED_INSTRUMENT",
+                    comment: "Title for a manifested instrument outside the reviewed issuer configuration.",
                 ),
                 "\(displayAmount(balance.amount, decimals: manifest.terms.decimals)) \(manifest.terms.unitCode)",
-                "\(manifest.terms.displayName) · read only",
+                "\(manifest.terms.issuerName) · read only",
                 shortId,
             ].joined(separator: "\n")
         }
@@ -494,19 +511,6 @@ class OpenCsvWalletViewController: OWSViewController {
     }
 
     @objc
-    private func didTapUsdIssuer() {
-        guard accountRole == .primary else { return }
-        let controller = OpenCsvUsdIssuerViewController(
-            thread: thread,
-            network: walletNetwork,
-            instrument: usdPreviewInstrument,
-        ) { [weak self] in
-            self?.refresh()
-        }
-        navigationController?.pushViewController(controller, animated: true)
-    }
-
-    @objc
     private func didTapFeeBump() {
         guard !feeBumpCandidates.isEmpty else { return }
         if feeBumpCandidates.count == 1, let operation = feeBumpCandidates.first {
@@ -564,7 +568,6 @@ class OpenCsvWalletViewController: OWSViewController {
     private func performWalletWrite(_ operation: @escaping () async throws -> Void) {
         guard !writeInProgress else { return }
         writeInProgress = true
-        usdIssuerButton?.isEnabled = false
         feeBumpButton?.isEnabled = false
         Task {
             defer {
@@ -690,204 +693,5 @@ extension OpenCsvWalletViewController: PaymentsViewPassphraseDelegate {
 
     func viewPassphraseDidComplete() {
         dismiss(animated: true)
-    }
-}
-
-/// The one issuer action exposed by the preview wallet. Product metadata is
-/// fixed in Rust; this screen accepts only a human USD amount.
-private final class OpenCsvUsdIssuerViewController: OWSViewController {
-    private let thread: TSThread?
-    private let network: String
-    private let instrument: OpenCsvInstrumentRecord?
-    private let onChange: () -> Void
-    private let stack = UIStackView()
-    private var operationInProgress = false
-
-    init(
-        thread: TSThread?,
-        network: String,
-        instrument: OpenCsvInstrumentRecord?,
-        onChange: @escaping () -> Void,
-    ) {
-        self.thread = thread
-        self.network = network
-        self.instrument = instrument
-        self.onChange = onChange
-        super.init()
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        title = OWSLocalizedString(
-            "OPENCSV_ISSUER_TOOLS_TITLE",
-            comment: "Title of the advanced OpenCSV issuer tools screen.",
-        )
-        view.backgroundColor = Theme.backgroundColor
-
-        let scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 16
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scrollView)
-        scrollView.addSubview(stack)
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 20),
-            stack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
-        ])
-
-        addText(OWSLocalizedString(
-            "OPENCSV_ISSUER_TOOLS_EXPLANATION",
-            comment: "Explanation of the fixed, test-only USD preview issuer action.",
-        ), color: Theme.secondaryTextAndIconColor)
-        addHeader(OWSLocalizedString(
-            "OPENCSV_ISSUER_INSTRUMENTS",
-            comment: "Section title for the fixed USD preview instrument.",
-        ))
-        addText("OpenCSV USD Preview\nUSD · 6 decimals\nOpenCSV Preview Issuer", color: Theme.primaryTextColor)
-        if let instrument {
-            addText("Asset ID\n\(instrument.assetId)", color: Theme.secondaryTextAndIconColor)
-        } else {
-            addText(OWSLocalizedString(
-                "OPENCSV_WALLET_USD_PREVIEW_NOT_ACTIVATED",
-                comment: "State shown before the USD preview issuer definition exists.",
-            ), color: Theme.secondaryTextAndIconColor)
-        }
-
-        let terms = addButton(OWSLocalizedString(
-            "OPENCSV_ISSUER_OPEN_TERMS",
-            comment: "Button opening the fixed USD preview terms document.",
-        ))
-        terms.addTarget(self, action: #selector(didTapTerms), for: .touchUpInside)
-
-        let issue = addButton(OWSLocalizedString(
-            "OPENCSV_ISSUER_ISSUE_UNITS",
-            comment: "Button issuing the fixed test-only USD preview instrument.",
-        ))
-        issue.addTarget(self, action: #selector(didTapIssue), for: .touchUpInside)
-        issue.isEnabled = network != "mainnet" && thread != nil
-        if network == "mainnet" {
-            addText(
-                OWSLocalizedString(
-                    "OPENCSV_ISSUER_MAINNET_DISABLED",
-                    comment: "Warning that USD Preview issuance is unavailable on mainnet.",
-                ),
-                color: Theme.secondaryTextAndIconColor,
-            )
-        } else if thread == nil {
-            addText(OWSLocalizedString(
-                "OPENCSV_ISSUER_CONVERSATION_REQUIRED",
-                comment: "Instruction to open USD issuance from a Signal conversation.",
-            ), color: Theme.secondaryTextAndIconColor)
-        }
-    }
-
-    @objc
-    private func didTapTerms() {
-        let rawUrl = instrument?.manifest?.terms.termsUri
-            ?? "https://opencsv.net/usd-preview/terms-v1"
-        guard let url = URL(string: rawUrl) else { return }
-        UIApplication.shared.open(url)
-    }
-
-    @objc
-    private func didTapIssue() {
-        promptForIssuance()
-    }
-
-    private func promptForIssuance() {
-        guard let thread, network != "mainnet" else { return }
-        let alert = UIAlertController(
-            title: OWSLocalizedString(
-                "OPENCSV_ISSUER_ISSUE_UNITS",
-                comment: "Title of the USD preview issuance amount prompt.",
-            ),
-            message: OWSLocalizedString(
-                "OPENCSV_ISSUER_USD_PREVIEW_WARNING",
-                comment: "Warning shown before issuing test-only USD preview units.",
-            ),
-            preferredStyle: .alert,
-        )
-        alert.addTextField { field in
-            field.placeholder = OWSLocalizedString(
-                "OPENCSV_ISSUER_BASE_UNITS_PLACEHOLDER",
-                comment: "Placeholder for a human USD preview amount.",
-            )
-            field.keyboardType = .decimalPad
-        }
-        alert.addAction(UIAlertAction(title: CommonStrings.cancelButton, style: .cancel))
-        alert.addAction(UIAlertAction(
-            title: OWSLocalizedString(
-                "OPENCSV_ISSUER_REVIEW_ISSUANCE",
-                comment: "Button confirming an exact instrument issuance.",
-            ),
-            style: .default,
-        ) { [weak self, weak alert] _ in
-            guard
-                let self,
-                let value = alert?.textFields?.first?.text,
-                let amount = OpenCsvUsdPreviewAmount.parse(value),
-                amount > 0,
-                !self.operationInProgress
-            else { return }
-            self.operationInProgress = true
-            Task {
-                defer { self.operationInProgress = false }
-                do {
-                    let delivery = try await OpenCsvPayments.shared.issuePreviewUsd(
-                        amount: amount,
-                        threadUniqueId: thread.uniqueId,
-                    )
-                    try await OpenCsvDelivery.deliver(delivery)
-                    self.onChange()
-                    self.presentToast(text: OWSLocalizedString(
-                        "OPENCSV_ISSUER_ISSUANCE_COMMITTED",
-                        comment: "Confirmation after instrument units are issued and delivery is queued.",
-                    ))
-                } catch {
-                    self.showError("\(error)")
-                }
-            }
-        })
-        present(alert, animated: true)
-    }
-
-    private func addHeader(_ text: String) {
-        let label = UILabel()
-        label.text = text.uppercased()
-        label.font = .dynamicTypeCaption1
-        label.textColor = Theme.secondaryTextAndIconColor
-        stack.addArrangedSubview(label)
-    }
-
-    private func addText(_ text: String, color: UIColor) {
-        let label = UILabel()
-        label.text = text
-        label.font = .dynamicTypeBody
-        label.textColor = color
-        label.numberOfLines = 0
-        stack.addArrangedSubview(label)
-    }
-
-    @discardableResult
-    private func addButton(_ title: String) -> UIButton {
-        let button = UIButton(type: .system)
-        button.setTitle(title, for: .normal)
-        button.contentHorizontalAlignment = .leading
-        button.titleLabel?.font = .dynamicTypeBody
-        stack.addArrangedSubview(button)
-        return button
-    }
-
-    private func showError(_ message: String) {
-        let alert = UIAlertController(title: CommonStrings.errorAlertTitle, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: CommonStrings.okButton, style: .default))
-        present(alert, animated: true)
     }
 }
