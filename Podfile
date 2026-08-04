@@ -81,7 +81,7 @@ target 'SignalServiceKit' do
   # only here: SignalServiceKit is the sole target whose Swift imports
   # OpenCsvFFI, and everything else links SignalServiceKit.framework.
   # Requires a Rust toolchain; the first install compiles the prover stack.
-  pod 'OpenCsv', git: 'https://github.com/opencsvnet/opencsv-rs.git', commit: '11ba73ca92de6eed93805d378d9bf2d9d9adb69d'
+  pod 'OpenCsv', git: 'https://github.com/opencsvnet/opencsv-rs.git', commit: '53876eb1d702e49ebadb11765a27cae794ff4ab1'
   # pod 'OpenCsv', path: '../opencsv-rs'   # local iteration
 
   pod 'CocoaLumberjack'

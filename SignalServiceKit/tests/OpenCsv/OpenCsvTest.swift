@@ -525,6 +525,90 @@ final class OpenCsvWalletStoreTest {
     }
 
     @Test
+    func incomingActivityIsVisibleBeforeButSpendableOnlyAfterVerification() throws {
+        let firstSeen = Date(timeIntervalSince1970: 10)
+        try db.write { tx in
+            try store.upsertIncomingActivity(
+                attachmentId: 42,
+                threadUniqueId: "thread-1",
+                messageUniqueId: "message-1",
+                state: .confirming,
+                detail: "awaiting verified chain settlement",
+                now: firstSeen,
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            let activity = store.incomingActivities(tx: tx).first
+            #expect(activity?.state == .confirming)
+            #expect(activity?.amount == nil)
+            #expect(store.verdict(attachmentId: 42, tx: tx) == nil)
+            #expect(store.replayBlobs(tx: tx).isEmpty)
+        }
+
+        try db.write { tx in
+            try store.upsertIncomingActivity(
+                attachmentId: 42,
+                threadUniqueId: nil,
+                messageUniqueId: nil,
+                state: .available,
+                amount: 25_000_000,
+                currency: "USD",
+                now: Date(timeIntervalSince1970: 20),
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            let activity = store.incomingActivities(tx: tx).first
+            #expect(activity?.state == .available)
+            #expect(activity?.amount == 25_000_000)
+            #expect(activity?.threadUniqueId == "thread-1")
+            #expect(activity?.messageUniqueId == "message-1")
+            #expect(activity?.firstSeenAt == firstSeen)
+        }
+
+        // A reorg or replacement may force re-verification. The presentation
+        // can return to pending, but the formerly verified amount must not be
+        // carried into that non-spendable state.
+        try db.write { tx in
+            try store.upsertIncomingActivity(
+                attachmentId: 42,
+                threadUniqueId: nil,
+                messageUniqueId: nil,
+                state: .confirming,
+                detail: "re-verifying replacement",
+                now: Date(timeIntervalSince1970: 30),
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            let activity = store.incomingActivities(tx: tx).first
+            #expect(activity?.state == .confirming)
+            #expect(activity?.amount == nil)
+            #expect(store.verdict(attachmentId: 42, tx: tx) == nil)
+            #expect(store.replayBlobs(tx: tx).isEmpty)
+        }
+
+        try db.write { tx in
+            try store.upsertIncomingActivity(
+                attachmentId: 42,
+                threadUniqueId: nil,
+                messageUniqueId: nil,
+                state: .needsAttention,
+                amount: 25_000_000,
+                detail: "rejected",
+                now: Date(timeIntervalSince1970: 40),
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            let activity = store.incomingActivities(tx: tx).first
+            #expect(activity?.state == .needsAttention)
+            #expect(activity?.amount == nil)
+        }
+    }
+
+    @Test
     func canonicalConsignmentIdentityDeduplicatesTransportEncodings() throws {
         let canonicalId = String(repeating: "cd", count: 32)
         let record = OpenCsvVerdictRecord(
@@ -1334,6 +1418,41 @@ struct OpenCsvChainViewTest {
         #expect(!OpenCsvPayments.isChainLagReason("NullifierConflict"))
         #expect(!OpenCsvPayments.isChainLagReason("NoOwnedOutput"))
         #expect(!OpenCsvPayments.isChainLagReason(nil))
+    }
+
+    /// Repairs the exact live failure: old builds persisted AnchorNotFound,
+    /// then skipped that attachment forever even after six confirmations.
+    @Test
+    func onlyMissingOrChainLagVerdictsAreRetried() {
+        func record(status: String, reason: String?) -> OpenCsvVerdictRecord {
+            OpenCsvVerdictRecord(
+                verdict: OpenCsvVerdict(
+                    status: status,
+                    reason: reason,
+                    credits: nil,
+                    coins: nil,
+                    anchor: nil,
+                ),
+                date: Date(timeIntervalSince1970: 0),
+            )
+        }
+
+        #expect(OpenCsvPayments.shouldRetryStoredVerdict(nil))
+        #expect(OpenCsvPayments.shouldRetryStoredVerdict(
+            record(status: "rejected", reason: "AnchorNotFound"),
+        ))
+        #expect(OpenCsvPayments.shouldRetryStoredVerdict(
+            record(
+                status: "rejected",
+                reason: "InsufficientConfirmations { have: 5, required: 6 }",
+            ),
+        ))
+        #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
+            record(status: "rejected", reason: "NullifierConflict"),
+        ))
+        #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
+            record(status: "verified", reason: nil),
+        ))
     }
 
     /// The explorer sheet's evidence join: full snapshot entry (txid,

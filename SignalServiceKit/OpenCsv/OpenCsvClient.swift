@@ -379,6 +379,7 @@ public struct OpenCsvAccountOperation: Codable, Equatable {
         public let consignmentId: String?
         public let consignmentBase64: String?
         public let deliveryReady: Bool?
+        public let consignmentDelivered: Bool?
         public let replaces: String?
         public let feeIncrementSats: UInt64?
         public let replacementChangeSats: UInt64?

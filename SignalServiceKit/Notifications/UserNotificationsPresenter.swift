@@ -244,6 +244,7 @@ public class UserNotificationPresenter {
              .incomingReactionWithActions_CannotReply,
              .incomingReactionWithoutActions,
              .infoOrErrorMessage,
+             .openCsvPaymentStatus,
              .pollEndNotification,
              .pollVoteNotification,
              .releaseNotesMessage:

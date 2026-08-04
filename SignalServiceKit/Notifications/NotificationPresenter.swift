@@ -66,6 +66,16 @@ public protocol NotificationPresenter {
         body: String,
     )
 
+    /// Replaceable status notification for one OpenCSV payment attachment.
+    /// A later `available` transition replaces its earlier `confirming`
+    /// notification instead of producing an unbounded stream of retries.
+    func notifyUserOfOpenCsvPaymentStatus(
+        threadUniqueId: String,
+        messageUniqueId: String,
+        body: String,
+        wantsSound: Bool,
+    )
+
     func notifyUserOfMediaTierQuotaConsumed()
 
     func notifyUserOfBackupsMediaError()
@@ -89,6 +99,15 @@ public protocol NotificationPresenter {
     func cancelNotificationsForMissedCalls(threadUniqueId: String)
 
     func cancelNotifications(for storyMessage: StoryMessage)
+}
+
+public extension NotificationPresenter {
+    func notifyUserOfOpenCsvPaymentStatus(
+        threadUniqueId: String,
+        messageUniqueId: String,
+        body: String,
+        wantsSound: Bool,
+    ) {}
 }
 
 @objc

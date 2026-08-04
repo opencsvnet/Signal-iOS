@@ -151,6 +151,9 @@ public actor OpenCsvPayments {
         /// The wallet's receiving key (share with senders and external issuers).
         public let owner: String
         public let balances: [OpenCsvCredit]
+        /// Incoming transport state. Confirming entries are presentation
+        /// only and are never included in `balances` or Rust coin selection.
+        public let incomingActivities: [OpenCsvIncomingActivity]
         public let instruments: [OpenCsvInstrumentRecord]
         public let operations: [OpenCsvAccountOperationSummary]
         public let feeReserve: OpenCsvAccountStatus.FeeReserve
@@ -163,6 +166,9 @@ public actor OpenCsvPayments {
         public let esploraUrl: URL?
         /// Bitcoin P2P peers powering self-scan and SPV point-verify.
         public let spvPeers: [String]
+        /// Earliest height the phone-owned marker scan must cover. This is
+        /// asset/wallet provenance, not the current sync tip.
+        public let scanFromHeight: UInt64
         /// Bitcoin network for the chain views ("signet" default).
         public let network: String
     }
@@ -170,8 +176,11 @@ public actor OpenCsvPayments {
     // MARK: - Receive pipeline
 
     /// Called (fire-and-forget) when an attachment finishes downloading.
-    /// Verifies it iff it is an OpenCSV consignment without a stored
+    /// Verifies it iff it is an OpenCSV consignment without a final stored
     /// verdict, then persists the verdict and re-renders owning messages.
+    /// Legacy chain-lag rejections remain eligible so installs that once
+    /// persisted AnchorNotFound can repair themselves after the chain catches
+    /// up.
     ///
     /// Infrastructure failures (no snapshot reachable, wallet unavailable)
     /// store nothing, so a later retry can still verify; only a definitive
@@ -179,15 +188,21 @@ public actor OpenCsvPayments {
     public func verifyDownloadedAttachmentIfNeeded(attachmentId: Attachment.IDType) async {
         struct Candidate {
             let stream: AttachmentStream
+            let threadUniqueId: String?
+            let messageUniqueId: String?
         }
         let candidate: Candidate? = db.read { tx in
-            guard store.verdict(attachmentId: attachmentId, tx: tx) == nil else {
+            guard Self.shouldRetryStoredVerdict(
+                store.verdict(attachmentId: attachmentId, tx: tx),
+            ) else {
                 return nil
             }
             guard let stream = attachmentStore.fetch(id: attachmentId, tx: tx)?.asStream() else {
                 return nil
             }
             var isConsignment = false
+            var threadUniqueId: String?
+            var messageUniqueId: String?
             attachmentStore.enumerateAllReferences(toAttachmentId: attachmentId, tx: tx) { reference, _ in
                 if OpenCsvAttachmentDetector.isConsignment(
                     sourceFilename: reference.sourceFilename,
@@ -200,8 +215,23 @@ public actor OpenCsvPayments {
                 ) {
                     isConsignment = true
                 }
+                if
+                    threadUniqueId == nil,
+                    case .message(let messageSource) = reference.owner,
+                    let interaction = DependenciesBridge.shared.interactionStore.fetchInteraction(
+                        rowId: messageSource.messageRowId,
+                        tx: tx,
+                    ) as? TSIncomingMessage
+                {
+                    threadUniqueId = interaction.uniqueThreadId
+                    messageUniqueId = interaction.uniqueId
+                }
             }
-            return isConsignment ? Candidate(stream: stream) : nil
+            return isConsignment ? Candidate(
+                stream: stream,
+                threadUniqueId: threadUniqueId,
+                messageUniqueId: messageUniqueId,
+            ) : nil
         }
         guard let candidate else { return }
 
@@ -213,14 +243,98 @@ public actor OpenCsvPayments {
             return
         }
 
+        let priorActivityState = db.read { tx in
+            self.store.incomingActivities(tx: tx)
+                .first { $0.attachmentId == attachmentId }?
+                .state
+        }
+        if priorActivityState == nil {
+            try? await db.awaitableWrite { tx in
+                try self.store.upsertIncomingActivity(
+                    attachmentId: attachmentId,
+                    threadUniqueId: candidate.threadUniqueId,
+                    messageUniqueId: candidate.messageUniqueId,
+                    state: .confirming,
+                    tx: tx,
+                )
+            }
+            // Publish the pending transition as soon as it is durable. The
+            // same replacement identifier is used by the later available or
+            // needs-attention transition, so a fast verification does not
+            // leave two notifications behind.
+            notifyPaymentStatus(
+                threadUniqueId: candidate.threadUniqueId,
+                messageUniqueId: candidate.messageUniqueId,
+                body: OWSLocalizedString(
+                    "OPENCSV_NOTIFICATION_CONFIRMING",
+                    comment: "Notification that an incoming OpenCSV payment is confirming and is not spendable yet.",
+                ),
+                wantsSound: false,
+            )
+        }
+
         do {
             let verdict = try await verifyBlobWithConfiguredChainView(blob)
             let record = OpenCsvVerdictRecord(verdict: verdict, date: Date())
             await db.awaitableWrite { tx in
                 self.store.setVerdict(record, blob: blob, attachmentId: attachmentId, tx: tx)
+                do {
+                    switch record.direction {
+                    case .incoming where record.isVerified:
+                        try self.store.upsertIncomingActivity(
+                            attachmentId: attachmentId,
+                            threadUniqueId: candidate.threadUniqueId,
+                            messageUniqueId: candidate.messageUniqueId,
+                            state: .available,
+                            amount: record.amount,
+                            currency: record.currency,
+                            tx: tx,
+                        )
+                    case .thirdParty where record.isVerified:
+                        try self.store.removeIncomingActivity(attachmentId: attachmentId, tx: tx)
+                    default:
+                        try self.store.upsertIncomingActivity(
+                            attachmentId: attachmentId,
+                            threadUniqueId: candidate.threadUniqueId,
+                            messageUniqueId: candidate.messageUniqueId,
+                            state: .needsAttention,
+                            amount: record.amount > 0 ? record.amount : nil,
+                            currency: record.currency,
+                            detail: record.reason,
+                            tx: tx,
+                        )
+                    }
+                } catch {
+                    owsFailDebug("could not persist OpenCSV incoming activity: \(error)")
+                }
                 self.touchOwners(attachmentId: attachmentId, tx: tx)
             }
             lastWithheldReason[attachmentId] = nil
+            if record.direction == .incoming, record.isVerified, priorActivityState != .available {
+                notifyPaymentStatus(
+                    threadUniqueId: candidate.threadUniqueId,
+                    messageUniqueId: candidate.messageUniqueId,
+                    body: String.nonPluralLocalizedStringWithFormat(
+                        OWSLocalizedString(
+                            "OPENCSV_NOTIFICATION_AVAILABLE_FORMAT",
+                            comment: "Notification that a verified OpenCSV payment is now spendable. Embeds the amount and currency.",
+                        ),
+                        OpenCsvUsdAmount.format(record.amount),
+                        record.currency ?? "USD",
+                    ),
+                    wantsSound: true,
+                )
+            } else if !record.isVerified, priorActivityState != .needsAttention {
+                notifyPaymentStatus(
+                    threadUniqueId: candidate.threadUniqueId,
+                    messageUniqueId: candidate.messageUniqueId,
+                    body: OWSLocalizedString(
+                        "OPENCSV_NOTIFICATION_NEEDS_ATTENTION",
+                        comment: "Notification that an OpenCSV payment could not be accepted.",
+                    ),
+                    wantsSound: false,
+                )
+            }
             Logger.info(
                 "consignment \(attachmentId): \(record.status)"
                 + (record.reason.map { " (\($0))" } ?? "")
@@ -228,8 +342,38 @@ public actor OpenCsvPayments {
             )
         } catch {
             lastWithheldReason[attachmentId] = "\(error)"
+            if
+                let paymentError = error as? OpenCsvPaymentsError,
+                case .chainViewLagging = paymentError
+            {
+                try? await db.awaitableWrite { tx in
+                    try self.store.upsertIncomingActivity(
+                        attachmentId: attachmentId,
+                        threadUniqueId: candidate.threadUniqueId,
+                        messageUniqueId: candidate.messageUniqueId,
+                        state: .confirming,
+                        detail: "awaiting verified chain settlement",
+                        tx: tx,
+                    )
+                }
+            }
             Logger.warn("consignment \(attachmentId) not verifiable yet: \(error)")
         }
+    }
+
+    private nonisolated func notifyPaymentStatus(
+        threadUniqueId: String?,
+        messageUniqueId: String?,
+        body: String,
+        wantsSound: Bool,
+    ) {
+        guard let threadUniqueId, let messageUniqueId else { return }
+        SSKEnvironment.shared.notificationPresenterRef.notifyUserOfOpenCsvPaymentStatus(
+            threadUniqueId: threadUniqueId,
+            messageUniqueId: messageUniqueId,
+            body: body,
+            wantsSound: wantsSound,
+        )
     }
 
     /// Decide whether a consignment should be believed, using the
@@ -299,10 +443,14 @@ public actor OpenCsvPayments {
                 // tell which, so no answer here is trustworthy.
                 throw OpenCsvPaymentsError.indexersDisagree(tips: crossChecked.tips ?? [])
             }
+            let crossCheckReason = crossChecked.reason ?? crossChecked.error
+            if !crossChecked.isVerified, Self.isChainLagReason(crossCheckReason) {
+                throw OpenCsvPaymentsError.chainViewLagging(reason: crossCheckReason ?? "?")
+            }
             guard crossChecked.isVerified else {
                 var verdict = OpenCsvVerdict(
                     status: "rejected",
-                    reason: crossChecked.reason ?? crossChecked.error ?? "cross-check rejected",
+                    reason: crossCheckReason ?? "cross-check rejected",
                     credits: nil,
                     coins: nil,
                     anchor: nil,
@@ -325,6 +473,13 @@ public actor OpenCsvPayments {
         // through the wallet's single crediting path, then hold the
         // snapshot's claimed anchor up against the chain itself.
         var (verdict, snapshotJson) = try await verifyBlobReturningSnapshot(blob)
+        if !verdict.isVerified, Self.isChainLagReason(verdict.reason) {
+            // A single fresh snapshot can legitimately trail the payment
+            // message or its confirmations. Withhold, then let a later
+            // conversation/wallet sweep retry; never turn lag into a durable
+            // rejection.
+            throw OpenCsvPaymentsError.chainViewLagging(reason: verdict.reason ?? "?")
+        }
         verdict.chainView = plan.rawValue
         return try await spvPointVerifyIfConfigured(verdict, snapshotJson: snapshotJson)
     }
@@ -353,6 +508,15 @@ public actor OpenCsvPayments {
     static func isChainLagReason(_ reason: String?) -> Bool {
         guard let reason else { return false }
         return reason.contains("AnchorNotFound") || reason.contains("InsufficientConfirmations")
+    }
+
+    /// Nil has never been decided. A historical chain-lag rejection was not a
+    /// decision at all, so it must also be retried and may be overwritten by
+    /// the later verified verdict. Verified and definitive rejected records
+    /// remain stable and are not replayed.
+    static func shouldRetryStoredVerdict(_ verdict: OpenCsvVerdictRecord?) -> Bool {
+        guard let verdict else { return true }
+        return !verdict.isVerified && isChainLagReason(verdict.reason)
     }
 
     /// Verify a consignment blob against the current anchor snapshot,
@@ -609,7 +773,9 @@ public actor OpenCsvPayments {
                     ) {
                         guard
                             OpenCsvAttachmentDetector.isConsignment(referenced: referenced, tx: tx),
-                            store.verdict(attachmentId: referenced.attachment.id, tx: tx) == nil
+                            Self.shouldRetryStoredVerdict(
+                                store.verdict(attachmentId: referenced.attachment.id, tx: tx),
+                            )
                         else {
                             continue
                         }
@@ -974,7 +1140,16 @@ public actor OpenCsvPayments {
                             )
                         }
                     } else if operation.state == "consignment_delivered" {
-                        try await finishDeliveryAcknowledgement(operationId: pending.operationId)
+                        try await finishDeliveryAcknowledgement(
+                            operationId: pending.operationId,
+                            removeOperationMetadata: true,
+                        )
+                    } else if operation.receipt?.consignmentDelivered == true {
+                        // The current exact-txid consignment was delivered,
+                        // but its mempool transaction remains fee-bumpable.
+                        // Retain chat metadata so an RBF replacement can
+                        // generate and deliver fresh canonical bytes.
+                        continue
                     } else {
                         _ = try await persistDeliveryIfReady(operation: operation, pending: pending)
                     }
@@ -1101,8 +1276,11 @@ public actor OpenCsvPayments {
         }
         do {
             let account = try await ensureAccountWallet()
-            _ = try account.markDelivered(operationId: operationId, deliveryNonce: nonce)
-            try await finishDeliveryAcknowledgement(operationId: operationId)
+            let acknowledged = try account.markDelivered(operationId: operationId, deliveryNonce: nonce)
+            try await finishDeliveryAcknowledgement(
+                operationId: operationId,
+                removeOperationMetadata: acknowledged.state == "consignment_delivered",
+            )
         } catch {
             Logger.warn("could not acknowledge OpenCSV delivery \(delivery.id) yet: \(error)")
         }
@@ -1113,25 +1291,33 @@ public actor OpenCsvPayments {
             .filter { $0.enqueuedAt != nil && $0.operationId != nil && $0.deliveryNonce != nil }
         for delivery in deliveries {
             do {
-                _ = try account.markDelivered(
+                let acknowledged = try account.markDelivered(
                     operationId: delivery.operationId!,
                     deliveryNonce: delivery.deliveryNonce!,
                 )
-                try await finishDeliveryAcknowledgement(operationId: delivery.operationId!)
+                try await finishDeliveryAcknowledgement(
+                    operationId: delivery.operationId!,
+                    removeOperationMetadata: acknowledged.state == "consignment_delivered",
+                )
             } catch {
                 Logger.warn("OpenCSV delivery acknowledgement remains retryable: \(error)")
             }
         }
     }
 
-    private func finishDeliveryAcknowledgement(operationId: String) async throws {
+    private func finishDeliveryAcknowledgement(
+        operationId: String,
+        removeOperationMetadata: Bool,
+    ) async throws {
         try await db.awaitableWrite { tx in
             for delivery in self.store.pendingDeliveries(tx: tx)
                 where delivery.operationId == operationId
             {
                 try self.store.removePendingDelivery(id: delivery.id, tx: tx)
             }
-            try self.store.removePendingAccountOperation(operationId: operationId, tx: tx)
+            if removeOperationMetadata {
+                try self.store.removePendingAccountOperation(operationId: operationId, tx: tx)
+            }
         }
     }
 
@@ -1166,6 +1352,7 @@ public actor OpenCsvPayments {
         return WalletSummary(
             owner: status.owners.first ?? "",
             balances: status.assets,
+            incomingActivities: db.read { self.store.incomingActivities(tx: $0) },
             instruments: status.instruments,
             operations: try account.operationSummaries(),
             feeReserve: status.feeReserve,
@@ -1177,6 +1364,7 @@ public actor OpenCsvPayments {
             syncProvenance: status.syncProvenance,
             esploraUrl: db.read { URL(string: store.esploraUrl(tx: $0)) },
             spvPeers: db.read { store.spvPeers(tx: $0) },
+            scanFromHeight: db.read { store.scanFromHeight(tx: $0) },
             network: status.network,
         )
     }
@@ -1199,6 +1387,21 @@ public actor OpenCsvPayments {
             Logger.error("could not persist SPV peers: \(error)")
         }
         accountWallet = nil
+    }
+
+    /// Set the birth height for a fresh phone-owned scan. Existing scan
+    /// indexes only ever resume, so this setting cannot silently discard or
+    /// truncate already-verified history.
+    public func setScanFromHeight(_ height: UInt64) async {
+        do {
+            try await db.awaitableWrite { tx in
+                try self.store.setScanFromHeight(max(1, height), tx: tx)
+            }
+        } catch {
+            Logger.error("could not persist OpenCSV scan birth height: \(error)")
+        }
+        scanSyncedThisLaunch = false
+        closeCbfClient()
     }
 
     public func setNetwork(_ network: String) async throws {

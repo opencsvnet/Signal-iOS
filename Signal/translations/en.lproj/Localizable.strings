@@ -6709,6 +6709,18 @@
 /* Title of an OpenCSV payment bubble in the conversation view. */
 "OPENCSV_PAYMENT_TITLE" = "OpenCSV payment";
 
+/* Title of an OpenCSV payment status notification. */
+"OPENCSV_NOTIFICATION_TITLE" = "OpenCSV payment";
+
+/* Notification that an incoming OpenCSV payment is confirming and is not spendable yet. */
+"OPENCSV_NOTIFICATION_CONFIRMING" = "Payment received and confirming on Bitcoin. It is not spendable yet.";
+
+/* Notification that a verified OpenCSV payment is now spendable. Embeds amount and currency. */
+"OPENCSV_NOTIFICATION_AVAILABLE_FORMAT" = "%1$@ %2$@ is verified and now available.";
+
+/* Notification that an OpenCSV payment could not be accepted. */
+"OPENCSV_NOTIFICATION_NEEDS_ATTENTION" = "A payment could not be verified. Open the conversation for details.";
+
 /* Label for the anchor's block height and position. */
 "OPENCSV_EXPLORER_ANCHOR_LOCATION" = "Anchor";
 
@@ -6844,6 +6856,9 @@
 /* Status below the USD balance when at least one reviewed issuer is configured. */
 "OPENCSV_WALLET_USD_READY" = "Available balance";
 
+/* Wallet status for incoming OpenCSV payments that are visible but not spendable. Embeds the count. */
+"OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT" = "%@ incoming payment(s) confirming · not included above";
+
 /* Status below the USD balance when this build has no reviewed issuer configured. */
 "OPENCSV_WALLET_USD_NOT_AVAILABLE" = "USD is not available in this build yet";
 
@@ -6907,6 +6922,18 @@
 /* Shown when there are no OpenCSV wallet operations yet. */
 "OPENCSV_WALLET_NO_ACTIVITY" = "No OpenCSV transactions yet.";
 
+/* Incoming wallet activity that is visible but not spendable. */
+"OPENCSV_WALLET_ACTIVITY_CONFIRMING" = "Incoming payment · confirming · not spendable";
+
+/* Incoming wallet activity that has become spendable without an available amount. */
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE" = "Incoming payment · verified · available";
+
+/* Incoming wallet activity that has become spendable. Embeds amount and currency. */
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE_FORMAT" = "+%1$@ %2$@ · verified · available";
+
+/* Incoming wallet activity that failed definitive verification. */
+"OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION" = "Incoming payment · needs attention · not spendable";
+
 /* Shown in advanced wallet details when there are no Bitcoin fee UTXOs. */
 "OPENCSV_WALLET_NO_FEE_UTXOS" = "No fee UTXOs";
 
@@ -6942,6 +6969,7 @@
 
 /* Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet. */
 "OPENCSV_SEND_SPV_PEERS_PLACEHOLDER" = "Bitcoin peers for self-scan (host:port, comma-separated)";
+"OPENCSV_WALLET_SCAN_FROM_HEIGHT_PLACEHOLDER" = "Scan from Bitcoin height (advanced)";
 
 /* Placeholder for the Bitcoin network field in the OpenCSV send sheet. */
 "OPENCSV_SEND_NETWORK_PLACEHOLDER" = "Network (signet, mainnet, regtest)";

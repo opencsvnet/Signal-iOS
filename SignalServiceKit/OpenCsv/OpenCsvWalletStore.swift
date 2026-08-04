@@ -19,6 +19,28 @@ public enum OpenCsvPaymentDirection: String, Codable {
     case thirdParty
 }
 
+/// Wallet activity for an incoming consignment before and after it becomes
+/// spendable. Only `.available` entries have passed the complete accept
+/// driver; `.confirming` is deliberately display-only and never contributes
+/// to balances or coin selection.
+public enum OpenCsvIncomingActivityState: String, Codable {
+    case confirming
+    case available
+    case needsAttention
+}
+
+public struct OpenCsvIncomingActivity: Codable, Equatable {
+    public let attachmentId: Attachment.IDType
+    public let threadUniqueId: String?
+    public let messageUniqueId: String?
+    public let state: OpenCsvIncomingActivityState
+    public let amount: UInt64?
+    public let currency: String?
+    public let detail: String?
+    public let firstSeenAt: Date
+    public let updatedAt: Date
+}
+
 /// A stored verification verdict for one consignment attachment, keyed by
 /// attachment id. What the conversation cell renders.
 public struct OpenCsvVerdictRecord: Codable, Equatable {
@@ -212,6 +234,7 @@ public struct OpenCsvWalletStore {
     private static let linkedWatchAccountKey = "linkedWatchAccount.v1"
     private static let pendingDeliveriesKey = "pendingDeliveries"
     private static let pendingAccountOperationsKey = "pendingAccountOperations.v1"
+    private static let incomingActivitiesKey = "incomingActivities.v1"
     private static let inFlightSendsKey = "inFlightSends"
     private static let indexerUrlsKey = "indexerUrls"
     private static let spvPeersKey = "spvPeers"
@@ -499,6 +522,79 @@ public struct OpenCsvWalletStore {
         guard record.isVerified, let blob else { return }
         let replayEntry = record.consignmentId.map { "c:\($0)" } ?? "a:\(attachmentId)"
         appendReplayEntry(replayEntry, blob: blob, tx: tx)
+    }
+
+    // MARK: - Incoming activity
+
+    public func incomingActivities(tx: DBReadTransaction) -> [OpenCsvIncomingActivity] {
+        do {
+            return try keyValueStore.getCodableValue(
+                forKey: Self.incomingActivitiesKey,
+                transaction: tx,
+            ) ?? []
+        } catch {
+            owsFailDebug("could not decode OpenCSV incoming activity: \(error)")
+            return []
+        }
+    }
+
+    /// Persist one idempotent state transition. The list is bounded because
+    /// it is wallet presentation history, not the protocol journal.
+    public func upsertIncomingActivity(
+        attachmentId: Attachment.IDType,
+        threadUniqueId: String?,
+        messageUniqueId: String?,
+        state: OpenCsvIncomingActivityState,
+        amount: UInt64? = nil,
+        currency: String? = nil,
+        detail: String? = nil,
+        now: Date = Date(),
+        tx: DBWriteTransaction,
+    ) throws {
+        var activities = incomingActivities(tx: tx)
+        let existing = activities.first { $0.attachmentId == attachmentId }
+        activities.removeAll { $0.attachmentId == attachmentId }
+        // Amounts are ledger facts, not hints from an unverified envelope.
+        // Never carry an earlier amount backward into a confirming row.
+        let resolvedAmount: UInt64? = switch state {
+        case .available:
+            amount ?? existing?.amount
+        case .confirming, .needsAttention:
+            nil
+        }
+        activities.append(OpenCsvIncomingActivity(
+            attachmentId: attachmentId,
+            threadUniqueId: threadUniqueId ?? existing?.threadUniqueId,
+            messageUniqueId: messageUniqueId ?? existing?.messageUniqueId,
+            state: state,
+            amount: resolvedAmount,
+            currency: currency ?? existing?.currency,
+            detail: detail,
+            firstSeenAt: existing?.firstSeenAt ?? now,
+            updatedAt: now,
+        ))
+        activities.sort { $0.firstSeenAt < $1.firstSeenAt }
+        if activities.count > 100 {
+            activities.removeFirst(activities.count - 100)
+        }
+        try keyValueStore.setCodable(
+            activities,
+            key: Self.incomingActivitiesKey,
+            transaction: tx,
+        )
+    }
+
+    public func removeIncomingActivity(
+        attachmentId: Attachment.IDType,
+        tx: DBWriteTransaction,
+    ) throws {
+        var activities = incomingActivities(tx: tx)
+        activities.removeAll { $0.attachmentId == attachmentId }
+        try keyValueStore.setCodable(
+            activities,
+            key: Self.incomingActivitiesKey,
+            transaction: tx,
+        )
     }
 
     /// Exactly one transport attachment renders as the logical payment for

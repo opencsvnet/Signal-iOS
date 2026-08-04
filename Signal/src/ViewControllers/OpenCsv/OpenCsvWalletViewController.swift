@@ -36,6 +36,7 @@ class OpenCsvWalletViewController: OWSViewController {
     private let advancedStack = UIStackView()
     private let esploraField = UITextField()
     private let spvPeersField = UITextField()
+    private let scanFromHeightField = UITextField()
     private let networkField = UITextField()
     private var owner: String?
     private var bitcoinDepositAddress: String?
@@ -323,6 +324,11 @@ class OpenCsvWalletViewController: OWSViewController {
                 "Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet.",
             ),
             (
+                scanFromHeightField,
+                "OPENCSV_WALLET_SCAN_FROM_HEIGHT_PLACEHOLDER",
+                "Placeholder for the earliest Bitcoin height covered by the phone-owned OpenCSV scan.",
+            ),
+            (
                 esploraField,
                 "OPENCSV_WALLET_ESPLORA_PLACEHOLDER",
                 "Placeholder for the generic Esplora read accelerator in the OpenCSV wallet.",
@@ -337,6 +343,8 @@ class OpenCsvWalletViewController: OWSViewController {
         }
         esploraField.addTarget(self, action: #selector(esploraChanged), for: .editingDidEnd)
         spvPeersField.addTarget(self, action: #selector(spvPeersChanged), for: .editingDidEnd)
+        scanFromHeightField.keyboardType = .numberPad
+        scanFromHeightField.addTarget(self, action: #selector(scanFromHeightChanged), for: .editingDidEnd)
         networkField.addTarget(self, action: #selector(networkChanged), for: .editingDidEnd)
         stack.addArrangedSubview(advancedStack)
 
@@ -357,7 +365,7 @@ class OpenCsvWalletViewController: OWSViewController {
                     instruments: summary.instruments,
                 )
                 self.balanceLabel.text = OpenCsvUsdAmount.format(usdSummary.total)
-                self.balanceStatusLabel.text = usdSummary.hasConfiguredIssuer
+                let balanceStatus = usdSummary.hasConfiguredIssuer
                     ? OWSLocalizedString(
                         "OPENCSV_WALLET_USD_READY",
                         comment: "Status below the USD balance when at least one reviewed issuer is configured.",
@@ -365,6 +373,18 @@ class OpenCsvWalletViewController: OWSViewController {
                     : OWSLocalizedString(
                         "OPENCSV_WALLET_USD_NOT_AVAILABLE",
                         comment: "Status below the USD balance when this build has no reviewed issuer configured.",
+                    )
+                let confirmingCount = summary.incomingActivities.lazy
+                    .filter { $0.state == .confirming }
+                    .count
+                self.balanceStatusLabel.text = confirmingCount == 0
+                    ? balanceStatus
+                    : balanceStatus + "\n" + String.nonPluralLocalizedStringWithFormat(
+                        OWSLocalizedString(
+                            "OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT",
+                            comment: "Wallet status for incoming OpenCSV payments that are visible but not spendable. Embeds the count.",
+                        ),
+                        "\(confirmingCount)",
                     )
                 self.instrumentDetailsLabel.text = Self.renderHoldings(
                     summary.balances,
@@ -411,15 +431,20 @@ class OpenCsvWalletViewController: OWSViewController {
                 self.feeBumpCandidates = summary.operations.filter {
                     ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
                 }
-                self.operationHistoryLabel.text = summary.operations.isEmpty
+                let incomingActivity = summary.incomingActivities.suffix(8).reversed().map {
+                    Self.renderIncomingActivity($0)
+                }
+                let outgoingActivity = summary.operations.suffix(8).reversed().map {
+                    let txid = $0.txid.map { String($0.prefix(10)) } ?? "unsigned"
+                    return "\($0.kind) · \($0.state) · \(txid)"
+                }
+                let activity = incomingActivity + outgoingActivity
+                self.operationHistoryLabel.text = activity.isEmpty
                     ? OWSLocalizedString(
                         "OPENCSV_WALLET_NO_ACTIVITY",
                         comment: "Shown when there are no OpenCSV wallet operations yet.",
                     )
-                    : summary.operations.suffix(8).reversed().map {
-                        let txid = $0.txid.map { String($0.prefix(10)) } ?? "unsigned"
-                        return "\($0.kind) · \($0.state) · \(txid)"
-                    }.joined(separator: "\n")
+                    : activity.joined(separator: "\n")
                 let latestTxid = summary.operations.reversed().compactMap(\.txid).first
                 self.latestExplorerUrl = latestTxid.flatMap { txid in
                     switch summary.network {
@@ -437,6 +462,7 @@ class OpenCsvWalletViewController: OWSViewController {
                     && !self.feeBumpCandidates.isEmpty
                 self.esploraField.text = summary.esploraUrl?.absoluteString
                 self.spvPeersField.text = summary.spvPeers.joined(separator: ", ")
+                self.scanFromHeightField.text = "\(summary.scanFromHeight)"
                 self.networkField.text = summary.network
             } catch {
                 self.balanceLabel.text = "—"
@@ -546,6 +572,36 @@ class OpenCsvWalletViewController: OWSViewController {
             ].joined(separator: "\n")
         }
         return sections.joined(separator: "\n\n")
+    }
+
+    private static func renderIncomingActivity(_ activity: OpenCsvIncomingActivity) -> String {
+        switch activity.state {
+        case .confirming:
+            return OWSLocalizedString(
+                "OPENCSV_WALLET_ACTIVITY_CONFIRMING",
+                comment: "Incoming wallet activity that is visible but not spendable.",
+            )
+        case .available:
+            guard let amount = activity.amount else {
+                return OWSLocalizedString(
+                    "OPENCSV_WALLET_ACTIVITY_AVAILABLE",
+                    comment: "Incoming wallet activity that has become spendable.",
+                )
+            }
+            return String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_ACTIVITY_AVAILABLE_FORMAT",
+                    comment: "Incoming wallet activity that has become spendable. Embeds amount and currency.",
+                ),
+                OpenCsvUsdAmount.format(amount),
+                activity.currency ?? "USD",
+            )
+        case .needsAttention:
+            return OWSLocalizedString(
+                "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION",
+                comment: "Incoming wallet activity that failed definitive verification.",
+            )
+        }
     }
 
     private struct UsdSummary {
@@ -822,6 +878,19 @@ class OpenCsvWalletViewController: OWSViewController {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         Task { await OpenCsvPayments.shared.setSpvPeers(peers) }
+    }
+
+    @objc
+    private func scanFromHeightChanged() {
+        guard
+            let text = scanFromHeightField.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+            let height = UInt64(text),
+            height > 0
+        else {
+            refresh()
+            return
+        }
+        Task { await OpenCsvPayments.shared.setScanFromHeight(height) }
     }
 
     @objc

@@ -170,6 +170,7 @@ public enum AppNotificationCategory: String, CaseIterable {
     case pollEndNotification = "Signal.AppNotificationCategory.pollEndNotification"
     case pollVoteNotification = "Signal.AppNotificationCategory.pollVoteNotification"
     case attachmentBackfill = "Signal.AppNotificationCategory.attachmentBackfill"
+    case openCsvPaymentStatus = "Signal.AppNotificationCategory.openCsvPaymentStatus"
     case releaseNotesMessage = "Signal.AppNotificationCategory.releaseNotesMessage"
     case nse_lowDiskSpace = "Signal.AppNotificationCategory.nse.lowDiskSpace"
     case nse_dbNotAvailable = "Signal.AppNotificationCategory.nse.dbNotAvailable"
@@ -194,6 +195,7 @@ public enum AppNotificationCategory: String, CaseIterable {
             .pollEndNotification,
             .pollVoteNotification,
             .attachmentBackfill,
+            .openCsvPaymentStatus,
             .releaseNotesMessage,
             .nse_lowDiskSpace,
             .nse_dbNotAvailable:
@@ -254,6 +256,8 @@ public enum AppNotificationCategory: String, CaseIterable {
         case .pollVoteNotification:
             return []
         case .attachmentBackfill:
+            return []
+        case .openCsvPaymentStatus:
             return []
         case .releaseNotesMessage:
             return [.markAsRead]
@@ -1330,6 +1334,32 @@ public class NotificationPresenterImpl: NotificationPresenter {
                 userInfo: userInfo,
                 soundQuery: .none,
                 replacingIdentifier: "attachmentBackfill-\(messageUniqueId)",
+            )
+        }
+    }
+
+    public func notifyUserOfOpenCsvPaymentStatus(
+        threadUniqueId: String,
+        messageUniqueId: String,
+        body: String,
+        wantsSound: Bool,
+    ) {
+        var userInfo = AppNotificationUserInfo()
+        userInfo.threadId = threadUniqueId
+        userInfo.messageId = messageUniqueId
+        userInfo.defaultAction = .showMessage
+        enqueueNotificationAction {
+            await self.notifyViaPresenter(
+                category: .openCsvPaymentStatus,
+                title: ResolvableValue(resolvedValue: OWSLocalizedString(
+                    "OPENCSV_NOTIFICATION_TITLE",
+                    comment: "Title of an OpenCSV payment status notification.",
+                )),
+                body: body,
+                threadIdentifier: threadUniqueId,
+                userInfo: userInfo,
+                soundQuery: wantsSound ? .thread(threadUniqueId) : .none,
+                replacingIdentifier: "openCsvPayment-\(messageUniqueId)",
             )
         }
     }
