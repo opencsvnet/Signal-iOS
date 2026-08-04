@@ -81,3 +81,9 @@ both Signal build modes, focused tests, and review gates pass. Installation on
 the linked iPhone 16e must be an in-place signed upgrade that preserves its
 Signal account and message database. Wiping/relinking the phone, mainnet
 broadcast, release, and upstream submission require separate owner approval.
+
+An account database is permanently bound to its Bitcoin network. Advanced
+settings reject network changes after account creation instead of repurposing
+descriptors, checkpoints, or the sibling `.cbf` cache. Regtest chain resets
+and signet/mainnet testing therefore use clean isolated installations; the app
+never deletes or silently reuses a cache from another chain.

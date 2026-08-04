@@ -54,6 +54,13 @@ public enum OpenCsvPaymentsError: Error {
     /// (AnchorNotFound / InsufficientConfirmations). Nothing is stored;
     /// the sweep retries once the chain view advances.
     case chainViewLagging(reason: String)
+    /// Bitcoin descriptors, checkpoints, and compact-filter caches are all
+    /// chain-specific. Changing the network of an existing account would
+    /// either strand it behind Rust's network guard or mix test histories.
+    case networkChangeRequiresIsolatedWallet(current: String, requested: String)
+    /// The account wallet supports only chains with authoritative CBF
+    /// verification wired through this integration.
+    case unsupportedNetwork(String)
 }
 
 /// The OpenCSV payments service: owns the Rust account wallet and runs the
@@ -1124,9 +1131,21 @@ public actor OpenCsvPayments {
         accountWallet = nil
     }
 
-    public func setNetwork(_ network: String) async {
+    public func setNetwork(_ network: String) async throws {
+        let requested = network.lowercased()
+        guard ["mainnet", "signet", "regtest"].contains(requested) else {
+            throw OpenCsvPaymentsError.unsupportedNetwork(network)
+        }
+        let current = db.read { self.store.network(tx: $0) }
+        guard requested != current else { return }
+        guard !Self.hasPersistedAccountDatabase() else {
+            throw OpenCsvPaymentsError.networkChangeRequiresIsolatedWallet(
+                current: current,
+                requested: requested,
+            )
+        }
         await db.awaitableWrite { tx in
-            self.store.setNetwork(network, tx: tx)
+            self.store.setNetwork(requested, tx: tx)
         }
         // The scan index and header cache are per-network; a change makes
         // any synced state meaningless until the next sync, and the
@@ -1134,6 +1153,26 @@ public actor OpenCsvPayments {
         scanSyncedThisLaunch = false
         closeCbfClient()
         accountWallet = nil
+    }
+
+    /// Network selection is permitted only before a durable account exists.
+    /// Regtest resets and signet/mainnet transitions use an isolated install;
+    /// account databases and their sibling `.cbf` caches are never deleted or
+    /// silently repurposed by a settings edit.
+    private static func hasPersistedAccountDatabase() -> Bool {
+        let directory = OWSFileSystem.appSharedDataDirectoryURL()
+            .appendingPathComponent("opencsv", isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+        ) else {
+            return false
+        }
+        return entries.contains { url in
+            url.lastPathComponent == "account.sqlite"
+                || (url.lastPathComponent.hasPrefix("linked-account-")
+                    && url.pathExtension == "sqlite")
+        }
     }
 
     /// A stored verdict, for the conversation cell (main-thread render path).

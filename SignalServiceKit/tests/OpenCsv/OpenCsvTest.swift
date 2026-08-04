@@ -692,6 +692,46 @@ struct OpenCsvClientFfiTest {
     }
 
     @Test
+    func accountDatabaseRejectsCrossNetworkReuse() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("opencsv-network-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databasePath = directory.appendingPathComponent("account.sqlite").path
+        let root = Data(repeating: 28, count: 32)
+        let binding = Data(repeating: 29, count: 32)
+
+        _ = try OpenCsvAccountWallet(
+            config: accountConfig(),
+            accountRoot: root,
+            deviceBinding: binding,
+            databasePath: databasePath,
+        )
+        let mainnet = OpenCsvAccountConfig(
+            network: "mainnet",
+            esploraUrl: "https://mempool.space/api",
+            peers: ["seed.bitcoin.sipa.be:8333", "dnsseed.bluematt.me:8333"],
+            verificationPeers: ["seed.bitcoin.sipa.be:8333", "dnsseed.bluematt.me:8333"],
+            role: .primary,
+            backupVerified: false,
+            requiredConfirmations: 6,
+        )
+        do {
+            _ = try OpenCsvAccountWallet(
+                config: mainnet,
+                accountRoot: root,
+                deviceBinding: binding,
+                databasePath: databasePath,
+            )
+            Issue.record("a durable account database must never change Bitcoin networks")
+        } catch let OpenCsvClientError.ffi(message) {
+            #expect(message.contains("database is for regtest, not mainnet"))
+        } catch {
+            Issue.record("unexpected network-reuse error: \(error)")
+        }
+    }
+
+    @Test
     func accountCheckpointRestoresOnlyIntoMatchingReadOnlyAccount() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("opencsv-restore-\(UUID().uuidString)", isDirectory: true)

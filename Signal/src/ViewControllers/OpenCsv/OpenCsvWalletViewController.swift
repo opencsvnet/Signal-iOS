@@ -522,7 +522,23 @@ class OpenCsvWalletViewController: OWSViewController {
     @objc
     private func networkChanged() {
         let network = networkField.text?.strippedOrNil ?? "signet"
-        Task { await OpenCsvPayments.shared.setNetwork(network) }
+        Task {
+            do {
+                try await OpenCsvPayments.shared.setNetwork(network)
+                self.refresh()
+            } catch OpenCsvPaymentsError.networkChangeRequiresIsolatedWallet(let current, let requested) {
+                self.networkField.text = current
+                self.presentError(
+                    "This wallet is bound to \(current). Use a clean isolated installation to test \(requested); existing wallet and CBF cache data were not changed.",
+                )
+            } catch OpenCsvPaymentsError.unsupportedNetwork(let requested) {
+                self.refresh()
+                self.presentError("Unsupported Bitcoin network: \(requested).")
+            } catch {
+                self.refresh()
+                self.presentError("\(error)")
+            }
+        }
     }
 
     // MARK: - Helpers
