@@ -352,7 +352,7 @@ public actor OpenCsvPayments {
         guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
             throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
         }
-        let account = try ensureAccountWallet()
+        let account = try await ensureAccountWallet()
         let snapshot = try await fetchAndCacheSnapshot()
         let verdict = try account.verify(blob: blob, snapshotJson: snapshot)
         return (verdict, snapshot)
@@ -646,7 +646,7 @@ public actor OpenCsvPayments {
         }
         isSending = true
         defer { isSending = false }
-        let account = try ensureAccountWallet()
+        let account = try await ensureAccountWallet()
         _ = try account.sync()
         var status = try account.status()
         if !status.backupVerified {
@@ -709,7 +709,7 @@ public actor OpenCsvPayments {
         }
         isSending = true
         defer { isSending = false }
-        let account = try ensureAccountWallet()
+        let account = try await ensureAccountWallet()
         _ = try account.sync()
         if try !account.status().backupVerified {
             try await backUpAccountCheckpoint(account: account)
@@ -750,7 +750,7 @@ public actor OpenCsvPayments {
         }
         isSending = true
         defer { isSending = false }
-        let account = try ensureAccountWallet()
+        let account = try await ensureAccountWallet()
         if try !account.status().backupVerified {
             try await backUpAccountCheckpoint(account: account)
         }
@@ -842,7 +842,7 @@ public actor OpenCsvPayments {
                 state: operation.state,
             )
         }
-        let owner = try ensureAccountWallet().status().owners.first
+        let owner = try await ensureAccountWallet().status().owners.first
         var body = OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count)
         if let owner {
             body += "\n" + OpenCsvAttachmentDetector.addressAnnouncement(owner: owner)
@@ -872,7 +872,7 @@ public actor OpenCsvPayments {
 
     /// Resume Rust-durable operations and migrate any prototype-era sends.
     public func recoverInterruptedSends() async {
-        if let account = try? ensureAccountWallet() {
+        if let account = try? await ensureAccountWallet() {
             let operations = (try? db.read { try self.store.pendingAccountOperations(tx: $0) }) ?? []
             for pending in operations {
                 do {
@@ -1031,7 +1031,7 @@ public actor OpenCsvPayments {
             return
         }
         do {
-            let account = try ensureAccountWallet()
+            let account = try await ensureAccountWallet()
             _ = try account.markDelivered(operationId: operationId, deliveryNonce: nonce)
             try await finishDeliveryAcknowledgement(operationId: operationId)
         } catch {
@@ -1092,7 +1092,7 @@ public actor OpenCsvPayments {
     // MARK: - Settings / status
 
     public func walletSummary() async throws -> WalletSummary {
-        let account = try ensureAccountWallet()
+        let account = try await ensureAccountWallet()
         let status = try account.status()
         return WalletSummary(
             owner: status.owners.first ?? "",
@@ -1300,7 +1300,7 @@ public actor OpenCsvPayments {
     /// Open the durable Rust-owned account with only public policy in JSON.
     /// Secret root/binding bytes cross the FFI in dedicated byte buffers;
     /// linked devices receive public descriptors and no root at all.
-    private func ensureAccountWallet() throws -> OpenCsvAccountWallet {
+    private func ensureAccountWallet() async throws -> OpenCsvAccountWallet {
         if let accountWallet {
             return accountWallet
         }
@@ -1395,7 +1395,7 @@ public actor OpenCsvPayments {
             guard watchAccount.isValidForLinkedProvisioning else {
                 throw OpenCsvClientError.decode("primary account returned invalid public watch material")
             }
-            let changed = try db.write { tx in
+            let changed = try await db.awaitableWrite { tx in
                 let changed = try store.linkedWatchAccount(tx: tx) != watchAccount
                 if changed {
                     try store.setLinkedWatchAccount(watchAccount, tx: tx)
@@ -1420,8 +1420,8 @@ public actor OpenCsvPayments {
     /// Refresh the read-rich fee wallet through its non-authoritative
     /// Esplora accelerator. Selected spend state is still rechecked through
     /// compact-filter/full-block verification by Rust before signing.
-    public func syncAccount() throws -> OpenCsvAccountSyncReport {
-        try ensureAccountWallet().sync()
+    public func syncAccount() async throws -> OpenCsvAccountSyncReport {
+        try await ensureAccountWallet().sync()
     }
 
     private func secureBackupIsEnabled() -> Bool {
