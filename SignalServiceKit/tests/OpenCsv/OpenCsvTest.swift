@@ -67,6 +67,132 @@ struct OpenCsvSecureBackupValidationTest {
     }
 }
 
+struct OpenCsvSendAssetSelectionTest {
+    private let usd = OpenCsvCredit(
+        assetId: String(repeating: "11", count: 32),
+        currency: "USD",
+        amount: 40,
+    )
+    private let eur = OpenCsvCredit(
+        assetId: String(repeating: "22", count: 32),
+        currency: "EUR",
+        amount: 25,
+    )
+
+    @Test
+    func singleAssetNeedsNoExplicitChoice() throws {
+        #expect(try OpenCsvPayments.resolveSendAsset([usd], requestedAssetId: nil) == usd)
+    }
+
+    @Test
+    func multipleAssetsResolveOnlyTheExactChoice() throws {
+        #expect(try OpenCsvPayments.resolveSendAsset(
+            [usd, eur],
+            requestedAssetId: eur.assetId,
+        ) == eur)
+    }
+
+    @Test
+    func multipleAssetsWithoutChoiceReportsStableIds() {
+        do {
+            _ = try OpenCsvPayments.resolveSendAsset([eur, usd], requestedAssetId: nil)
+            Issue.record("expected an explicit asset choice")
+        } catch OpenCsvPaymentsError.assetNotSpecified(let available) {
+            #expect(available == [usd.assetId, eur.assetId])
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func emptyOrStaleChoiceNeverSelectsAnotherAsset() {
+        for (assets, requested) in [
+            ([OpenCsvCredit](), nil),
+            ([usd, eur], String(repeating: "33", count: 32)),
+        ] {
+            do {
+                _ = try OpenCsvPayments.resolveSendAsset(assets, requestedAssetId: requested)
+                Issue.record("expected zero available funds")
+            } catch OpenCsvPaymentsError.insufficientFunds(let available) {
+                #expect(available == 0)
+            } catch {
+                Issue.record("unexpected error: \(error)")
+            }
+        }
+    }
+}
+
+struct OpenCsvUsdPreviewAmountTest {
+    @Test
+    func parsesHumanAmountsExactly() {
+        #expect(OpenCsvUsdPreviewAmount.parse("1") == 1_000_000)
+        #expect(OpenCsvUsdPreviewAmount.parse("1.25") == 1_250_000)
+        #expect(OpenCsvUsdPreviewAmount.parse("0.000001") == 1)
+        #expect(OpenCsvUsdPreviewAmount.parse(" 42.5 ") == 42_500_000)
+    }
+
+    @Test
+    func rejectsAmbiguousInvalidOrOverflowingAmounts() {
+        for invalid in ["", ".5", "1.", "-1", "1.0000001", "1,25", "USD 1"] {
+            #expect(OpenCsvUsdPreviewAmount.parse(invalid) == nil)
+        }
+        #expect(OpenCsvUsdPreviewAmount.parse("18446744073709551615") == nil)
+    }
+
+    @Test
+    func formatsWithoutInventingPrecision() {
+        #expect(OpenCsvUsdPreviewAmount.format(0) == "0")
+        #expect(OpenCsvUsdPreviewAmount.format(1) == "0.000001")
+        #expect(OpenCsvUsdPreviewAmount.format(1_250_000) == "1.25")
+    }
+}
+
+struct OpenCsvFeeReservePolicyTest {
+    private func reserve(
+        confirmedSats: UInt64,
+        outputs: [(value: UInt64, reserved: Bool)],
+    ) -> OpenCsvAccountStatus.FeeReserve {
+        OpenCsvAccountStatus.FeeReserve(
+            confirmedSats: confirmedSats,
+            trustedPendingSats: 0,
+            untrustedPendingSats: 0,
+            immatureSats: 0,
+            totalSats: confirmedSats,
+            utxos: outputs.enumerated().map { index, output in
+                OpenCsvAccountStatus.FeeReserve.Utxo(
+                    txid: String(repeating: "ab", count: 32),
+                    vout: UInt32(index),
+                    valueSats: output.value,
+                    keychain: "external",
+                    derivationIndex: UInt32(index),
+                    reserved: output.reserved,
+                )
+            },
+        )
+    }
+
+    @Test
+    func requiresOneConfirmedUnreservedOutputAtThePinnedMinimum() {
+        #expect(OpenCsvPayments.minimumFeeReserveSats == 2_500)
+        #expect(!OpenCsvPayments.hasConfirmedUnreservedFeeUtxo(reserve(
+            confirmedSats: 2_499,
+            outputs: [(2_499, false)],
+        )))
+        #expect(!OpenCsvPayments.hasConfirmedUnreservedFeeUtxo(reserve(
+            confirmedSats: 2_500,
+            outputs: [(2_500, true)],
+        )))
+        #expect(!OpenCsvPayments.hasConfirmedUnreservedFeeUtxo(reserve(
+            confirmedSats: 2_500,
+            outputs: [(1_250, false), (1_250, false)],
+        )))
+        #expect(OpenCsvPayments.hasConfirmedUnreservedFeeUtxo(reserve(
+            confirmedSats: 2_500,
+            outputs: [(2_500, false)],
+        )))
+    }
+}
+
 struct OpenCsvAttachmentDetectorTest {
     @Test
     func detectsByFilename() {

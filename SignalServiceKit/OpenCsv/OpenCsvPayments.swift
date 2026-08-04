@@ -29,6 +29,10 @@ public enum OpenCsvPaymentsError: Error {
     case insufficientFunds(available: UInt64)
     /// Another send is mid-flight; its coins are not yet marked spent.
     case sendAlreadyInProgress
+    /// No confirmed, unreserved Bitcoin output can fund an OpenCSV anchor.
+    /// The Rust wallet remains the authority; this typed error keeps its
+    /// stable rejection reason out of user-facing UI copy.
+    case feeReserveRequired(minimumSats: UInt64, confirmedSats: UInt64)
     /// The wallet holds more than one asset and none was chosen.
     case assetNotSpecified(available: [String])
     /// The recipient key is not 32 bytes of hex.
@@ -86,6 +90,11 @@ public actor OpenCsvPayments {
     /// is generous and still cheap to reject.
     public static let maxConsignmentBytes = 1024 * 1024
 
+    /// Rust's minimum value for the first, context-binding funding input.
+    /// Keep this pinned by tests until the account status schema exposes the
+    /// policy value directly.
+    public static let minimumFeeReserveSats: UInt64 = 2_500
+
     private var wallet: OpenCsvWallet?
     /// Durable Signal-native account. This owns the Bitcoin fee wallet,
     /// protocol keys, UTXO reservations, signed transactions, and operation
@@ -134,6 +143,7 @@ public actor OpenCsvPayments {
         /// The wallet's receiving key (share with senders; e.g. mint target).
         public let owner: String
         public let balances: [OpenCsvCredit]
+        public let instruments: [OpenCsvInstrumentRecord]
         public let operations: [OpenCsvAccountOperationSummary]
         public let feeReserve: OpenCsvAccountStatus.FeeReserve
         public let bitcoinDepositAddress: String
@@ -655,14 +665,14 @@ public actor OpenCsvPayments {
             try await backUpAccountCheckpoint(account: account)
             status = try account.status()
         }
+        try Self.requireFeeReserve(status.feeReserve)
 
-        let assetIds = Set(status.assets.map(\.assetId))
-        guard let assetId = assetIds.count == 1 ? assetIds.first : assetIdHex else {
-            throw OpenCsvPaymentsError.assetNotSpecified(available: assetIds.sorted())
-        }
-        guard let asset = status.assets.first(where: { $0.assetId == assetId }) else {
-            throw OpenCsvPaymentsError.insufficientFunds(available: 0)
-        }
+        let previewAssetIds = Set(status.instruments.lazy
+            .filter { $0.profile == "usd_preview_v1" }
+            .map(\.assetId))
+        let previewAssets = status.assets.filter { previewAssetIds.contains($0.assetId) }
+        let asset = try Self.resolveSendAsset(previewAssets, requestedAssetId: assetIdHex)
+        let assetId = asset.assetId
         guard asset.amount >= amount else {
             throw OpenCsvPaymentsError.insufficientFunds(available: asset.amount)
         }
@@ -670,11 +680,21 @@ public actor OpenCsvPayments {
         // Rust—not Swift—selects and reserves both protocol coins and the
         // fee UTXO, derives change, binds the first input to the proof, and
         // persists the proof-ready operation.
-        let prepared = try account.prepareTransfer(
-            assetId: assetId,
-            toOwner: recipient,
-            amount: amount,
-        )
+        let prepared: OpenCsvPreparedOperation
+        do {
+            prepared = try account.prepareTransfer(
+                assetId: assetId,
+                toOwner: recipient,
+                amount: amount,
+            )
+        } catch OpenCsvClientError.ffi(let message)
+            where message.contains("no confirmed, unreserved fee UTXO")
+        {
+            throw OpenCsvPaymentsError.feeReserveRequired(
+                minimumSats: Self.minimumFeeReserveSats,
+                confirmedSats: status.feeReserve.confirmedSats,
+            )
+        }
         let pending = OpenCsvWalletStore.PendingAccountOperation(
             operationId: prepared.operationId,
             threadUniqueId: threadUniqueId,
@@ -691,41 +711,114 @@ public actor OpenCsvPayments {
         )
     }
 
-    /// Create a new issuer-controlled asset inside Signal and anchor its
-    /// first issuance with the same Rust-owned fee/backup policy as a send.
-    /// The resulting consignment is delivered into the current conversation
-    /// as the reproducible mint receipt.
-    public func mintAsset(
-        currency: String,
+    /// Resolve a user-selected asset against the freshly synchronized wallet
+    /// state. A single asset remains zero-tap; multiple assets require an
+    /// exact id, and an empty/stale choice never falls through to another
+    /// asset merely because its currency label happens to match.
+    nonisolated static func resolveSendAsset(
+        _ assets: [OpenCsvCredit],
+        requestedAssetId: String?,
+    ) throws -> OpenCsvCredit {
+        let assetIds = Set(assets.map(\.assetId))
+        guard !assetIds.isEmpty else {
+            throw OpenCsvPaymentsError.insufficientFunds(available: 0)
+        }
+        guard let assetId = assetIds.count == 1 ? assetIds.first : requestedAssetId else {
+            throw OpenCsvPaymentsError.assetNotSpecified(available: assetIds.sorted())
+        }
+        guard let asset = assets.first(where: { $0.assetId == assetId }) else {
+            throw OpenCsvPaymentsError.insufficientFunds(available: 0)
+        }
+        return asset
+    }
+
+    /// Whether the public account status has an output that can satisfy the
+    /// first funding-input policy. Rust rechecks this at reservation time.
+    public nonisolated static func hasConfirmedUnreservedFeeUtxo(
+        _ reserve: OpenCsvAccountStatus.FeeReserve,
+    ) -> Bool {
+        guard reserve.confirmedSats >= minimumFeeReserveSats else { return false }
+        return reserve.utxos.contains {
+            !$0.reserved && $0.valueSats >= minimumFeeReserveSats
+        }
+    }
+
+    nonisolated private static func requireFeeReserve(
+        _ reserve: OpenCsvAccountStatus.FeeReserve,
+    ) throws {
+        guard hasConfirmedUnreservedFeeUtxo(reserve) else {
+            throw OpenCsvPaymentsError.feeReserveRequired(
+                minimumSats: minimumFeeReserveSats,
+                confirmedSats: reserve.confirmedSats,
+            )
+        }
+    }
+
+    /// Issue the wallet's single built-in USD Preview product. Rust creates
+    /// its fixed definition on first use, then Signal secures that exact
+    /// checkpoint before any Bitcoin-backed issuance can proceed.
+    public func issuePreviewUsd(
         amount: UInt64,
         threadUniqueId: String,
     ) async throws -> OpenCsvWalletStore.PendingDelivery {
         guard !isSending else {
             throw OpenCsvPaymentsError.sendAlreadyInProgress
         }
-        let currency = currency.uppercased()
-        guard currency.utf8.count == 3, amount > 0 else {
-            throw OpenCsvClientError.ffi("mint requires a three-byte currency and positive amount")
+        guard amount > 0 else {
+            throw OpenCsvClientError.ffi("issuance amount must be positive")
         }
         isSending = true
         defer { isSending = false }
         let account = try await ensureAccountWallet()
         _ = try account.sync()
-        if try !account.status().backupVerified {
+        var status = try account.status()
+        if !status.backupVerified {
             try await backUpAccountCheckpoint(account: account)
+            status = try account.status()
         }
-        let prepared = try account.prepareMint(currency: currency, amounts: [amount])
-        guard let assetId = prepared.assetId else {
+        let created = try account.ensurePreviewUsd()
+        if created.backupRequired {
+            try await backUpAccountCheckpoint(
+                account: account,
+                expectedCheckpointHash: created.checkpointHash,
+            )
+            status = try account.status()
+        }
+        try Self.requireFeeReserve(status.feeReserve)
+        guard
+            let instrument = status.instruments.first(where: {
+                $0.assetId == created.assetId && $0.profile == "usd_preview_v1"
+            }),
+            let manifest = instrument.manifest,
+            instrument.trustState == "reviewed"
+        else {
+            throw OpenCsvClientError.ffi(
+                "the fixed OpenCSV USD Preview definition is unavailable",
+            )
+        }
+        let assetId = instrument.assetId
+        let prepared: OpenCsvPreparedOperation
+        do {
+            prepared = try account.prepareIssuance(assetId: assetId, amounts: [amount])
+        } catch OpenCsvClientError.ffi(let message)
+            where message.contains("no confirmed, unreserved fee UTXO")
+        {
+            throw OpenCsvPaymentsError.feeReserveRequired(
+                minimumSats: Self.minimumFeeReserveSats,
+                confirmedSats: status.feeReserve.confirmedSats,
+            )
+        }
+        guard prepared.assetId == assetId else {
             try? account.cancel(prepared.operationId)
-            throw OpenCsvClientError.decode("mint receipt omitted its derived asset id")
+            throw OpenCsvClientError.decode("issuance receipt did not preserve its instrument id")
         }
         let pending = OpenCsvWalletStore.PendingAccountOperation(
             operationId: prepared.operationId,
             threadUniqueId: threadUniqueId,
             amount: amount,
-            currency: currency,
+            currency: manifest.terms.unitCode,
             assetId: assetId,
-            kind: "mint",
+            kind: "issuance",
             createdAt: Date(),
         )
         return try await signPreparedOperation(
@@ -1097,6 +1190,7 @@ public actor OpenCsvPayments {
         return WalletSummary(
             owner: status.owners.first ?? "",
             balances: status.assets,
+            instruments: status.instruments,
             operations: try account.operationSummaries(),
             feeReserve: status.feeReserve,
             bitcoinDepositAddress: status.depositAddress,

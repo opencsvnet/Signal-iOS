@@ -21,6 +21,96 @@ public struct OpenCsvCredit: Codable, Equatable {
     public let amount: UInt64
 }
 
+/// Versioned issuer-backed instrument terms committed by asset genesis.
+public struct OpenCsvInstrumentTerms: Codable, Equatable {
+    public let version: UInt32
+    public let network: String
+    public let displayName: String
+    public let unitCode: String
+    public let decimals: UInt8
+    public let issuerName: String
+    public let termsUri: String
+    public let redemptionSummary: String
+    public let testOnly: Bool
+
+    public init(
+        version: UInt32 = 1,
+        network: String,
+        displayName: String,
+        unitCode: String,
+        decimals: UInt8,
+        issuerName: String,
+        termsUri: String,
+        redemptionSummary: String,
+        testOnly: Bool,
+    ) {
+        self.version = version
+        self.network = network
+        self.displayName = displayName
+        self.unitCode = unitCode
+        self.decimals = decimals
+        self.issuerName = issuerName
+        self.termsUri = termsUri
+        self.redemptionSummary = redemptionSummary
+        self.testOnly = testOnly
+    }
+}
+
+public struct OpenCsvInstrumentManifest: Codable, Equatable {
+    public struct Genesis: Codable, Equatable {
+        public let issuerPk: [UInt8]
+        public let currencyCode: [UInt8]
+        public let termsHash: [UInt8]
+        public let nonce: UInt64
+    }
+
+    public let terms: OpenCsvInstrumentTerms
+    public let genesis: Genesis
+}
+
+/// Exact instrument identity and local trust classification. Proof validity
+/// never upgrades `trustState`; that is a separate recipient decision.
+public struct OpenCsvInstrumentRecord: Codable, Equatable {
+    public let assetId: String
+    public let trustState: String
+    /// Wallet product policy, assigned by Rust from the exact committed
+    /// manifest. Swift never infers identity from the `USD` display code.
+    public let profile: String
+    public let manifest: OpenCsvInstrumentManifest?
+}
+
+/// Exact decimal conversion for the built-in USD Preview presentation. The
+/// protocol stores six-decimal base units; UI code never uses floating point.
+public enum OpenCsvUsdPreviewAmount {
+    public static let baseUnitsPerUnit: UInt64 = 1_000_000
+
+    public static func parse(_ rawValue: String) -> UInt64? {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count <= 2, let whole = UInt64(parts[0]) else { return nil }
+        let fractionText = parts.count == 2 ? String(parts[1]) : ""
+        guard
+            parts.count == 1 || !fractionText.isEmpty,
+            fractionText.count <= 6,
+            fractionText.utf8.allSatisfy({ (48...57).contains($0) })
+        else { return nil }
+        let paddedFraction = fractionText.padding(toLength: 6, withPad: "0", startingAt: 0)
+        guard let fraction = UInt64(paddedFraction) else { return nil }
+        let (scaledWhole, overflow) = whole.multipliedReportingOverflow(by: baseUnitsPerUnit)
+        guard !overflow else { return nil }
+        let (baseUnits, additionOverflow) = scaledWhole.addingReportingOverflow(fraction)
+        return additionOverflow ? nil : baseUnits
+    }
+
+    public static func format(_ baseUnits: UInt64) -> String {
+        let whole = baseUnits / baseUnitsPerUnit
+        let fraction = String(format: "%06llu", baseUnits % baseUnitsPerUnit)
+            .replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
+        return fraction.isEmpty ? "\(whole)" : "\(whole).\(fraction)"
+    }
+}
+
 /// One coin held by the wallet.
 public struct OpenCsvCoin: Codable, Equatable {
     public let id: String
@@ -177,6 +267,7 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
     public let network: String
     public let owners: [String]
     public let assets: [OpenCsvCredit]
+    public let instruments: [OpenCsvInstrumentRecord]
     public let feeReserve: FeeReserve
     public let depositAddress: String
     public let watchDescriptors: WatchDescriptors
@@ -205,6 +296,13 @@ public struct OpenCsvPreparedOperation: Codable, Equatable {
     public let toOwner: String?
     public let checkpointHash: String
     public let backupAckRequired: Bool
+}
+
+public struct OpenCsvCreatedInstrument: Codable, Equatable {
+    public let assetId: String
+    public let manifest: OpenCsvInstrumentManifest
+    public let checkpointHash: String
+    public let backupRequired: Bool
 }
 
 public struct OpenCsvAccountOperation: Codable, Equatable {
@@ -380,21 +478,25 @@ public final class OpenCsvAccountWallet {
         }
     }
 
-    public func prepareMint(
-        currency: String,
+    /// Ensure the fixed test-only USD preview definition exists. No custom
+    /// terms cross the FFI boundary.
+    public func ensurePreviewUsd() throws -> OpenCsvCreatedInstrument {
+        try Self.take(opencsv_preview_usd_ensure(handle))
+    }
+
+    public func prepareIssuance(
+        assetId: String,
         amounts: [UInt64],
-        assetId: String? = nil,
         toOwner: String? = nil,
     ) throws -> OpenCsvPreparedOperation {
         struct Request: Codable {
-            let currency: String
-            let amounts: [UInt64]
-            let assetId: String?
+            let assetId: String
             let toOwner: String?
+            let amounts: [UInt64]
         }
         return try callJson(
-            Request(currency: currency, amounts: amounts, assetId: assetId, toOwner: toOwner),
-            opencsv_mint_prepare,
+            Request(assetId: assetId, toOwner: toOwner, amounts: amounts),
+            opencsv_issuance_prepare,
         )
     }
 

@@ -6806,13 +6806,145 @@
 "OPENCSV_SEND_TO_FORMAT" = "to %@";
 
 /* Disclosure button revealing advanced chain configuration. */
-"OPENCSV_WALLET_ADVANCED" = "Advanced";
+"OPENCSV_WALLET_ADVANCED" = "Show advanced settings";
+
+/* Disclosure button hiding advanced chain configuration. */
+"OPENCSV_WALLET_HIDE_ADVANCED" = "Hide advanced settings";
 
 /* Section header for receiving payments (this wallet's key). */
 "OPENCSV_WALLET_RECEIVE" = "Receive";
 
+/* Abbreviated OpenCSV receiving key. Embeds key prefix and key suffix. */
+"OPENCSV_WALLET_RECEIVE_KEY_FORMAT" = "%1$@…%2$@ · tap to copy";
+
 /* Title of the OpenCSV wallet screen. */
 "OPENCSV_WALLET_TITLE" = "Wallet";
+
+/* Section header for the assets held by the OpenCSV wallet. */
+"OPENCSV_WALLET_ASSETS" = "Assets";
+
+/* Button opening the fixed USD preview issuer control. */
+"OPENCSV_WALLET_ISSUER_TOOLS" = "USD preview issuer";
+
+/* Disclosure that USD Preview is a valueless signet test and not USDT. */
+"OPENCSV_WALLET_USD_PREVIEW_DISCLOSURE" = "Test only · no monetary value · not USDT";
+
+/* State shown before the USD preview issuer definition exists. */
+"OPENCSV_WALLET_USD_PREVIEW_NOT_ACTIVATED" = "Activates on the first issuance";
+
+/* Title for a manifested custom instrument no longer supported by the preview wallet. */
+"OPENCSV_WALLET_UNSUPPORTED_INSTRUMENT" = "Read-only custom prototype";
+
+/* Title for a legacy asset with no committed instrument manifest. */
+"OPENCSV_WALLET_PROTOTYPE_ASSET" = "Unverified prototype asset";
+
+/* Warning label for a test-only instrument. */
+"OPENCSV_WALLET_TEST_INSTRUMENT" = "Test only · no monetary value";
+
+/* Title of the fixed USD preview issuer screen. */
+"OPENCSV_ISSUER_TOOLS_TITLE" = "USD Preview";
+
+/* Explanation of the fixed, test-only USD preview issuer action. */
+"OPENCSV_ISSUER_TOOLS_EXPLANATION" = "OpenCSV currently supports one built-in test instrument. Its definition is fixed in the wallet; only the issuance amount is editable.";
+
+/* Section title for the fixed USD preview instrument. */
+"OPENCSV_ISSUER_INSTRUMENTS" = "Built-in instrument";
+
+/* Warning that production instrument activation needs explicit owner approval. */
+"OPENCSV_ISSUER_MAINNET_DISABLED" = "USD Preview cannot be issued on mainnet. A production issuer requires a separately authenticated asset version and explicit owner approval.";
+
+/* Button opening an instrument's complete terms document. */
+"OPENCSV_ISSUER_OPEN_TERMS" = "Open complete terms";
+
+/* Button issuing the fixed test-only USD preview instrument. */
+"OPENCSV_ISSUER_ISSUE_UNITS" = "Issue test USD";
+
+/* Placeholder for a human USD preview amount. */
+"OPENCSV_ISSUER_BASE_UNITS_PLACEHOLDER" = "0.00 USD";
+
+/* Warning shown before issuing test-only USD preview units. */
+"OPENCSV_ISSUER_USD_PREVIEW_WARNING" = "These signet units have no monetary value and are not dollars or USDT. The first issuance activates the fixed definition and secures it in Signal Backup.";
+
+/* Instruction to open USD issuance from a Signal conversation. */
+"OPENCSV_ISSUER_CONVERSATION_REQUIRED" = "Open the wallet from a Signal conversation to issue and deliver USD Preview.";
+
+/* Button confirming an exact instrument issuance. */
+"OPENCSV_ISSUER_REVIEW_ISSUANCE" = "Issue USD Preview";
+
+/* Confirmation after instrument units are issued and delivery is queued. */
+"OPENCSV_ISSUER_ISSUANCE_COMMITTED" = "Issuance committed and receipt queued.";
+
+/* Title of the instrument definition form. */
+"OPENCSV_ISSUER_DEFINE_INSTRUMENT" = "Define instrument";
+
+/* Warning that signet and regtest instruments are valueless tests. */
+"OPENCSV_ISSUER_TEST_DEFINITION_WARNING" = "This definition is test-only and represents no backing or monetary value. A unit code is a label, not an asset identity.";
+
+/* Button reviewing an instrument definition before activation. */
+"OPENCSV_ISSUER_REVIEW_DEFINITION" = "Review definition";
+
+/* Confirmation creating the reviewed instrument definition. */
+"OPENCSV_ISSUER_CREATE_DEFINITION" = "Create definition";
+
+/* Error shown when an instrument definition is incomplete. */
+"OPENCSV_ISSUER_DEFINITION_INCOMPLETE" = "Complete every field and enter decimals from 0 through 18.";
+
+/* Error shown for an invalid unit code or terms URL. */
+"OPENCSV_ISSUER_DEFINITION_INVALID" = "Use exactly three uppercase letters for the unit code and an HTTPS terms URL.";
+
+/* Section header for the Bitcoin reserve used only for OpenCSV protocol fees. */
+"OPENCSV_WALLET_FEE_RESERVE" = "Bitcoin fee reserve";
+
+/* Explanation of the restricted Bitcoin fee reserve. */
+"OPENCSV_WALLET_FEE_RESERVE_EXPLANATION" = "Used only to anchor OpenCSV operations. This wallet cannot send Bitcoin to arbitrary recipients.";
+
+/* Bitcoin fee reserve summary. Embeds total sats and confirmed sats. */
+"OPENCSV_WALLET_FEE_RESERVE_FORMAT" = "%1$@ sats · %2$@ confirmed";
+
+/* Button that reveals the Bitcoin fee-reserve funding address. */
+"OPENCSV_WALLET_SHOW_FUNDING_ADDRESS" = "Show funding address";
+
+/* Button that hides the Bitcoin fee-reserve funding address. */
+"OPENCSV_WALLET_HIDE_FUNDING_ADDRESS" = "Hide funding address";
+
+/* Confirmation that the Bitcoin fee-reserve address was copied. */
+"OPENCSV_WALLET_FEE_ADDRESS_COPIED" = "Fee-reserve address copied.";
+
+/* Error shown when the Bitcoin fee reserve cannot yet fund an OpenCSV operation. Embeds the minimum output value in sats. */
+"OPENCSV_WALLET_FEE_RESERVE_REQUIRED_FORMAT" = "Add at least %1$@ sats to the fee-reserve address and wait for confirmation before issuing or sending.";
+
+/* Section header for OpenCSV wallet operation history. */
+"OPENCSV_WALLET_ACTIVITY" = "Activity";
+
+/* Shown when there are no OpenCSV wallet operations yet. */
+"OPENCSV_WALLET_NO_ACTIVITY" = "No OpenCSV transactions yet.";
+
+/* Shown in advanced wallet details when there are no Bitcoin fee UTXOs. */
+"OPENCSV_WALLET_NO_FEE_UTXOS" = "No fee UTXOs";
+
+/* Button that raises the fee of an unconfirmed OpenCSV transaction. */
+"OPENCSV_WALLET_FEE_BUMP" = "Raise transaction fee";
+
+/* Title asking for a target Bitcoin fee rate. */
+"OPENCSV_WALLET_FEE_RATE" = "Target fee rate";
+
+/* Button opening the latest OpenCSV Bitcoin fee transaction in a public explorer. */
+"OPENCSV_WALLET_OPEN_LATEST_TRANSACTION" = "View latest transaction";
+
+/* Confirmation that an OpenCSV wallet operation was committed. */
+"OPENCSV_WALLET_OPERATION_COMMITTED" = "OpenCSV operation saved.";
+
+/* Section header for legacy MobileCoin recovery material. */
+"OPENCSV_LEGACY_MOBILECOIN_TITLE" = "Legacy MobileCoin";
+
+/* Read-only warning shown when legacy MobileCoin recovery material remains on the device. */
+"OPENCSV_LEGACY_MOBILECOIN_WARNING" = "Legacy MobileCoin recovery material is still stored safely. It is read-only and has not been deleted.";
+
+/* Button opening the protected export flow for a legacy MobileCoin recovery phrase. */
+"OPENCSV_LEGACY_MOBILECOIN_EXPORT" = "View recovery phrase";
+
+/* Placeholder for the generic Esplora read accelerator in the OpenCSV wallet. */
+"OPENCSV_WALLET_ESPLORA_PLACEHOLDER" = "Esplora read endpoint";
 
 /* Placeholder for the amount field in the OpenCSV send sheet. */
 "OPENCSV_SEND_AMOUNT_PLACEHOLDER" = "Amount (base units)";
@@ -6829,11 +6961,17 @@
 /* Button that proves and sends an OpenCSV payment. */
 "OPENCSV_SEND_BUTTON" = "Prove & Send";
 
+/* Button that opens the OpenCSV wallet from the send sheet. */
+"OPENCSV_SEND_VIEW_WALLET" = "View Wallet";
+
 /* Generic error shown when an OpenCSV payment could not be sent. */
 "OPENCSV_SEND_ERROR_GENERIC" = "Could not send the payment.";
 
 /* Error shown when a payment is already being sent. */
 "OPENCSV_SEND_ERROR_IN_PROGRESS" = "A payment is already being sent.";
+
+/* Error shown when the Bitcoin fee reserve cannot fund an OpenCSV send. Embeds the minimum output value in sats. */
+"OPENCSV_SEND_ERROR_FEE_RESERVE_FORMAT" = "The Bitcoin fee reserve needs one confirmed, unreserved output of at least %1$@ sats before sending.";
 
 /* Error shown when the amount exceeds the balance. Embeds {{ available amount }}. */
 "OPENCSV_SEND_ERROR_INSUFFICIENT_FORMAT" = "Not enough funds. Available: %@.";
@@ -6845,7 +6983,7 @@
 "OPENCSV_SEND_ERROR_NO_SERVER" = "Set an anchor server first.";
 
 /* Error shown when the OpenCSV amount field is not a positive integer. */
-"OPENCSV_SEND_ERROR_BAD_AMOUNT" = "Enter a positive whole amount.";
+"OPENCSV_SEND_ERROR_BAD_AMOUNT" = "Enter a positive USD amount with no more than six decimal places.";
 
 /* Error shown when the OpenCSV recipient key field is empty. */
 "OPENCSV_SEND_ERROR_NO_RECIPIENT" = "Enter the recipient's owner key.";
@@ -6862,8 +7000,8 @@
 /* Error shown when the recipient key is not valid hex. */
 "OPENCSV_SEND_ERROR_BAD_RECIPIENT" = "That recipient key is not valid.";
 
-/* Error shown when the wallet holds several assets and none was chosen. */
-"OPENCSV_SEND_ERROR_MULTIPLE_ASSETS" = "This wallet holds several assets; choose one to send.";
+/* Error shown if the exact built-in USD Preview identity cannot be resolved. */
+"OPENCSV_SEND_ERROR_MULTIPLE_ASSETS" = "USD Preview identity is unavailable. Refresh Wallet and try again.";
 
 /* Status shown when the recipient key was prefilled. Embeds {{ who announced it }}. */
 "OPENCSV_SEND_RECIPIENT_FROM_CHAT_FORMAT" = "Using the key shared by %@.";
@@ -6873,6 +7011,9 @@
 
 /* Shown in the OpenCSV send sheet when the wallet is empty. */
 "OPENCSV_SEND_NO_BALANCE" = "No balance";
+
+/* Explanation shown in the OpenCSV send sheet when the wallet has no assets. */
+"OPENCSV_SEND_EMPTY_STATE" = "No spendable USD Preview yet. Open Wallet from this conversation and issue test USD first.";
 
 /* Placeholder for the recipient owner key field in the OpenCSV send sheet. */
 "OPENCSV_SEND_RECIPIENT_PLACEHOLDER" = "Recipient owner key (hex)";
