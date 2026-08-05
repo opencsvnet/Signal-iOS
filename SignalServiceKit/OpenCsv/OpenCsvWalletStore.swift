@@ -4,6 +4,9 @@
 //
 
 import Foundation
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+import CryptoKit
+#endif
 
 /// Which side of a payment this wallet is on.
 public enum OpenCsvPaymentDirection: String, Codable {
@@ -252,6 +255,42 @@ public struct OpenCsvSecureBackupPayload: Codable, Equatable {
     }
 }
 
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+public struct OpenCsvPendingTestDeviceRebind: Codable, Equatable {
+    public enum Stage: String, Codable, Equatable, Sendable {
+        case planned
+        case checkpointReady
+        case materialInstalled
+        case backupStaged
+    }
+
+    public let version: UInt32
+    public let sourceCheckpointHash: String
+    public let priorDeviceBindingCommitment: String
+    public let newDeviceBinding: Data
+    public let newDeviceBindingCommitment: String
+    public var stage: Stage
+    public var checkpointJson: String?
+    public var checkpointHash: String?
+
+    fileprivate init(
+        sourceCheckpointHash: String,
+        priorDeviceBindingCommitment: String,
+        newDeviceBinding: Data,
+        newDeviceBindingCommitment: String,
+    ) {
+        self.version = 1
+        self.sourceCheckpointHash = sourceCheckpointHash
+        self.priorDeviceBindingCommitment = priorDeviceBindingCommitment
+        self.newDeviceBinding = newDeviceBinding
+        self.newDeviceBindingCommitment = newDeviceBindingCommitment
+        self.stage = .planned
+        self.checkpointJson = nil
+        self.checkpointHash = nil
+    }
+}
+#endif
+
 /// Public wallet material distributed to linked Signal devices. It is safe to
 /// sync through Signal's device channel: no account root, issuer secret, or
 /// Bitcoin signing material is present.
@@ -304,6 +343,9 @@ public struct OpenCsvWalletStore {
     private static let keychainService = "OpenCsvPayments"
     private static let primaryAccountMaterialKey = "primaryAccountMaterial.v1"
     private static let restoredAccountRootKey = "restoredAccountRoot.v1"
+    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+    private static let pendingTestDeviceRebindKey = "pendingTestDeviceRebind.v1"
+    #endif
     private static let keychainKey = "walletSecrets"
 
     private static let anchorServerUrlKey = "anchorServerUrl"
@@ -317,6 +359,7 @@ public struct OpenCsvWalletStore {
     private static let spvPeersKey = "spvPeers"
     private static let scanFromHeightKey = "scanFromHeight"
     private static let networkKey = "network"
+    private static let observationModesKey = "observationModes.v1"
     private static let replayOrderKey = "replayOrder"
     private static let spentCoinIdsKey = "spentCoinIds"
     private static let lastSnapshotKey = "lastSnapshot"
@@ -408,6 +451,105 @@ public struct OpenCsvWalletStore {
             key: Self.restoredAccountRootKey,
         )
     }
+
+    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+    public func pendingTestDeviceRebind() throws -> OpenCsvPendingTestDeviceRebind? {
+        do {
+            let data = try keychainStorage.dataValue(
+                service: Self.keychainService,
+                key: Self.pendingTestDeviceRebindKey,
+            )
+            let pending = try JSONDecoder().decode(OpenCsvPendingTestDeviceRebind.self, from: data)
+            guard pending.version == 1, pending.newDeviceBinding.count == 32 else {
+                throw OpenCsvAccountMaterialError.invalidLength
+            }
+            return pending
+        } catch KeychainError.notFound {
+            return nil
+        }
+    }
+
+    public func beginTestDeviceRebind(
+        payload: OpenCsvSecureBackupPayload,
+        randomBytes: (Int) -> Data = { Randomness.generateRandomBytes(UInt($0)) },
+    ) throws -> OpenCsvPendingTestDeviceRebind {
+        if let existing = try pendingTestDeviceRebind() {
+            guard
+                existing.sourceCheckpointHash == payload.checkpointHash,
+                existing.priorDeviceBindingCommitment == payload.deviceBindingCommitment
+            else {
+                throw OpenCsvAccountMaterialError.conflictingAccountRoot
+            }
+            return existing
+        }
+        guard
+            let material = try accountMaterial(),
+            material.isRestoredReadOnly,
+            material.accountRoot == payload.accountRoot
+        else {
+            throw OpenCsvAccountMaterialError.conflictingAccountRoot
+        }
+        let binding = randomBytes(32)
+        guard binding.count == 32 else {
+            throw OpenCsvAccountMaterialError.invalidLength
+        }
+        var commitmentInput = Data("OpenCSV device binding v1".utf8)
+        commitmentInput.append(payload.accountRoot)
+        commitmentInput.append(binding)
+        let commitment = SHA256.hash(data: commitmentInput)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let pending = OpenCsvPendingTestDeviceRebind(
+            sourceCheckpointHash: payload.checkpointHash,
+            priorDeviceBindingCommitment: payload.deviceBindingCommitment,
+            newDeviceBinding: binding,
+            newDeviceBindingCommitment: commitment,
+        )
+        try setPendingTestDeviceRebind(pending)
+        return pending
+    }
+
+    public func setPendingTestDeviceRebind(_ pending: OpenCsvPendingTestDeviceRebind) throws {
+        let data = try JSONEncoder().encode(pending)
+        try keychainStorage.setDataValue(
+            data,
+            service: Self.keychainService,
+            key: Self.pendingTestDeviceRebindKey,
+        )
+    }
+
+    /// Write the combined root+binding first, then remove the root-only key.
+    /// A crash between those operations is harmless because reads prefer the
+    /// combined record and both records name the same root.
+    public func installReboundAccountMaterial(
+        root: Data,
+        binding: Data,
+    ) throws {
+        if let current = try accountMaterial(), !current.isRestoredReadOnly {
+            guard current.accountRoot == root, current.deviceBinding == binding else {
+                throw OpenCsvAccountMaterialError.conflictingAccountRoot
+            }
+            return
+        }
+        let material = try OpenCsvAccountMaterial(accountRoot: root, deviceBinding: binding)
+        try keychainStorage.setDataValue(
+            JSONEncoder().encode(material),
+            service: Self.keychainService,
+            key: Self.primaryAccountMaterialKey,
+        )
+        try keychainStorage.removeValue(
+            service: Self.keychainService,
+            key: Self.restoredAccountRootKey,
+        )
+    }
+
+    public func finishTestDeviceRebind() throws {
+        try keychainStorage.removeValue(
+            service: Self.keychainService,
+            key: Self.pendingTestDeviceRebindKey,
+        )
+    }
+    #endif
 
     // MARK: - Legacy wallet secrets (retained read-only for migration)
 
@@ -542,6 +684,50 @@ public struct OpenCsvWalletStore {
 
     public func setNetwork(_ network: String, tx: DBWriteTransaction) {
         keyValueStore.setString(network, key: Self.networkKey, transaction: tx)
+    }
+
+    /// Persist only operator-selected modes. The check identity, endpoint,
+    /// kind and built-in pin profile continue to come from the reviewed app
+    /// binary, so a database edit cannot silently redirect a required check
+    /// or replace its certificate profile.
+    public func observationChecks(tx: DBReadTransaction) -> [OpenCsvObservationCheck] {
+        let defaults = OpenCsvObservationCheck.defaults(for: network(tx: tx))
+        let modes: [String: OpenCsvObservationMode] =
+            (try? keyValueStore.getCodableValue(
+                forKey: Self.observationModesKey,
+                transaction: tx,
+            )) ?? [:]
+        return defaults.map { check in
+            OpenCsvObservationCheck(
+                id: check.id,
+                kind: check.kind,
+                endpoint: check.endpoint,
+                mode: modes[check.id] ?? check.mode,
+                pinProfile: check.pinProfile,
+                chainFingerprintsSha256: check.chainFingerprintsSha256,
+                maxAgeSeconds: check.maxAgeSeconds,
+            )
+        }
+    }
+
+    /// Returns false for an unknown check id. Callers must never create a
+    /// new endpoint by typo or by accepting an unreviewed server string.
+    @discardableResult
+    public func setObservationMode(
+        _ mode: OpenCsvObservationMode,
+        checkId: String,
+        tx: DBWriteTransaction,
+    ) throws -> Bool {
+        let knownIds = Set(OpenCsvObservationCheck.defaults(for: network(tx: tx)).map(\.id))
+        guard knownIds.contains(checkId) else { return false }
+        var modes: [String: OpenCsvObservationMode] =
+            (try? keyValueStore.getCodableValue(
+                forKey: Self.observationModesKey,
+                transaction: tx,
+            )) ?? [:]
+        modes[checkId] = mode
+        try keyValueStore.setCodable(modes, key: Self.observationModesKey, transaction: tx)
+        return true
     }
 
     // MARK: - Snapshot cache (for offline startup replay)

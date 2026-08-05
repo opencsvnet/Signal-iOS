@@ -98,6 +98,60 @@ struct OpenCsvSyncProvenanceTest {
     }
 }
 
+struct OpenCsvPinnedObserverProfileTest {
+    @Test
+    func builtInSignetProfilesAreImmutableCaChainPins() {
+        let mempool = OpenCsvPinnedObserver.mempoolSpace
+        #expect(mempool.checkId == "mempool_space_signet")
+        #expect(mempool.endpoint == "https://mempool.space/signet/api")
+        #expect(mempool.host == "mempool.space")
+        #expect(mempool.certificateProfile == "sectigo_r46")
+        #expect(mempool.chainPins == [
+            "6542d176bed50f193c0ce297ae44ecd8a0a86bec2ede682769344059b4e78530",
+            "92f351bf3d54164dfa8dd8f9e1139d3150349786485d2b9eecd00e2971c1e6c5",
+        ])
+
+        let blockstream = OpenCsvPinnedObserver.blockstream
+        #expect(blockstream.checkId == "blockstream_signet")
+        #expect(blockstream.endpoint == "https://blockstream.info/signet/api")
+        #expect(blockstream.host == "blockstream.info")
+        #expect(blockstream.certificateProfile == "lets_encrypt_yr")
+        #expect(blockstream.chainPins.count == 4)
+        #expect(blockstream.chainPins.contains(
+            "238b85a0099c65b970477d5724f1a1d475ce5058cffe4efa8733899bdb863c47",
+        ))
+
+        // Subscriber leaves rotate frequently and are intentionally absent;
+        // every reviewed value is an intermediate, root, or cross-certificate.
+        #expect(mempool.chainPins.allSatisfy { $0.count == 64 })
+        #expect(blockstream.chainPins.allSatisfy { $0.count == 64 })
+
+        // Rust's serde boundary is snake_case even though Swift call sites
+        // use native lowerCamelCase case names.
+        #expect(OpenCsvObservationKind.rawTransactionApi.rawValue == "raw_transaction_api")
+        #expect(OpenCsvObservationKind.directP2pRelay.rawValue == "direct_p2p_relay")
+        #expect(OpenCsvObservationKind.experimentalP2pPossession.rawValue == "experimental_p2p_possession")
+        #expect(OpenCsvObservationKind.confirmedSpv.rawValue == "confirmed_spv")
+        let policy = OpenCsvObservationCheck.defaults(for: "signet")
+        #expect(Set(policy[0].chainFingerprintsSha256) == mempool.chainPins)
+        #expect(Set(policy[1].chainFingerprintsSha256) == blockstream.chainPins)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCSV_PINNED_OBSERVER_TXID"] != nil))
+    func livePinnedProvidersReturnTheSameExactTransaction() async throws {
+        let txid = try #require(ProcessInfo.processInfo.environment["OPENCSV_PINNED_OBSERVER_TXID"])
+        let observation = try await OpenCsvPinnedObserver.observeSignetTransaction(
+            txid: txid,
+            policy: OpenCsvObservationCheck.defaults(for: "signet"),
+        )
+        #expect(observation.evidence.count == 2)
+        #expect(observation.evidence.allSatisfy { $0.result == "observed" })
+        #expect(observation.evidence.allSatisfy { !$0.certificateChainFingerprintsSha256.isEmpty })
+        #expect(Set(observation.evidence.compactMap(\.rawTransactionHex)).count == 1)
+        #expect(observation.rawTransaction.hexadecimalString == observation.evidence[0].rawTransactionHex)
+    }
+}
+
 struct OpenCsvSecureBackupValidationTest {
     private static let extensionField =
         "in frame 1, item.account has unknown field with tag 17"
@@ -551,6 +605,45 @@ final class OpenCsvWalletStoreTest {
         }
     }
 
+    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+    @Test
+    func testDeviceRebindMaterialIsStableAndCrashResumable() throws {
+        let keychain = MockKeychainStorage()
+        let store = OpenCsvWalletStore(keychainStorage: keychain)
+        let root = Data(repeating: 7, count: 32)
+        try store.installRestoredAccountRoot(root)
+        let payload = try OpenCsvSecureBackupPayload(
+            version: 1,
+            accountRoot: root,
+            checkpointJson: #"{"checkpoint":{"version":1}}"#,
+            checkpointHash: String(repeating: "a", count: 64),
+            deviceBindingCommitment: String(repeating: "b", count: 64),
+        )
+        let first = try store.beginTestDeviceRebind(payload: payload) { count in
+            Data(repeating: 8, count: count)
+        }
+        let replay = try store.beginTestDeviceRebind(payload: payload) { count in
+            Data(repeating: 9, count: count)
+        }
+        #expect(first == replay)
+        #expect(first.newDeviceBinding == Data(repeating: 8, count: 32))
+        #expect(first.newDeviceBindingCommitment.count == 64)
+
+        var advanced = first
+        advanced.stage = .checkpointReady
+        advanced.checkpointHash = String(repeating: "c", count: 64)
+        try store.setPendingTestDeviceRebind(advanced)
+        #expect(try store.pendingTestDeviceRebind() == advanced)
+
+        try store.installReboundAccountMaterial(root: root, binding: advanced.newDeviceBinding)
+        let rebound = try #require(try store.accountMaterial())
+        #expect(rebound.accountRoot == root)
+        #expect(rebound.deviceBinding == advanced.newDeviceBinding)
+        try store.finishTestDeviceRebind()
+        #expect(try store.pendingTestDeviceRebind() == nil)
+    }
+    #endif
+
     @Test
     func secureBackupPayloadCarriesRootButNoDeviceBinding() throws {
         let root = Data(repeating: 7, count: 32)
@@ -569,6 +662,31 @@ final class OpenCsvWalletStoreTest {
         }
         #expect(restored == payload)
         #expect(restored?.accountRoot == root)
+    }
+
+    @Test
+    func observationModesPersistWithoutChangingReviewedEndpointsOrPins() throws {
+        let original = db.read { store.observationChecks(tx: $0) }
+        let mempool = try #require(original.first { $0.id == "mempool_space_signet" })
+        #expect(mempool.mode == .require)
+        #expect(mempool.endpoint == "https://mempool.space/signet/api")
+        #expect(mempool.pinProfile == "sectigo_r46")
+
+        var changedKnownCheck = false
+        var changedUnknownCheck = true
+        try db.write { tx in
+            changedKnownCheck = try store.setObservationMode(.observe, checkId: mempool.id, tx: tx)
+            changedUnknownCheck = try store.setObservationMode(.off, checkId: "typo.example", tx: tx)
+        }
+        #expect(changedKnownCheck)
+        #expect(!changedUnknownCheck)
+
+        let reopened = db.read { store.observationChecks(tx: $0) }
+        let changed = try #require(reopened.first { $0.id == mempool.id })
+        #expect(changed.mode == .observe)
+        #expect(changed.endpoint == mempool.endpoint)
+        #expect(changed.pinProfile == mempool.pinProfile)
+        #expect(changed.kind == mempool.kind)
     }
 
     @Test

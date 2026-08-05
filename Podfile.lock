@@ -58,7 +58,7 @@ DEPENDENCIES:
   - libwebp
   - lottie-ios
   - MobileCoin/CoreHTTP (from `https://github.com/mobilecoinofficial/MobileCoin-Swift`, tag `v6.0.3`)
-  - OpenCsv (from `https://github.com/opencsvnet/opencsv-rs.git`, commit `46a3e4870e55cc8fe8908c411ae56c1229ce3b76`)
+  - OpenCsv (from `https://github.com/opencsvnet/opencsv-rs.git`, commit `b9afa1aac8e53e86f0e937f0b7055dbb2d8e8f63`)
   - PureLayout
   - SDWebImage
   - SDWebImageWebPCoder
@@ -96,7 +96,7 @@ EXTERNAL SOURCES:
     :git: https://github.com/mobilecoinofficial/MobileCoin-Swift
     :tag: v6.0.3
   OpenCsv:
-    :commit: 46a3e4870e55cc8fe8908c411ae56c1229ce3b76
+    :commit: b9afa1aac8e53e86f0e937f0b7055dbb2d8e8f63
     :git: https://github.com/opencsvnet/opencsv-rs.git
   SignalRingRTC:
     :git: https://github.com/signalapp/ringrtc
@@ -123,7 +123,7 @@ CHECKOUT OPTIONS:
     :git: https://github.com/mobilecoinofficial/MobileCoin-Swift
     :tag: v6.0.3
   OpenCsv:
-    :commit: 46a3e4870e55cc8fe8908c411ae56c1229ce3b76
+    :commit: b9afa1aac8e53e86f0e937f0b7055dbb2d8e8f63
     :git: https://github.com/opencsvnet/opencsv-rs.git
   SignalRingRTC:
     :git: https://github.com/signalapp/ringrtc
@@ -133,7 +133,7 @@ CHECKOUT OPTIONS:
     :tag: v4.6.1-f_barrierfsync
 
 SPEC CHECKSUMS:
-  blurhash: f588a9d659f4c742a325bbbbd438d1ef3c34af19
+  blurhash: 4b3b2b8909cf41ab59fa349788654b8387284ff4
   BonMot: fb2b6a2209cb3149aca37b7131d49c051c04ae86
   CocoaLumberjack: 543c79c114dadc3b1aba95641d8738b06b05b646
   GRDB.swift: 1395cb3556df6b16ed69dfc74c3886abc75d2825
@@ -144,7 +144,7 @@ SPEC CHECKSUMS:
   Logging: beeb016c9c80cf77042d62e83495816847ef108b
   lottie-ios: fcb5e73e17ba4c983140b7d21095c834b3087418
   MobileCoin: cd7f49d6eaa2d362e4c9f8324cae0cc3bc3c53b5
-  OpenCsv: b23d15321819e582a5c6f8564919562155392691
+  OpenCsv: eea5e780408e760c062a035a7448b2c7fe4e5695
   PureLayout: f08c01b8dec00bb14a1fefa3de4c7d9c265df85e
   SDWebImage: 9f177d83116802728e122410fb25ad88f5c7608a
   SDWebImageWebPCoder: e38c0a70396191361d60c092933e22c20d5b1380
@@ -152,6 +152,6 @@ SPEC CHECKSUMS:
   SQLCipher: ff2f045b20d675a73a70f7329395ddd4a2580063
   SwiftProtobuf: 9e106a71456f4d3f6a3b0c8fd87ef0be085efc38
 
-PODFILE CHECKSUM: 9099dfa22c5077e38415ebc71321143a1bb9978c
+PODFILE CHECKSUM: 3ef8df7ce4aba65625bc7910b0a4d1de19eef4b0
 
 COCOAPODS: 1.17.0

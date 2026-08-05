@@ -930,6 +930,7 @@
 		55BD355C2F16DAC0008E989C /* input_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = 5531BE0E2F15B97F002AF66F /* input_video.mp4 */; };
 		5AA002E62CA24566002D1CC2 /* SessionStoreTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AA002E52CA2455F002D1CC2 /* SessionStoreTest.swift */; };
 		60DA76194C3EB21A72731438 /* OpenCsvWalletStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6EC518B1AAC22182814F6DE /* OpenCsvWalletStore.swift */; };
+		C0D3A4B50000000000000001 /* OpenCsvPinnedObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D3A4B50000000000000002 /* OpenCsvPinnedObserver.swift */; };
 		616577F953D77424E32C7438 /* Pods_SignalUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 675486AB8F0612FF2C717BAE /* Pods_SignalUI.framework */; };
 		6600BB1A2BA3A0930005A035 /* LinkPreviewManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6600BB192BA3A0930005A035 /* LinkPreviewManager.swift */; };
 		6600BB212BA3BC540005A035 /* LinkPreviewHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6600BB202BA3BC540005A035 /* LinkPreviewHelper.swift */; };
@@ -6089,6 +6090,7 @@
 		A566C0C0B69138202C0367E6 /* Pods-Signal.app store release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Signal.app store release.xcconfig"; path = "Target Support Files/Pods-Signal/Pods-Signal.app store release.xcconfig"; sourceTree = "<group>"; };
 		A5E7C674248C5442007C949A /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = translations/en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		A6EC518B1AAC22182814F6DE /* OpenCsvWalletStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenCsvWalletStore.swift; sourceTree = "<group>"; };
+		C0D3A4B50000000000000002 /* OpenCsvPinnedObserver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenCsvPinnedObserver.swift; sourceTree = "<group>"; };
 		A780A90C5DDC028939E97635 /* LowDiskSpaceManager.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LowDiskSpaceManager.swift; sourceTree = "<group>"; };
 		B3F39202F831935AAE1C5F54 /* Pods_SignalUITests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_SignalUITests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		B60EDE031A05A01700D73516 /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
@@ -8760,10 +8762,10 @@
 		1C090010A00505B5E7BDA761 /* OpenCsv */ = {
 			isa = PBXGroup;
 			children = (
-				CE53056093A0BDE880BE5CB3 /* OpenCsvSendPaymentSheet.swift */,
-				0C5E01AB44D21E77A3F09B02 /* OpenCsvPaymentExplorerViewController.swift */,
-				0C5E01AB44D21E77A3F09B04 /* OpenCsvWalletViewController.swift */,
 				D04C0CF3D967B70249C31E0D /* OpenCsvDelivery.swift */,
+				0C5E01AB44D21E77A3F09B02 /* OpenCsvPaymentExplorerViewController.swift */,
+				CE53056093A0BDE880BE5CB3 /* OpenCsvSendPaymentSheet.swift */,
+				0C5E01AB44D21E77A3F09B04 /* OpenCsvWalletViewController.swift */,
 			);
 			name = OpenCsv;
 			path = OpenCsv;
@@ -9073,6 +9075,7 @@
 				50CF28EF2829C94800752AB3 /* CVComponentGiftBadge.swift */,
 				3426A36F25631C220036407F /* CVComponentLinkPreview.swift */,
 				347C383B252CE6C900F3D941 /* CVComponentMessage.swift */,
+				D6901E688671D8EDF8FFF806 /* CVComponentOpenCsvPayment.swift */,
 				6605D4FE2A86B3FF004DC345 /* CVComponentPaymentAttachment.swift */,
 				04A573652E4CEE560019651F /* CVComponentPoll.swift */,
 				347C383E252CE6C900F3D941 /* CVComponentQuotedReply.swift */,
@@ -9088,7 +9091,6 @@
 				347C384A252D085900F3D941 /* CVComponentUnreadIndicator.swift */,
 				348815BF2553291200D4F4C4 /* CVComponentViewOnce.swift */,
 				667AF9DD2B4C5824008AEE5D /* PersistableGroupUpdateItem+CVComponentSystemMessageAction.swift */,
-				D6901E688671D8EDF8FFF806 /* CVComponentOpenCsvPayment.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -9532,6 +9534,7 @@
 				4C4F360E2284516F00A8DF48 /* MediaGallery */,
 				04FE6C6E2F363E9700A2ACF4 /* MemberLabels */,
 				34995F122411838C00C70546 /* NewGroupView */,
+				1C090010A00505B5E7BDA761 /* OpenCsv */,
 				3497971D25DAA86100E99FA4 /* Payments */,
 				34969558219B605E00DCFE74 /* Photos */,
 				048D58342ED4FA7C00F26237 /* PinnedMessages */,
@@ -9566,7 +9569,6 @@
 				C1D9B1542B7FA28200D94595 /* SafetyTipsViewController.swift */,
 				346EAA1125013CDF00E8AB6F /* SendMessageFlow.swift */,
 				3434AE1B22AEDE7D002EE04E /* ViewOnceMessageViewController.swift */,
-				1C090010A00505B5E7BDA761 /* OpenCsv */,
 			);
 			path = ViewControllers;
 			sourceTree = "<group>";
@@ -11809,11 +11811,12 @@
 		9E5EF06F41332B435CD1CD3B /* OpenCsv */ = {
 			isa = PBXGroup;
 			children = (
-				ED484F0B75F22765A75A8FA1 /* OpenCsvClient.swift */,
-				A6EC518B1AAC22182814F6DE /* OpenCsvWalletStore.swift */,
 				1FE9B6250EFFFF6A2E29ECAC /* OpenCsvAttachmentProcessor.swift */,
-				DA8CF92D04623AA37C4EC6FE /* OpenCsvPayments.swift */,
 				2120878EF9D8A210D4D358FD /* OpenCsvChainView.swift */,
+				ED484F0B75F22765A75A8FA1 /* OpenCsvClient.swift */,
+				DA8CF92D04623AA37C4EC6FE /* OpenCsvPayments.swift */,
+				C0D3A4B50000000000000002 /* OpenCsvPinnedObserver.swift */,
+				A6EC518B1AAC22182814F6DE /* OpenCsvWalletStore.swift */,
 			);
 			name = OpenCsv;
 			path = OpenCsv;
@@ -14873,6 +14876,7 @@
 				D9E335A52993269E00825677 /* Mocks */,
 				F9C5CAB2289453B200548EEE /* Network */,
 				88D23D0823CEBF4400B0E74B /* Notifications */,
+				9E5EF06F41332B435CD1CD3B /* OpenCsv */,
 				F9C5CA9F289453B200548EEE /* Payments */,
 				6694BF662B3647F000B18764 /* PinnedThreadManager */,
 				50A76F542AF573C000FCF02D /* Preconditions */,
@@ -14902,7 +14906,6 @@
 				5013365D2B2BC2CD004119F1 /* ZeroKnowledge */,
 				F9C985D2289459860029F9AD /* SignalServiceKit-Prefix.pch */,
 				F9C5C899289451B900548EEE /* SignalServiceKit.h */,
-				9E5EF06F41332B435CD1CD3B /* OpenCsv */,
 			);
 			path = SignalServiceKit;
 			sourceTree = "<group>";
@@ -14931,6 +14934,7 @@
 				D9C964152BE56DE20058F143 /* MessageBackup */,
 				F942621C289B1B5500460798 /* Messages */,
 				F94261CF289B1B5400460798 /* Network */,
+				DAEFBA32219468D49F0BF313 /* OpenCsv */,
 				0436E4B12E5E2DC80011E125 /* Polls */,
 				5079F3C12DA47554008430EC /* Preconditions */,
 				724D47B42B97C250001BE973 /* Profiles */,
@@ -14948,7 +14952,6 @@
 				724D47B12B97BE73001BE973 /* ZkParams */,
 				F942623A289B1B5500460798 /* SSKBaseTest.swift */,
 				D9C964072BE44D510058F143 /* XCTest+Thenable.swift */,
-				DAEFBA32219468D49F0BF313 /* OpenCsv */,
 			);
 			path = tests;
 			sourceTree = "<group>";
@@ -18556,6 +18559,7 @@
 				50CF28F02829C94800752AB3 /* CVComponentGiftBadge.swift in Sources */,
 				3426A37025631C250036407F /* CVComponentLinkPreview.swift in Sources */,
 				347C3842252CE6C900F3D941 /* CVComponentMessage.swift in Sources */,
+				9118460AF0C1A35F2437E46F /* CVComponentOpenCsvPayment.swift in Sources */,
 				6605D4FF2A86B3FF004DC345 /* CVComponentPaymentAttachment.swift in Sources */,
 				04A573662E4CEE5D0019651F /* CVComponentPoll.swift in Sources */,
 				347C3845252CE6C900F3D941 /* CVComponentQuotedReply.swift in Sources */,
@@ -18831,6 +18835,10 @@
 				887B380F25F056FD00685845 /* NotificationSettingsSoundViewController.swift in Sources */,
 				887B380A25F0427F00685845 /* NotificationSettingsViewController.swift in Sources */,
 				F9CA468828FF0CA600C074F6 /* OneTimeDonationCustomAmountTextField.swift in Sources */,
+				81B90CAE777F0859B14F003D /* OpenCsvDelivery.swift in Sources */,
+				0C5E01AB44D21E77A3F09B01 /* OpenCsvPaymentExplorerViewController.swift in Sources */,
+				7028CF98589C199B6F5C7A02 /* OpenCsvSendPaymentSheet.swift in Sources */,
+				0C5E01AB44D21E77A3F09B03 /* OpenCsvWalletViewController.swift in Sources */,
 				F9952B2F29F1E59F00EA989E /* OsExpiry.swift in Sources */,
 				C197187D2EF9D28C002E4198 /* OutgoingDeviceRestoreBackupPromptViewController.swift in Sources */,
 				C14D47602DAEC45C006178AC /* OutgoingDeviceRestoreInitialViewController.swift in Sources */,
@@ -19073,11 +19081,6 @@
 				45069FC629D3A7C800D0DD14 /* WideMediaTileViewLayout.swift in Sources */,
 				45906C6B29D238560025906D /* WidePhotoCell.swift in Sources */,
 				76616C9D2A266A05005F7001 /* WindowManager.swift in Sources */,
-				9118460AF0C1A35F2437E46F /* CVComponentOpenCsvPayment.swift in Sources */,
-				7028CF98589C199B6F5C7A02 /* OpenCsvSendPaymentSheet.swift in Sources */,
-				0C5E01AB44D21E77A3F09B01 /* OpenCsvPaymentExplorerViewController.swift in Sources */,
-				0C5E01AB44D21E77A3F09B03 /* OpenCsvWalletViewController.swift in Sources */,
-				81B90CAE777F0859B14F003D /* OpenCsvDelivery.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -19787,6 +19790,12 @@
 				F9C5CD1C289453B300548EEE /* ObservedDatabaseChanges.swift in Sources */,
 				F9C5CE16289453B400548EEE /* OffMainThreadTimer.swift in Sources */,
 				F9C5CD37289453B300548EEE /* OldSenderKeyStore.swift in Sources */,
+				BDA22D07E3BFA1109B2852E5 /* OpenCsvAttachmentProcessor.swift in Sources */,
+				C1FA18BB04C6B094D07D5C88 /* OpenCsvChainView.swift in Sources */,
+				ADD146F0F7DCAFBF81C4D520 /* OpenCsvClient.swift in Sources */,
+				8CB2313F0D9BE56F06BF826C /* OpenCsvPayments.swift in Sources */,
+				C0D3A4B50000000000000001 /* OpenCsvPinnedObserver.swift in Sources */,
+				60DA76194C3EB21A72731438 /* OpenCsvWalletStore.swift in Sources */,
 				6674807C2E32EA52004DA6E9 /* Optional+SSK.swift in Sources */,
 				F9C5CE43289453B400548EEE /* OrderedDictionary.swift in Sources */,
 				F9C5CE1E289453B400548EEE /* OrderedSet.swift in Sources */,
@@ -20392,11 +20401,6 @@
 				66533E3729B7B56000E8D928 /* WhoAmIManager.swift in Sources */,
 				72454E802C9BCEA80084B483 /* YDBStorage.swift in Sources */,
 				724D47B02B97BE13001BE973 /* ZkParamsMigrator.swift in Sources */,
-				ADD146F0F7DCAFBF81C4D520 /* OpenCsvClient.swift in Sources */,
-				60DA76194C3EB21A72731438 /* OpenCsvWalletStore.swift in Sources */,
-				BDA22D07E3BFA1109B2852E5 /* OpenCsvAttachmentProcessor.swift in Sources */,
-				8CB2313F0D9BE56F06BF826C /* OpenCsvPayments.swift in Sources */,
-				C1FA18BB04C6B094D07D5C88 /* OpenCsvChainView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -20524,6 +20528,7 @@
 				50135A2B301424DE005F45F5 /* NSRange+SSKTest.swift in Sources */,
 				D979CC3A2AD3964E006AAC49 /* Numbers+Random.swift in Sources */,
 				D95E149D2E3D22FD00B5B70B /* ObjectRetainerTest.swift in Sources */,
+				08BC13C3914F8886DFFAFBB1 /* OpenCsvTest.swift in Sources */,
 				663D02DF2C069AB600350632 /* OrphanedAttachmentCleanerTest.swift in Sources */,
 				50DAF7E02FD87BEC00BE7430 /* OrphanedBackupAttachmentTest.swift in Sources */,
 				D9AA37A02A86E0910088EFFB /* OutgoingCallEventSyncMessageTest.swift in Sources */,
@@ -20652,7 +20657,6 @@
 				F942626A289B1B5500460798 /* ViewOnceMessagesTest.swift in Sources */,
 				D9C964092BE44D700058F143 /* XCTest+Thenable.swift in Sources */,
 				724D47B22B97BE96001BE973 /* ZkParamsMigratorTest.swift in Sources */,
-				08BC13C3914F8886DFFAFBB1 /* OpenCsvTest.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

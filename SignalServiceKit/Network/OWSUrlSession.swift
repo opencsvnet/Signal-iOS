@@ -67,6 +67,10 @@ public class OWSURLSession: OWSURLSessionProtocol {
 
     private let onFailureCallback: ((any Error) -> Void)?
 
+    /// Optional audit hook for clients that must persist the evaluated TLS
+    /// chain. Trust is still decided exclusively by `HttpSecurityPolicy`.
+    public var serverTrustEvaluationObserver: ((String, [String]) -> Void)?
+
     // Note: not all protocol methods can be made visible to objc, but those
     // that can be are declared so here. Objc callers must use this implementation
     // directly and not touch the protocol.
@@ -696,7 +700,13 @@ public class OWSURLSession: OWSURLSessionProtocol {
             challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
             let serverTrust = challenge.protectionSpace.serverTrust
         {
-            if endpoint.securityPolicy.evaluate(serverTrust: serverTrust, domain: challenge.protectionSpace.host) {
+            let isTrusted = endpoint.securityPolicy.evaluate(
+                serverTrust: serverTrust,
+                domain: challenge.protectionSpace.host,
+            )
+            let chainFingerprints = HttpSecurityPolicy.chainCertificateSha256(serverTrust: serverTrust)
+            serverTrustEvaluationObserver?(challenge.protectionSpace.host, chainFingerprints)
+            if isTrusted {
                 credential = URLCredential(trust: serverTrust)
                 disposition = .useCredential
             } else {

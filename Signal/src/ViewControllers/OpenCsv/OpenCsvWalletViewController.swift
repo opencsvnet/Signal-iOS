@@ -31,6 +31,8 @@ class OpenCsvWalletViewController: OWSViewController {
     private let operationHistoryLabel = UILabel()
     private let instrumentDetailsLabel = UILabel()
     private let walletPolicyLabel = UILabel()
+    private let observationStack = UIStackView()
+    private let observationReceiptLabel = UILabel()
     private let feeReserveExplanationLabel = UILabel()
     private let feeReserveDetailsStack = UIStackView()
     private let advancedStack = UIStackView()
@@ -45,7 +47,11 @@ class OpenCsvWalletViewController: OWSViewController {
     private var receiveButton: UIButton?
     private var feeReserveDetailsButton: UIButton?
     private var advancedButton: UIButton?
+    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+    private var testRecoveryButton: UIButton?
+    #endif
     private var feeBumpCandidates = [OpenCsvAccountOperationSummary]()
+    private var observationModeControls = [String: UISegmentedControl]()
     private var writeInProgress = false
 
     private enum RefreshState: Equatable {
@@ -87,6 +93,8 @@ class OpenCsvWalletViewController: OWSViewController {
         advancedStack.axis = .vertical
         advancedStack.spacing = 12
         advancedStack.isHidden = true
+        observationStack.axis = .vertical
+        observationStack.spacing = 10
 
         // The first screen is intentionally a consumer wallet, not a protocol
         // inspector. Exact issuer instruments remain visible under Wallet
@@ -248,6 +256,14 @@ class OpenCsvWalletViewController: OWSViewController {
         walletPolicyLabel.numberOfLines = 0
         walletPolicyLabel.textColor = Theme.secondaryTextAndIconColor
         advancedStack.addArrangedSubview(walletPolicyLabel)
+        #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+        testRecoveryButton = addButton(
+            "Complete restored test-wallet setup",
+            action: #selector(didTapCompleteTestWalletRecovery),
+            to: advancedStack,
+        )
+        testRecoveryButton?.isHidden = true
+        #endif
 
         instrumentDetailsLabel.font = .dynamicTypeFootnote
         instrumentDetailsLabel.numberOfLines = 0
@@ -347,6 +363,19 @@ class OpenCsvWalletViewController: OWSViewController {
             field.font = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
             advancedStack.addArrangedSubview(field)
         }
+        addHeader("Network observation", to: advancedStack)
+        let observationExplanation = UILabel()
+        observationExplanation.font = .dynamicTypeFootnote
+        observationExplanation.textColor = Theme.secondaryTextAndIconColor
+        observationExplanation.numberOfLines = 0
+        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Require must pass before unconfirmed USD can be forwarded. Cryptographic and transaction checks always remain mandatory."
+        advancedStack.addArrangedSubview(observationExplanation)
+        advancedStack.addArrangedSubview(observationStack)
+        observationReceiptLabel.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        observationReceiptLabel.textColor = Theme.secondaryTextAndIconColor
+        observationReceiptLabel.numberOfLines = 0
+        observationReceiptLabel.text = "No observer receipts yet."
+        advancedStack.addArrangedSubview(observationReceiptLabel)
         esploraField.addTarget(self, action: #selector(esploraChanged), for: .editingDidEnd)
         spvPeersField.addTarget(self, action: #selector(spvPeersChanged), for: .editingDidEnd)
         scanFromHeightField.keyboardType = .numberPad
@@ -473,6 +502,13 @@ class OpenCsvWalletViewController: OWSViewController {
             "Device: \(summary.accountRole.rawValue), \(summary.deviceBindingStatus)",
             "Spend state: \(summary.syncProvenance.authoritative)",
         ].joined(separator: "\n")
+        #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+        testRecoveryButton?.isHidden = !(
+            summary.accountRole == .primary
+                && ["signet", "regtest"].contains(summary.network)
+                && summary.deviceBindingStatus != "bound"
+        )
+        #endif
         feeBumpCandidates = summary.operations.filter {
             ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
         }
@@ -507,6 +543,68 @@ class OpenCsvWalletViewController: OWSViewController {
         spvPeersField.text = summary.spvPeers.joined(separator: ", ")
         scanFromHeightField.text = "\(summary.scanFromHeight)"
         networkField.text = summary.network
+        renderObservationPolicy(summary.observationPolicy)
+        observationReceiptLabel.text = Self.renderObservationReceipts(summary.observationReceipts)
+    }
+
+    private func renderObservationPolicy(_ checks: [OpenCsvObservationCheck]) {
+        let incomingIds = Set(checks.map(\.id))
+        if incomingIds != Set(observationModeControls.keys) {
+            observationStack.arrangedSubviews.forEach { view in
+                observationStack.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            observationModeControls.removeAll()
+            for check in checks {
+                let container = UIStackView()
+                container.axis = .vertical
+                container.spacing = 5
+                let title = UILabel()
+                title.font = .dynamicTypeFootnote
+                title.numberOfLines = 0
+                title.text = Self.observationTitle(check)
+                container.addArrangedSubview(title)
+                let control = UISegmentedControl(items: ["Off", "Observe", "Require"])
+                control.accessibilityIdentifier = check.id
+                control.addTarget(self, action: #selector(observationModeChanged(_:)), for: .valueChanged)
+                container.addArrangedSubview(control)
+                observationModeControls[check.id] = control
+                observationStack.addArrangedSubview(container)
+            }
+        }
+        for check in checks {
+            observationModeControls[check.id]?.selectedSegmentIndex = switch check.mode {
+            case .off: 0
+            case .observe: 1
+            case .require: 2
+            }
+        }
+    }
+
+    private static func observationTitle(_ check: OpenCsvObservationCheck) -> String {
+        let name = switch check.id {
+        case "mempool_space_signet": "mempool.space transaction bytes"
+        case "blockstream_signet": "Blockstream transaction bytes"
+        case "direct_p2p_relay": "Direct Bitcoin peer relay"
+        case "experimental_p2p_mempool_possession": "Experimental peer mempool probe"
+        case "multi_peer_spv_confirmation": "Multi-peer SPV confirmation"
+        default: check.id
+        }
+        guard let profile = check.pinProfile else { return name }
+        return "\(name) · pin \(profile)"
+    }
+
+    private static func renderObservationReceipts(_ receipts: [OpenCsvObservationReceipt]) -> String {
+        guard !receipts.isEmpty else { return "No observer receipts yet." }
+        var seen = Set<String>()
+        return receipts.reversed().compactMap { receipt -> String? in
+            guard seen.insert(receipt.checkId).inserted else { return nil }
+            let cachedAt = Date(timeIntervalSince1970: TimeInterval(receipt.cachedAtMs) / 1_000)
+            let cached = DateFormatter.localizedString(from: cachedAt, dateStyle: .none, timeStyle: .medium)
+            let bytes = receipt.rawByteMatch ? "bytes match" : "no byte match"
+            let profile = receipt.certificateProfile.map { " · \($0)" } ?? ""
+            return "\(receipt.checkId): \(receipt.result) · \(receipt.latencyMs) ms · cached \(cached) · \(bytes)\(profile)"
+        }.joined(separator: "\n")
     }
 
     private static func freshnessLine(
@@ -855,6 +953,25 @@ class OpenCsvWalletViewController: OWSViewController {
         presentActionSheet(sheet)
     }
 
+    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+    @objc
+    private func didTapCompleteTestWalletRecovery() {
+        testRecoveryButton?.isEnabled = false
+        Task {
+            defer {
+                self.testRecoveryButton?.isEnabled = true
+                self.refresh()
+            }
+            do {
+                try await OpenCsvPayments.shared.completeTestWalletRecovery()
+                self.presentToast(text: "Test wallet restored, rebound, and protected by a fresh Secure Backup.")
+            } catch {
+                self.presentError("Test wallet recovery remains frozen and resumable: \(error)")
+            }
+        }
+    }
+    #endif
+
     private func promptForFeeRate(operation: OpenCsvAccountOperationSummary) {
         let alert = UIAlertController(
             title: OWSLocalizedString(
@@ -960,6 +1077,25 @@ class OpenCsvWalletViewController: OWSViewController {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         Task { await OpenCsvPayments.shared.setSpvPeers(peers) }
+    }
+
+    @objc
+    private func observationModeChanged(_ control: UISegmentedControl) {
+        guard let checkId = control.accessibilityIdentifier else { return }
+        let mode: OpenCsvObservationMode = switch control.selectedSegmentIndex {
+        case 0: .off
+        case 2: .require
+        default: .observe
+        }
+        Task {
+            do {
+                try await OpenCsvPayments.shared.setObservationMode(mode, checkId: checkId)
+                self.refresh()
+            } catch {
+                self.refresh()
+                self.presentError("Could not update \(checkId): \(error)")
+            }
+        }
     }
 
     @objc

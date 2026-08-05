@@ -257,6 +257,98 @@ public enum OpenCsvAccountRole: String, Codable, Equatable {
     case linked
 }
 
+public enum OpenCsvObservationMode: String, Codable, Equatable, Sendable {
+    case off
+    case observe
+    case require
+}
+
+public enum OpenCsvObservationKind: String, Codable, Equatable, Sendable {
+    case rawTransactionApi = "raw_transaction_api"
+    case directP2pRelay = "direct_p2p_relay"
+    case experimentalP2pPossession = "experimental_p2p_possession"
+    case confirmedSpv = "confirmed_spv"
+}
+
+public struct OpenCsvObservationCheck: Codable, Equatable, Sendable {
+    public let id: String
+    public let kind: OpenCsvObservationKind
+    public let endpoint: String?
+    public let mode: OpenCsvObservationMode
+    public let pinProfile: String?
+    public let chainFingerprintsSha256: [String]
+    public let maxAgeSeconds: UInt64
+
+    public static func defaults(for network: String) -> [Self] {
+        var checks: [Self] = []
+        if network == "signet" {
+            checks += [
+                Self(
+                    id: "mempool_space_signet",
+                    kind: .rawTransactionApi,
+                    endpoint: "https://mempool.space/signet/api",
+                    mode: .require,
+                    pinProfile: "sectigo_r46",
+                    chainFingerprintsSha256: [
+                        "6542d176bed50f193c0ce297ae44ecd8a0a86bec2ede682769344059b4e78530",
+                        "92f351bf3d54164dfa8dd8f9e1139d3150349786485d2b9eecd00e2971c1e6c5",
+                    ],
+                ),
+                Self(
+                    id: "blockstream_signet",
+                    kind: .rawTransactionApi,
+                    endpoint: "https://blockstream.info/signet/api",
+                    mode: .require,
+                    pinProfile: "lets_encrypt_yr",
+                    chainFingerprintsSha256: [
+                        "13949634d99cd6fd6aa80bc034fefacceb1969feef986586713ecdbb05758d3f",
+                        "238b85a0099c65b970477d5724f1a1d475ce5058cffe4efa8733899bdb863c47",
+                        "e57b7e6f150c419102e8d5c055729ff967b9d1a829bf00cec89ca604ebf4a86f",
+                        "072639d0b140d5bffae16ad9c3f6cc6086040621f51ee61a6d46a8915c07cf76",
+                    ],
+                ),
+            ]
+        }
+        checks += [
+            Self(id: "direct_p2p_relay", kind: .directP2pRelay, mode: .observe),
+            Self(id: "experimental_p2p_mempool_possession", kind: .experimentalP2pPossession, mode: .off),
+            Self(id: "multi_peer_spv_confirmation", kind: .confirmedSpv, mode: .observe),
+        ]
+        return checks
+    }
+
+    public init(
+        id: String,
+        kind: OpenCsvObservationKind,
+        endpoint: String? = nil,
+        mode: OpenCsvObservationMode,
+        pinProfile: String? = nil,
+        chainFingerprintsSha256: [String] = [],
+        maxAgeSeconds: UInt64 = 120,
+    ) {
+        self.id = id
+        self.kind = kind
+        self.endpoint = endpoint
+        self.mode = mode
+        self.pinProfile = pinProfile
+        self.chainFingerprintsSha256 = chainFingerprintsSha256
+        self.maxAgeSeconds = maxAgeSeconds
+    }
+}
+
+public struct OpenCsvObservationEvidence: Codable, Equatable, Sendable {
+    public let checkId: String
+    public let endpoint: String?
+    public let result: String
+    public let startedAtMs: Int64
+    public let completedAtMs: Int64
+    public let cachedAtMs: Int64
+    public let certificateProfile: String?
+    public let certificateChainFingerprintsSha256: [String]
+    public let rawTransactionHex: String?
+    public let detail: String?
+}
+
 /// Public policy supplied when opening the Rust-owned account wallet. Secret
 /// keys, Bitcoin inputs, change addresses and transaction bytes are
 /// intentionally absent.
@@ -274,6 +366,7 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
     public let requiredConfirmations: UInt32
     public let stopGap: UInt
     public let parallelRequests: UInt
+    public let observationChecks: [OpenCsvObservationCheck]
     public let watchExternalDescriptor: String?
     public let watchInternalDescriptor: String?
     public let watchOwner: String?
@@ -296,6 +389,7 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         requiredConfirmations: UInt32 = 6,
         stopGap: UInt = 20,
         parallelRequests: UInt = 4,
+        observationChecks: [OpenCsvObservationCheck]? = nil,
         watchExternalDescriptor: String? = nil,
         watchInternalDescriptor: String? = nil,
         watchOwner: String? = nil,
@@ -314,6 +408,7 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         self.requiredConfirmations = requiredConfirmations
         self.stopGap = stopGap
         self.parallelRequests = parallelRequests
+        self.observationChecks = observationChecks ?? OpenCsvObservationCheck.defaults(for: network)
         self.watchExternalDescriptor = watchExternalDescriptor
         self.watchInternalDescriptor = watchInternalDescriptor
         self.watchOwner = watchOwner
@@ -384,7 +479,27 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
     public let issuanceEnabled: Bool
     public let deviceBinding: DeviceBinding
     public let syncProvenance: SyncProvenance
+    public let observationPolicy: [OpenCsvObservationCheck]?
+    public let observationReceipts: [OpenCsvObservationReceipt]?
     public let rootFingerprint: String
+}
+
+public struct OpenCsvObservationReceipt: Codable, Equatable {
+    public let checkId: String
+    public let kind: OpenCsvObservationKind
+    public let mode: OpenCsvObservationMode
+    public let endpoint: String?
+    public let result: String
+    public let startedAtMs: Int64
+    public let completedAtMs: Int64
+    public let latencyMs: Int64
+    public let cachedAtMs: Int64
+    public let cacheAgeMs: Int64
+    public let certificateProfile: String?
+    public let certificateChainFingerprintsSha256: [String]
+    public let rawByteMatch: Bool
+    public let detail: String?
+    public let failures: [String]
 }
 
 public struct OpenCsvAccountSyncReport: Codable, Equatable {
@@ -454,6 +569,28 @@ public struct OpenCsvAccountCheckpoint: Codable, Equatable {
 
     public let checkpoint: Payload
     public let checkpointHash: String
+}
+
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+public struct OpenCsvTestDeviceRebindResponse: Equatable {
+    public let status: String
+    public let idempotent: Bool
+    public let backupRequired: Bool
+    public let writeEnabled: Bool
+    public let deviceBindingCommitment: String
+    public let checkpoint: OpenCsvAccountCheckpoint
+    /// Exact full checkpoint envelope returned by Rust. The public summary
+    /// above intentionally omits private coin and operation fields, so it
+    /// must never be re-encoded for Secure Backup.
+    public let checkpointJson: String
+}
+#endif
+
+public struct OpenCsvConsignmentInspection: Codable, Equatable {
+    public let consignmentId: String
+    public let anchorTxid: String
+    public let anchorHeight: UInt64
+    public let anchorPosition: UInt32
 }
 
 /// A process-local handle to the durable Rust-owned account wallet. Callers
@@ -566,6 +703,52 @@ public final class OpenCsvAccountWallet {
         }
     }
 
+    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+    /// Test-only signet/regtest device rebind. The Rust symbol and this method
+    /// are both absent from normal DEBUG and every release build.
+    public func rebindTestDevice(deviceBinding: Data) throws -> OpenCsvTestDeviceRebindResponse {
+        guard deviceBinding.count == 32 else {
+            throw OpenCsvClientError.ffi("device binding must be exactly 32 bytes")
+        }
+        struct WireResponse: Decodable {
+            let status: String
+            let idempotent: Bool
+            let backupRequired: Bool
+            let writeEnabled: Bool
+            let deviceBindingCommitment: String
+            let checkpoint: OpenCsvAccountCheckpoint
+        }
+        let raw = try deviceBinding.withUnsafeBytes { bytes in
+            try Self.takeRaw(opencsv_account_rebind_test_device(
+                handle,
+                bytes.bindMemory(to: UInt8.self).baseAddress,
+                deviceBinding.count,
+            ))
+        }
+        let wire: WireResponse = try Self.decode(raw)
+        guard
+            let object = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+            let checkpointObject = object["checkpoint"],
+            JSONSerialization.isValidJSONObject(checkpointObject)
+        else {
+            throw OpenCsvClientError.decode("test rebind response omitted its full checkpoint")
+        }
+        let checkpointData = try JSONSerialization.data(withJSONObject: checkpointObject, options: [.sortedKeys])
+        guard let checkpointJson = String(data: checkpointData, encoding: .utf8) else {
+            throw OpenCsvClientError.decode("test rebind checkpoint was not UTF-8 JSON")
+        }
+        return OpenCsvTestDeviceRebindResponse(
+            status: wire.status,
+            idempotent: wire.idempotent,
+            backupRequired: wire.backupRequired,
+            writeEnabled: wire.writeEnabled,
+            deviceBindingCommitment: wire.deviceBindingCommitment,
+            checkpoint: wire.checkpoint,
+            checkpointJson: checkpointJson,
+        )
+    }
+    #endif
+
     public func verify(blob: Data, snapshotJson: String) throws -> OpenCsvVerdict {
         guard !blob.isEmpty else {
             throw OpenCsvClientError.ffi("consignment is empty")
@@ -579,6 +762,19 @@ public final class OpenCsvAccountWallet {
                     snapshot,
                 ))
             }
+        }
+    }
+
+    public func inspect(blob: Data) throws -> OpenCsvConsignmentInspection {
+        guard !blob.isEmpty else {
+            throw OpenCsvClientError.ffi("consignment is empty")
+        }
+        return try blob.withUnsafeBytes { bytes in
+            try Self.take(opencsv_account_inspect_consignment(
+                handle,
+                bytes.bindMemory(to: UInt8.self).baseAddress,
+                blob.count,
+            ))
         }
     }
 
@@ -597,6 +793,36 @@ public final class OpenCsvAccountWallet {
                     blob.count,
                     snapshot,
                 ))
+            }
+        }
+    }
+
+    public func verifyUnconfirmed(
+        blob: Data,
+        confirmedSnapshotJson: String,
+        rawTransaction: Data,
+        observations: [OpenCsvObservationEvidence],
+    ) throws -> OpenCsvVerdict {
+        guard !blob.isEmpty, !rawTransaction.isEmpty else {
+            throw OpenCsvClientError.ffi("consignment and raw transaction must be non-empty")
+        }
+        struct Envelope: Encodable { let observations: [OpenCsvObservationEvidence] }
+        let evidenceJson = try Self.encodeJson(Envelope(observations: observations))
+        return try blob.withUnsafeBytes { blobBytes in
+            try rawTransaction.withUnsafeBytes { transactionBytes in
+                try confirmedSnapshotJson.withCString { snapshot in
+                    try evidenceJson.withCString { evidence in
+                        try Self.take(opencsv_account_verify_consignment_unconfirmed_observed(
+                            handle,
+                            blobBytes.bindMemory(to: UInt8.self).baseAddress,
+                            blob.count,
+                            snapshot,
+                            transactionBytes.bindMemory(to: UInt8.self).baseAddress,
+                            rawTransaction.count,
+                            evidence,
+                        ))
+                    }
+                }
             }
         }
     }
@@ -664,6 +890,35 @@ public final class OpenCsvAccountWallet {
 
     public func operationStatus(_ operationId: String) throws -> OpenCsvAccountOperation {
         try operationId.withCString { try Self.take(opencsv_operation_status(handle, $0)) }
+    }
+
+    public func refreshOperationSpv(_ operationId: String) throws -> OpenCsvAccountOperation {
+        try operationId.withCString { try Self.take(opencsv_operation_refresh_spv(handle, $0)) }
+    }
+
+    public func observeUnconfirmedOperation(
+        _ operationId: String,
+        rawTransaction: Data,
+        observations: [OpenCsvObservationEvidence],
+    ) throws -> OpenCsvAccountOperation {
+        guard !rawTransaction.isEmpty else {
+            throw OpenCsvClientError.ffi("observer transaction is empty")
+        }
+        struct Envelope: Encodable { let observations: [OpenCsvObservationEvidence] }
+        let evidenceJson = try Self.encodeJson(Envelope(observations: observations))
+        return try operationId.withCString { operation in
+            try rawTransaction.withUnsafeBytes { bytes in
+                try evidenceJson.withCString { evidence in
+                    try Self.take(opencsv_operation_observe_unconfirmed(
+                        handle,
+                        operation,
+                        bytes.bindMemory(to: UInt8.self).baseAddress,
+                        rawTransaction.count,
+                        evidence,
+                    ))
+                }
+            }
+        }
     }
 
     public func resume(_ operationId: String) throws -> OpenCsvAccountOperation {
