@@ -356,6 +356,17 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
         public let verificationPeerCount: UInt
         public let lastSyncAt: String?
         public let lastSyncTip: String?
+
+        /// Rust deliberately returns these as strings across the stable JSON
+        /// boundary. Keep parsing in one place so presentation code never
+        /// guesses whether the timestamp is ISO-8601 or Unix seconds.
+        public var lastSyncDate: Date? {
+            lastSyncAt.flatMap(Double.init).map(Date.init(timeIntervalSince1970:))
+        }
+
+        public var lastSyncHeight: UInt64? {
+            lastSyncTip.flatMap(UInt64.init)
+        }
     }
 
     public let version: UInt32

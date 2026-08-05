@@ -121,8 +121,10 @@ class OpenCsvSendPaymentSheet: OWSViewController {
 
     private enum SendState {
         case ready
+        case checkingWallet
         case proving
-        case anchoring
+        case protectingRecovery
+        case broadcasting
         case sent
     }
 
@@ -135,16 +137,28 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                     "Button that proves and sends an OpenCSV payment.",
                     true
                 )
+            case .checkingWallet:
+                return (
+                    "OPENCSV_SEND_STATE_CHECKING_WALLET",
+                    "Send button state while the fee wallet and current chain state are checked.",
+                    false
+                )
             case .proving:
                 return (
                     "OPENCSV_SEND_STATE_PROVING",
                     "Send button state while the payment proof is generated on this phone.",
                     false
                 )
-            case .anchoring:
+            case .protectingRecovery:
                 return (
-                    "OPENCSV_SEND_STATE_ANCHORING",
-                    "Send button state while the payment is being anchored on the chain.",
+                    "OPENCSV_SEND_STATE_PROTECTING_RECOVERY",
+                    "Send button state while the wallet recovery checkpoint is protected.",
+                    false
+                )
+            case .broadcasting:
+                return (
+                    "OPENCSV_SEND_STATE_BROADCASTING",
+                    "Send button state while the Bitcoin record is broadcast.",
                     false
                 )
             case .sent:
@@ -162,44 +176,55 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private func refresh() {
         let threadUniqueId = thread.uniqueId
         Task {
-            // Give unverified consignments in this chat another chance
-            // before showing a balance that might be about to change.
-            await OpenCsvPayments.shared.retryPendingVerifications(threadUniqueId: threadUniqueId)
             do {
-                _ = try? await OpenCsvPayments.shared.syncAccount()
-                let summary = try await OpenCsvPayments.shared.walletSummary()
-                let trustedUsd = summary.instruments.filter {
-                    $0.profile == "trusted_usd_v1"
-                        && $0.trustState == "trusted_configuration"
-                        && $0.manifest?.terms.unitCode == "USD"
-                        && $0.manifest?.terms.decimals == 6
-                }
-                let trustedIds = Set(trustedUsd.map(\.assetId))
-                let usdBalances = summary.balances.filter { trustedIds.contains($0.assetId) }
-                let total = usdBalances.reduce(UInt64(0)) { partial, credit in
-                    let (combined, overflow) = partial.addingReportingOverflow(credit.amount)
-                    return overflow ? UInt64.max : combined
-                }
-                self.balanceLabel.text = total == 0
-                    ? OWSLocalizedString(
-                        "OPENCSV_SEND_EMPTY_STATE",
-                        comment: "Explanation shown in the OpenCSV send sheet when the wallet has no assets.",
-                    )
-                    : String.nonPluralLocalizedStringWithFormat(
-                        OWSLocalizedString(
-                            "OPENCSV_SEND_BALANCE_FORMAT",
-                            comment: "Balance line on the send sheet. Embeds {{ the balance }}.",
-                        ),
-                        "\(OpenCsvUsdAmount.format(total)) USD",
-                    )
-                self.balanceLabel.font = total == 0 ? .dynamicTypeBody : .dynamicTypeFootnote
-                self.balanceLabel.textAlignment = total == 0 ? .center : .natural
-                self.configureUsdProduct(usdBalances, instruments: trustedUsd)
-                self.resolveRecipient(ownKey: summary.owner)
+                // Show the durable wallet immediately. Verification and fee
+                // refresh continue after the send form is usable.
+                self.render(try await OpenCsvPayments.shared.walletSummary(), isUpdating: true)
+                await OpenCsvPayments.shared.retryPendingVerifications(threadUniqueId: threadUniqueId)
+                async let accountSync = try? await OpenCsvPayments.shared.syncAccount()
+                async let scanSync = OpenCsvPayments.shared.scanSyncIfNeeded()
+                _ = await (accountSync, scanSync)
+                self.render(try await OpenCsvPayments.shared.walletSummary(), isUpdating: false)
             } catch {
                 self.showError("\(error)")
             }
         }
+    }
+
+    private func render(_ summary: OpenCsvPayments.WalletSummary, isUpdating: Bool) {
+        let trustedUsd = summary.instruments.filter {
+            $0.profile == "trusted_usd_v1"
+                && $0.trustState == "trusted_configuration"
+                && $0.manifest?.terms.unitCode == "USD"
+                && $0.manifest?.terms.decimals == 6
+        }
+        let trustedIds = Set(trustedUsd.map(\.assetId))
+        let usdBalances = summary.balances.filter { trustedIds.contains($0.assetId) }
+        let total = usdBalances.reduce(UInt64(0)) { partial, credit in
+            let (combined, overflow) = partial.addingReportingOverflow(credit.amount)
+            return overflow ? UInt64.max : combined
+        }
+        let balance = total == 0
+            ? OWSLocalizedString(
+                "OPENCSV_SEND_EMPTY_STATE",
+                comment: "Explanation shown in the OpenCSV send sheet when the wallet has no assets.",
+            )
+            : String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_SEND_BALANCE_FORMAT",
+                    comment: "Balance line on the send sheet. Embeds {{ the balance }}.",
+                ),
+                "\(OpenCsvUsdAmount.format(total)) USD",
+            )
+        let refreshing = OWSLocalizedString(
+            "OPENCSV_SEND_REFRESHING_SAVED_STATE",
+            comment: "Status below the cached balance while the send sheet refreshes the wallet.",
+        )
+        balanceLabel.text = isUpdating ? [balance, refreshing].joined(separator: "\n") : balance
+        balanceLabel.font = total == 0 ? .dynamicTypeBody : .dynamicTypeFootnote
+        balanceLabel.textAlignment = total == 0 ? .center : .natural
+        configureUsdProduct(usdBalances, instruments: trustedUsd)
+        resolveRecipient(ownKey: summary.owner)
     }
 
     /// Show one USD product while retaining exact issuer instruments for
@@ -221,7 +246,9 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         let hasAssets = hasUsdBalance
         amountField.isHidden = !hasAssets
         recipientLabel.isHidden = !hasAssets
-        shareKeyButton.isHidden = !hasAssets || resolvedRecipientKey != nil
+        // Receiving never requires a balance. An empty wallet must still be
+        // able to announce its key so someone else can fund it.
+        shareKeyButton.isHidden = resolvedRecipientKey != nil
         sendButton.isHidden = !hasAssets || resolvedRecipientKey == nil
         sendButton.isEnabled = hasAssets && resolvedRecipientKey != nil
         if !hasAssets {
@@ -382,19 +409,30 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     }
 
     private func send(amount: UInt64, recipient: String, assetId: String) {
-        // Past proving, the coins are spent on-chain: the button never
-        // re-arms after anchoring (tapping again would spend a second
-        // pair of coins) — the states make that visible.
-        setSendState(.proving)
+        // Once signing or broadcast may have happened, the button must not
+        // blindly re-arm: the durable operation is resumed instead of
+        // creating a second spend. The staged labels make the wait visible.
+        setSendState(.checkingWallet)
         let thread = self.thread
         Task {
             do {
-                self.setSendState(.anchoring)
                 let delivery = try await OpenCsvPayments.shared.sendPayment(
                     toOwnerHex: recipient,
                     amount: amount,
                     threadUniqueId: thread.uniqueId,
                     assetIdHex: assetId,
+                    progress: { [weak self] progress in
+                        switch progress {
+                        case .checkingWallet:
+                            self?.setSendState(.checkingWallet)
+                        case .generatingProof:
+                            self?.setSendState(.proving)
+                        case .protectingRecovery:
+                            self?.setSendState(.protectingRecovery)
+                        case .broadcasting:
+                            self?.setSendState(.broadcasting)
+                        }
+                    },
                 )
                 self.setSendState(.sent)
                 do {

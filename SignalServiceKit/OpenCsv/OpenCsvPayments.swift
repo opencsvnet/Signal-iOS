@@ -5,6 +5,15 @@
 
 import Foundation
 
+public extension Notification.Name {
+    /// Durable OpenCSV state now needs a BackgroundTasks scheduling pass.
+    /// The notification is only a wake-up hint; the runner always derives its
+    /// actual decision from the database so losing this post is harmless.
+    static let openCsvBackgroundWorkNeedsScheduling = Notification.Name(
+        "OpenCsvBackgroundWorkNeedsScheduling",
+    )
+}
+
 /// User-facing failures of the OpenCSV payment flows.
 public enum OpenCsvPaymentsError: Error {
     /// Signal Secure Backup is disabled or being disabled. Bitcoin-writing
@@ -75,6 +84,15 @@ public struct OpenCsvUsdSendSelection: Equatable {
     public let instrument: OpenCsvInstrumentRecord
 }
 
+/// Coarse, user-meaningful stages of a Signal payment. These deliberately
+/// describe work rather than exposing Rust journal states or chain jargon.
+public enum OpenCsvSendProgress: Sendable {
+    case checkingWallet
+    case generatingProof
+    case protectingRecovery
+    case broadcasting
+}
+
 /// The OpenCSV payments service: owns the Rust account wallet and runs the
 /// receive pipeline (consignment attachment → verify → verdict → re-render)
 /// and the wallet half of the send pipeline (prove → publish anchor →
@@ -131,7 +149,11 @@ public actor OpenCsvPayments {
     private var lastWithheldReason = [Attachment.IDType: String]()
     /// Guards against overlapping syncs: the sync writes the on-disk
     /// index, and app-activation can fire while a lazy sync is running.
-    private var scanSyncInFlight = false
+    /// Every foreground screen, attachment verifier, and background task
+    /// joins the same phone-owned chain update. Treating "already running" as
+    /// a failure made a foreground wallet opened during background work show
+    /// a false update error even though the shared scan was healthy.
+    private var scanSyncTask: Task<Bool, Never>?
     /// Persistent CBF client: one handshake, reused connections. Nil
     /// until the first successful open; dropped (and re-opened next
     /// sync) on any error or on a network/peers change.
@@ -164,6 +186,10 @@ public actor OpenCsvPayments {
         public let accountRole: OpenCsvAccountRole
         public let deviceBindingStatus: String
         public let syncProvenance: OpenCsvAccountStatus.SyncProvenance
+        /// Last completed phone-owned headers/BIP158/verified-block sync.
+        /// Nil on installs that predate the persisted receipt or have not yet
+        /// completed their first scan.
+        public let verifiedChainView: OpenCsvVerifiedChainView?
         public let esploraUrl: URL?
         /// Bitcoin P2P peers powering self-scan and SPV point-verify.
         public let spvPeers: [String]
@@ -272,6 +298,7 @@ public actor OpenCsvPayments {
                 ),
                 wantsSound: false,
             )
+            requestBackgroundWorkScheduling()
         }
 
         do {
@@ -408,6 +435,10 @@ public actor OpenCsvPayments {
         )
     }
 
+    private nonisolated func requestBackgroundWorkScheduling() {
+        NotificationCenter.default.post(name: .openCsvBackgroundWorkNeedsScheduling, object: nil)
+    }
+
     /// Decide whether a consignment should be believed, using the
     /// strongest chain view configured, then credit it.
     ///
@@ -524,10 +555,17 @@ public actor OpenCsvPayments {
                 blob: blob,
                 confirmedSnapshotJson: snapshotJson,
             )
-            Logger.info(
-                "accepted exact mempool anchor with zero-confirmation dependency"
-                + (settlementLagReason.map { " after settled view reported \($0)" } ?? ""),
-            )
+            if verdict.isVerified {
+                Logger.info(
+                    "accepted exact mempool anchor with zero-confirmation dependency"
+                    + (settlementLagReason.map { " after settled view reported \($0)" } ?? ""),
+                )
+            } else {
+                Logger.info(
+                    "exact mempool anchor remained rejected"
+                    + (verdict.reason.map { ": \($0)" } ?? ""),
+                )
+            }
         }
         verdict.chainView = plan.rawValue
         return try await spvPointVerifyIfConfigured(verdict, snapshotJson: snapshotJson)
@@ -676,10 +714,19 @@ public actor OpenCsvPayments {
     /// verification then throws "no scan registered" and stays retryable.
     /// The on-disk index resumes from its own tip, so a long first walk
     /// simply makes progress on every foreground until it catches up.
-    public func scanSyncIfNeeded() async {
-        guard !scanSyncInFlight else {
-            return
+    @discardableResult
+    public func scanSyncIfNeeded() async -> Bool {
+        if let scanSyncTask {
+            return await scanSyncTask.value
         }
+        let task = Task { await self.performScanSync() }
+        scanSyncTask = task
+        let succeeded = await task.value
+        scanSyncTask = nil
+        return succeeded
+    }
+
+    private func performScanSync() async -> Bool {
         let (peers, network, fromHeight) = db.read { tx in
             let network = self.store.network(tx: tx)
             return (
@@ -692,10 +739,8 @@ public actor OpenCsvPayments {
             )
         }
         guard !peers.isEmpty else {
-            return
+            return false
         }
-        scanSyncInFlight = true
-        defer { scanSyncInFlight = false }
         let config = OpenCsvChainView.ScanSyncConfig(
             network: network,
             peers: peers,
@@ -714,14 +759,22 @@ public actor OpenCsvPayments {
             let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
             scanSyncedThisLaunch = true
             lastScanSyncSummary = result
+            try? await db.awaitableWrite { tx in
+                try self.store.setVerifiedChainView(
+                    OpenCsvVerifiedChainView(tipHeight: result.tipHeight, observedAt: Date()),
+                    tx: tx,
+                )
+            }
             Logger.info(
                 "self-scan synced to \(result.tipHeight) in \(elapsedMs) ms"
                 + " (\(cbfClientId != nil ? "persistent" : "one-shot")):"
                 + " \(result.anchors) anchor(s), \(result.filtersBytes) filter byte(s),"
                 + " \(result.blocksBytes) block byte(s)",
             )
+            return true
         } catch {
             Logger.warn("self-scan sync failed; scan verification unavailable until it succeeds: \(error)")
+            return false
         }
     }
 
@@ -816,6 +869,19 @@ public actor OpenCsvPayments {
         }
     }
 
+    /// One idempotent maintenance pass suitable for foreground activation or
+    /// an iOS BGProcessingTask. The pre-scan sweep starts downloads promptly;
+    /// the post-scan sweep promotes or freezes payments whose chain evidence
+    /// changed during the update.
+    public func performBackgroundMaintenance() async {
+        await retryAllPendingVerifications()
+        await scanSyncIfNeeded()
+        if Task.isCancelled { return }
+        await retryAllPendingVerifications()
+        if Task.isCancelled { return }
+        await recoverInterruptedSends()
+    }
+
     public func retryPendingVerifications(threadUniqueId: String) async {
         struct Sweep {
             var verifiable = [Attachment.IDType]()
@@ -884,6 +950,7 @@ public actor OpenCsvPayments {
         amount: UInt64,
         threadUniqueId: String,
         assetIdHex: String? = nil,
+        progress: (@MainActor @Sendable (OpenCsvSendProgress) -> Void)? = nil,
     ) async throws -> OpenCsvWalletStore.PendingDelivery {
         guard !isSending else {
             throw OpenCsvPaymentsError.sendAlreadyInProgress
@@ -896,6 +963,7 @@ public actor OpenCsvPayments {
         }
         isSending = true
         defer { isSending = false }
+        await progress?(.checkingWallet)
         let account = try await ensureAccountWallet()
         _ = try account.sync()
         var status = try account.status()
@@ -919,6 +987,7 @@ public actor OpenCsvPayments {
         // Rust—not Swift—selects and reserves both protocol coins and the
         // fee UTXO, derives change, binds the first input to the proof, and
         // persists the proof-ready operation.
+        await progress?(.generatingProof)
         let prepared: OpenCsvPreparedOperation
         do {
             prepared = try account.prepareTransfer(
@@ -947,6 +1016,7 @@ public actor OpenCsvPayments {
             account: account,
             prepared: prepared,
             pending: pending,
+            progress: progress,
         )
     }
 
@@ -1083,6 +1153,7 @@ public actor OpenCsvPayments {
         account: OpenCsvAccountWallet,
         prepared: OpenCsvPreparedOperation,
         pending: OpenCsvWalletStore.PendingAccountOperation,
+        progress: (@MainActor @Sendable (OpenCsvSendProgress) -> Void)?,
     ) async throws -> OpenCsvWalletStore.PendingDelivery {
         do {
             try await db.awaitableWrite { tx in
@@ -1095,13 +1166,16 @@ public actor OpenCsvPayments {
             try? account.cancel(prepared.operationId)
             throw OpenCsvPaymentsError.couldNotPersistPendingSend(underlying: "\(error)")
         }
+        requestBackgroundWorkScheduling()
 
+        await progress?(.protectingRecovery)
         try await backUpAccountCheckpoint(
             account: account,
             operationId: prepared.operationId,
             expectedCheckpointHash: prepared.checkpointHash,
         )
         do {
+            await progress?(.broadcasting)
             let operation = try account.signAndBroadcast(
                 operationId: prepared.operationId,
                 targetSatPerVb: 2,
@@ -1198,7 +1272,10 @@ public actor OpenCsvPayments {
                     {
                         operation = try account.resume(pending.operationId)
                     }
-                    if operation.state == "cancelled" || operation.state == "rejected" {
+                    if operation.state == "cancelled"
+                        || operation.state == "rejected"
+                        || operation.state == "protocol_rejected"
+                    {
                         try await db.awaitableWrite { tx in
                             try self.store.removePendingAccountOperation(
                                 operationId: pending.operationId,
@@ -1428,6 +1505,7 @@ public actor OpenCsvPayments {
             accountRole: status.role,
             deviceBindingStatus: status.deviceBinding.status,
             syncProvenance: status.syncProvenance,
+            verifiedChainView: db.read { store.verifiedChainView(tx: $0) },
             esploraUrl: db.read { URL(string: store.esploraUrl(tx: $0)) },
             spvPeers: db.read { tx in
                 Self.effectiveSpvPeers(

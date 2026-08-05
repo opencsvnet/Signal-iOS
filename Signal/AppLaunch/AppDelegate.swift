@@ -302,11 +302,16 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         )
         databaseMigratorRunner.registerBGProcessingTask(appReadiness: appReadiness)
 
+        let openCsvRunner = OpenCsvBGProcessingTaskRunner()
+        openCsvRunner.registerBGProcessingTask(appReadiness: appReadiness)
+        openCsvRunner.observeSchedulingRequests(appReadiness: appReadiness)
+
         appReadiness.runNowOrWhenAppDidBecomeReadyAsync {
             Task {
                 await attachmentValidationRunner.scheduleBGProcessingTaskIfNeeded()
                 await backupRunner.scheduleBGProcessingTaskIfNeeded()
                 await databaseMigratorRunner.scheduleBGProcessingTaskIfNeeded()
+                await openCsvRunner.scheduleBGProcessingTaskIfNeeded()
 
 #if targetEnvironment(simulator)
                 // The simulator won't run BGProcessingTasks, but we still want to run

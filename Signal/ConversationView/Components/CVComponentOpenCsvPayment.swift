@@ -71,7 +71,7 @@ public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
         // Outgoing amounts are what the recipient receives, so they read as
         // a debit; the change output is not part of the story.
         let sign = verdict.direction == .outgoing ? "−" : "+"
-        return "\(sign)\(verdict.amount) \(currency)".ows_stripped()
+        return "\(sign)\(verdict.formattedAmount) \(currency)".ows_stripped()
     }
 
     private var statusText: String {

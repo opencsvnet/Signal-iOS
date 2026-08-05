@@ -24,6 +24,80 @@ private func makeOpenCsvTestDatabase() -> InMemoryDB {
     return InMemoryDB()
 }
 
+struct OpenCsvBackgroundWorkPolicyTest {
+    @Test
+    func confirmingAndDurableWorkRunImmediately() {
+        #expect(OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: [.confirming],
+            hasPendingDelivery: false,
+            hasPendingOperation: false,
+            hasInFlightSend: false,
+        ) == .immediate)
+        #expect(OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: [],
+            hasPendingDelivery: true,
+            hasPendingOperation: false,
+            hasInFlightSend: false,
+        ) == .immediate)
+        #expect(OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: [],
+            hasPendingDelivery: false,
+            hasPendingOperation: true,
+            hasInFlightSend: false,
+        ) == .immediate)
+        #expect(OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: [],
+            hasPendingDelivery: false,
+            hasPendingOperation: false,
+            hasInFlightSend: true,
+        ) == .immediate)
+    }
+
+    @Test
+    func unconfirmedSpendableValueIsMonitoredWithoutPollingSettledValue() {
+        #expect(OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: [.availableUnconfirmed],
+            hasPendingDelivery: false,
+            hasPendingOperation: false,
+            hasInFlightSend: false,
+        ) == .monitor)
+        #expect(OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: [.available, .settled, .needsAttention],
+            hasPendingDelivery: false,
+            hasPendingOperation: false,
+            hasInFlightSend: false,
+        ) == .never)
+    }
+}
+
+struct OpenCsvSyncProvenanceTest {
+    @Test
+    func parsesStableRustTimestampAndTipStrings() {
+        let provenance = OpenCsvAccountStatus.SyncProvenance(
+            accelerator: "esplora",
+            authoritative: "verified-block",
+            verificationPeerCount: 2,
+            lastSyncAt: "1785945600",
+            lastSyncTip: "316311",
+        )
+        #expect(provenance.lastSyncDate == Date(timeIntervalSince1970: 1_785_945_600))
+        #expect(provenance.lastSyncHeight == 316_311)
+    }
+
+    @Test
+    func malformedStringsRemainAbsent() {
+        let provenance = OpenCsvAccountStatus.SyncProvenance(
+            accelerator: "esplora",
+            authoritative: "verified-block",
+            verificationPeerCount: 2,
+            lastSyncAt: "not-a-date",
+            lastSyncTip: "not-a-height",
+        )
+        #expect(provenance.lastSyncDate == nil)
+        #expect(provenance.lastSyncHeight == nil)
+    }
+}
+
 struct OpenCsvSecureBackupValidationTest {
     private static let extensionField =
         "in frame 1, item.account has unknown field with tag 17"
@@ -384,6 +458,16 @@ final class OpenCsvWalletStoreTest {
     private lazy var store = OpenCsvWalletStore(keychainStorage: MockKeychainStorage())
 
     @Test
+    func verifiedChainViewSurvivesRelaunchAndDrivesCachedPresentation() throws {
+        let receipt = OpenCsvVerifiedChainView(
+            tipHeight: 316_311,
+            observedAt: Date(timeIntervalSince1970: 1_785_945_600),
+        )
+        try db.write { tx in try store.setVerifiedChainView(receipt, tx: tx) }
+        db.read { tx in #expect(store.verifiedChainView(tx: tx) == receipt) }
+    }
+
+    @Test
     func linkedProvisioningCarriesOnlyValidatedPublicMaterial() throws {
         let watch = OpenCsvLinkedWatchAccount(
             externalDescriptor: "wpkh([fingerprint/84h/1h/0h]xpub-external/0/*)",
@@ -653,6 +737,15 @@ final class OpenCsvWalletStoreTest {
         #expect(sent.amount == 5)
         #expect(sent.direction == .outgoing)
         #expect(sent.isVerified)
+        #expect(sent.formattedAmount == "0.000005")
+
+        let oneDollar = OpenCsvVerdictRecord(
+            sentAmount: 1_000_000,
+            currency: "USD",
+            assetId: "ab",
+            date: Date(timeIntervalSince1970: 0),
+        )
+        #expect(oneDollar.formattedAmount == "1")
 
         // What the old code did: derive the amount from the self-ingest,
         // which only ever credits change.

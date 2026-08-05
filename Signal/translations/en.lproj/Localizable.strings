@@ -6821,13 +6821,19 @@
 "OPENCSV_SEND_BALANCE_FORMAT" = "Balance: %@";
 
 /* Shown when nobody in this chat has shared a payment key yet. */
-"OPENCSV_SEND_NO_RECIPIENT_KEY" = "No payment key in this chat yet. Ask them to open their wallet and share it \u2014 or share yours to get paid.";
+"OPENCSV_SEND_NO_RECIPIENT_KEY" = "No payment key in this chat yet. Ask them to open their wallet and share it — or share yours to get paid.";
 
-/* Send button state while the payment is being anchored on the chain. */
-"OPENCSV_SEND_STATE_ANCHORING" = "Anchoring\u2026";
+/* Send button state while the fee wallet and current chain state are checked. */
+"OPENCSV_SEND_STATE_CHECKING_WALLET" = "Checking fee wallet…";
 
 /* Send button state while the payment proof is generated on this phone. */
-"OPENCSV_SEND_STATE_PROVING" = "Proving\u2026";
+"OPENCSV_SEND_STATE_PROVING" = "Generating private proof…";
+
+/* Send button state while the wallet recovery checkpoint is protected. */
+"OPENCSV_SEND_STATE_PROTECTING_RECOVERY" = "Protecting wallet recovery…";
+
+/* Send button state while the Bitcoin record is broadcast. */
+"OPENCSV_SEND_STATE_BROADCASTING" = "Broadcasting Bitcoin record…";
 
 /* Send button state after the payment has been sent. */
 "OPENCSV_SEND_STATE_SENT" = "Sent";
@@ -6885,6 +6891,21 @@
 
 /* Status shown while the OpenCSV wallet is loading. */
 "OPENCSV_WALLET_CHECKING" = "Checking wallet…";
+
+/* Saved wallet state while the first phone-owned verification is in progress. */
+"OPENCSV_WALLET_SAVED_UPDATING" = "Showing saved wallet state · verifying latest chain…";
+
+/* Saved wallet state when the latest phone-owned verification failed. */
+"OPENCSV_WALLET_UPDATE_FAILED_SAVED" = "Update failed · showing saved wallet state";
+
+/* Fresh wallet state. Embeds the verified Bitcoin block height. */
+"OPENCSV_WALLET_VERIFIED_CURRENT_FORMAT" = "Verified just now · block %1$@";
+
+/* Cached wallet freshness. Embeds last verified time and Bitcoin block height. */
+"OPENCSV_WALLET_VERIFIED_UPDATING_FORMAT" = "Verified at %1$@ · block %2$@ · updating…";
+
+/* Cached wallet freshness after an update failure. Embeds last verified time and Bitcoin block height. */
+"OPENCSV_WALLET_VERIFIED_UPDATE_FAILED_FORMAT" = "Update failed · verified at %1$@ · block %2$@";
 
 /* Status shown when the OpenCSV wallet has not been provisioned on this device. */
 "OPENCSV_WALLET_SETUP_INCOMPLETE" = "Finish wallet setup to see your balance";
@@ -7013,6 +7034,12 @@
 /* Error shown when a payment is already being sent. */
 "OPENCSV_SEND_ERROR_IN_PROGRESS" = "A payment is already being sent.";
 
+/* Error shown when Signal Secure Backup must be enabled before an OpenCSV write. */
+"OPENCSV_SEND_ERROR_BACKUP_REQUIRED" = "Turn on Signal Secure Backup before sending USD. Receiving remains available.";
+
+/* Error shown when the wallet checkpoint could not be included in Signal Secure Backup. */
+"OPENCSV_SEND_ERROR_BACKUP_FAILED" = "Signal could not protect the latest wallet recovery checkpoint. Try the backup again before sending.";
+
 /* Error shown when the Bitcoin fee reserve cannot fund an OpenCSV send. Embeds the minimum output value in sats. */
 "OPENCSV_SEND_ERROR_FEE_RESERVE_FORMAT" = "The Bitcoin fee reserve needs one confirmed, unreserved output of at least %1$@ sats before sending.";
 
@@ -7072,6 +7099,9 @@
 
 /* Status shown while the OpenCSV wallet is loading. */
 "OPENCSV_SEND_STATUS_LOADING" = "Loading wallet…";
+
+/* Status below the cached balance while the send sheet refreshes the wallet. */
+"OPENCSV_SEND_REFRESHING_SAVED_STATE" = "Showing saved balance · updating…";
 
 /* Status shown while an OpenCSV payment proof is being generated. */
 "OPENCSV_SEND_STATUS_PROVING" = "Proving & anchoring… (Bitcoin backends wait for a block)";

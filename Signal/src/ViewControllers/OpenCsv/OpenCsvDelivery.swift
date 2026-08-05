@@ -104,6 +104,13 @@ enum OpenCsvDelivery {
 
     private static func retryPending() {
         retryQueue.enqueue {
+            // A prior send may have reached the mempool only after the
+            // foreground call stopped observing it. Reconstruct its durable
+            // delivery before taking the retry snapshot. Without this
+            // ordering, app activation can observe an empty delivery queue,
+            // spend a long time rebuilding the chain view, and create the
+            // delivery only after the sole retry pass has already finished.
+            await OpenCsvPayments.shared.recoverInterruptedSends()
             for delivery in await OpenCsvPayments.shared.deliveriesNeedingRetry() {
                 do {
                     try await deliver(delivery)
@@ -112,6 +119,65 @@ enum OpenCsvDelivery {
                     // stays queued and its attempt count advances.
                     Logger.warn("could not deliver OpenCSV consignment \(delivery.id): \(error)")
                 }
+            }
+        }
+    }
+}
+
+/// Resumes verification, confirmation promotion, crash recovery, and
+/// consignment delivery without requiring the wallet screen to be opened.
+/// BGProcessingTask timing is controlled by iOS; every pass is idempotent and
+/// its next schedule is recomputed from durable wallet state.
+final class OpenCsvBGProcessingTaskRunner: BGProcessingTaskRunner {
+    static let taskIdentifier = "OpenCsvBGProcessingTaskRunner"
+    static let logPrefix: String? = "[OpenCSV]"
+    static let requiresNetworkConnectivity = true
+    static let requiresExternalPower = false
+
+    func startCondition() -> BGProcessingTaskStartCondition {
+        guard BuildFlags.openCsvPayments else { return .never }
+        let store = OpenCsvWalletStore(
+            keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+        )
+        let urgency = DependenciesBridge.shared.db.read { store.backgroundWorkUrgency(tx: $0) }
+        switch urgency {
+        case .never:
+            return .never
+        case .immediate:
+            return .asSoonAsPossible
+        case .monitor:
+            // Unconfirmed payments remain spendable but replacement-sensitive.
+            // Ask iOS to revisit them soon without creating a foreground-style
+            // polling loop. The OS may coalesce or defer this date.
+            return .after(Date().addingTimeInterval(5 * 60))
+        }
+    }
+
+    func run() async throws {
+        guard BuildFlags.openCsvPayments else { return }
+        try Task.checkCancellation()
+        await OpenCsvPayments.shared.performBackgroundMaintenance()
+        try Task.checkCancellation()
+        for delivery in await OpenCsvPayments.shared.deliveriesNeedingRetry() {
+            try Task.checkCancellation()
+            do {
+                try await OpenCsvDelivery.deliver(delivery)
+            } catch {
+                // The durable record remains and startCondition will request
+                // another pass unless the bounded retry policy is exhausted.
+                Logger.warn("background delivery remains retryable for \(delivery.id): \(error)")
+            }
+        }
+    }
+
+    func observeSchedulingRequests(appReadiness: AppReadiness) {
+        appReadiness.runNowOrWhenAppDidBecomeReadyAsync {
+            NotificationCenter.default.addObserver(
+                forName: .openCsvBackgroundWorkNeedsScheduling,
+                object: nil,
+                queue: nil,
+            ) { [self] _ in
+                Task { await scheduleBGProcessingTaskIfNeeded() }
             }
         }
     }

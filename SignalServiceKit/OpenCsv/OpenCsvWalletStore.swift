@@ -58,6 +58,46 @@ public struct OpenCsvIncomingActivity: Codable, Equatable {
     public let updatedAt: Date
 }
 
+/// The last phone-owned chain view that completed verification. This is
+/// presentation metadata, not consensus state: the actual filter/header index
+/// remains the authority and is independently reopened for every update.
+public struct OpenCsvVerifiedChainView: Codable, Equatable {
+    public let tipHeight: UInt64
+    public let observedAt: Date
+
+    public init(tipHeight: UInt64, observedAt: Date) {
+        self.tipHeight = tipHeight
+        self.observedAt = observedAt
+    }
+}
+
+/// Scheduling urgency is deliberately independent of BackgroundTasks so the
+/// wallet's durable-state policy can be tested in SignalServiceKit.
+public enum OpenCsvBackgroundWorkUrgency: Equatable {
+    case never
+    case immediate
+    case monitor
+}
+
+public enum OpenCsvBackgroundWorkPolicy {
+    public static func urgency(
+        activityStates: [OpenCsvIncomingActivityState],
+        hasPendingDelivery: Bool,
+        hasPendingOperation: Bool,
+        hasInFlightSend: Bool,
+    ) -> OpenCsvBackgroundWorkUrgency {
+        if hasPendingDelivery || hasPendingOperation || hasInFlightSend
+            || activityStates.contains(.confirming)
+        {
+            return .immediate
+        }
+        if activityStates.contains(.availableUnconfirmed) {
+            return .monitor
+        }
+        return .never
+    }
+}
+
 /// A stored verification verdict for one consignment attachment, keyed by
 /// attachment id. What the conversation cell renders.
 public struct OpenCsvVerdictRecord: Codable, Equatable {
@@ -82,6 +122,13 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
     public let anchorTxid: String?
 
     public var isVerified: Bool { status == "verified" }
+
+    /// Protocol amounts use each instrument's smallest unit. Signal admits
+    /// USD only through the reviewed six-decimal profile, so chat receipts
+    /// must not expose `1_000_000` as though it meant one million dollars.
+    public var formattedAmount: String {
+        currency == "USD" ? OpenCsvUsdAmount.format(amount) : "\(amount)"
+    }
 
     /// A verdict for a consignment someone sent us.
     ///
@@ -274,6 +321,7 @@ public struct OpenCsvWalletStore {
     private static let lastSnapshotKey = "lastSnapshot"
     private static let outgoingOrdinalKey = "outgoingOrdinal"
     private static let secureBackupPayloadKey = "secureBackupPayload.v1"
+    private static let verifiedChainViewKey = "verifiedChainView.v1"
     private static let attachmentConsignmentIdPrefix = "attachmentConsignmentId:"
     private static let canonicalPresentationAttachmentPrefix = "canonicalPresentationAttachment:"
 
@@ -568,6 +616,41 @@ public struct OpenCsvWalletStore {
             owsFailDebug("could not decode OpenCSV incoming activity: \(error)")
             return []
         }
+    }
+
+    public func verifiedChainView(tx: DBReadTransaction) -> OpenCsvVerifiedChainView? {
+        do {
+            return try keyValueStore.getCodableValue(
+                forKey: Self.verifiedChainViewKey,
+                transaction: tx,
+            )
+        } catch {
+            owsFailDebug("could not decode OpenCSV verified chain-view receipt: \(error)")
+            return nil
+        }
+    }
+
+    public func setVerifiedChainView(
+        _ receipt: OpenCsvVerifiedChainView,
+        tx: DBWriteTransaction,
+    ) throws {
+        try keyValueStore.setCodable(receipt, key: Self.verifiedChainViewKey, transaction: tx)
+    }
+
+    /// Derive scheduling only from durable state. If iOS kills the process,
+    /// the next task registration computes the same answer without relying on
+    /// an in-memory timer or notification.
+    public func backgroundWorkUrgency(tx: DBReadTransaction) -> OpenCsvBackgroundWorkUrgency {
+        let pendingDelivery = pendingDeliveries(tx: tx).contains {
+            $0.enqueuedAt != nil || !$0.hasExhaustedRetries
+        }
+        let pendingOperation = ((try? pendingAccountOperations(tx: tx)) ?? []).isEmpty == false
+        return OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: incomingActivities(tx: tx).map(\.state),
+            hasPendingDelivery: pendingDelivery,
+            hasPendingOperation: pendingOperation,
+            hasInFlightSend: !inFlightSends(tx: tx).isEmpty,
+        )
     }
 
     /// Persist one idempotent state transition. The list is bounded because

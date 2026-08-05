@@ -48,6 +48,12 @@ class OpenCsvWalletViewController: OWSViewController {
     private var feeBumpCandidates = [OpenCsvAccountOperationSummary]()
     private var writeInProgress = false
 
+    private enum RefreshState: Equatable {
+        case updating
+        case current
+        case failed
+    }
+
     init(thread: TSThread?) {
         self.thread = thread
         super.init()
@@ -354,142 +360,189 @@ class OpenCsvWalletViewController: OWSViewController {
     private func refresh() {
         Task {
             do {
-                // Status is cache-backed. Refresh it before rendering so a
-                // newly funded or newly confirmed output becomes visible
-                // without relying on a write attempt.
-                _ = try? await OpenCsvPayments.shared.syncAccount()
-                let summary = try await OpenCsvPayments.shared.walletSummary()
-                self.owner = summary.owner
-                let usdSummary = Self.usdSummary(
-                    summary.balances,
-                    instruments: summary.instruments,
-                )
-                self.balanceLabel.text = OpenCsvUsdAmount.format(usdSummary.total)
-                let balanceStatus = usdSummary.hasConfiguredIssuer
-                    ? OWSLocalizedString(
-                        "OPENCSV_WALLET_USD_READY",
-                        comment: "Status below the USD balance when at least one reviewed issuer is configured.",
+                // Rendering the persisted account first keeps the wallet
+                // useful while its two independent network views refresh.
+                let cached = try await OpenCsvPayments.shared.walletSummary()
+                self.render(cached, refreshState: .updating)
+
+                async let accountSync = try? await OpenCsvPayments.shared.syncAccount()
+                async let scanSync = OpenCsvPayments.shared.scanSyncIfNeeded()
+                let (accountReport, scanSucceeded) = await (accountSync, scanSync)
+
+                let updated = try await OpenCsvPayments.shared.walletSummary()
+                // The fee accelerator succeeding does not make the chain
+                // view authoritative. Freshness is "current" only after the
+                // phone-owned headers/filter/block pass completes.
+                _ = accountReport
+                self.render(updated, refreshState: scanSucceeded ? .current : .failed)
+            } catch {
+                // Never erase a balance already rendered from disk merely
+                // because its refresh failed. The placeholder is only for a
+                // wallet that could not be opened at all.
+                if self.balanceLabel.text == "—" {
+                    self.balanceStatusLabel.text = OWSLocalizedString(
+                        "OPENCSV_WALLET_SETUP_INCOMPLETE",
+                        comment: "Status shown when the OpenCSV wallet has not been provisioned on this device.",
                     )
-                    : OWSLocalizedString(
-                        "OPENCSV_WALLET_USD_NOT_AVAILABLE",
-                        comment: "Status below the USD balance when this build has no reviewed issuer configured.",
-                    )
-                let confirmingCount = summary.incomingActivities.lazy
-                    .filter { $0.state == .confirming }
-                    .count
-                let unconfirmedAvailableCount = summary.incomingActivities.lazy
-                    .filter { $0.state == .availableUnconfirmed }
-                    .count
-                var statusLines = [balanceStatus]
-                if unconfirmedAvailableCount > 0 {
-                    statusLines.append(String.nonPluralLocalizedStringWithFormat(
-                        OWSLocalizedString(
-                            "OPENCSV_WALLET_UNCONFIRMED_AVAILABLE_COUNT_FORMAT",
-                            comment: "Wallet status for spendable incoming OpenCSV payments that are not settled. Embeds the count.",
-                        ),
-                        "\(unconfirmedAvailableCount)",
-                    ))
-                }
-                if confirmingCount > 0 {
-                    statusLines.append(String.nonPluralLocalizedStringWithFormat(
-                        OWSLocalizedString(
-                            "OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT",
-                            comment: "Wallet status for incoming OpenCSV payments still being verified. Embeds the count.",
-                        ),
-                        "\(confirmingCount)",
-                    ))
-                }
-                self.balanceStatusLabel.text = statusLines.joined(separator: "\n")
-                self.instrumentDetailsLabel.text = Self.renderHoldings(
-                    summary.balances,
-                    instruments: summary.instruments,
-                )
-                self.ownerLabel.text = String.nonPluralLocalizedStringWithFormat(
-                    OWSLocalizedString(
-                        "OPENCSV_WALLET_RECEIVE_KEY_FORMAT",
-                        comment: "Abbreviated OpenCSV receiving key. Embeds {{ key prefix }} and {{ key suffix }}.",
-                    ),
-                    String(summary.owner.prefix(12)).lowercased(),
-                    String(summary.owner.suffix(8)).lowercased(),
-                )
-                self.qrImageView.image = Self.qrImage(for: summary.owner)
-                self.bitcoinDepositAddress = summary.bitcoinDepositAddress
-                self.bitcoinAddressLabel.text = summary.bitcoinDepositAddress
-                self.bitcoinQrImageView.image = Self.qrImage(for: summary.bitcoinDepositAddress)
-                self.feeReserveLabel.text = String.nonPluralLocalizedStringWithFormat(
-                    OWSLocalizedString(
-                        "OPENCSV_WALLET_FEE_RESERVE_FORMAT",
-                        comment: "Bitcoin fee reserve summary. Embeds {{ total sats }} and {{ confirmed sats }}.",
-                    ),
-                    "\(summary.feeReserve.totalSats)",
-                    "\(summary.feeReserve.confirmedSats)",
-                )
-                self.updateFeeAction(
-                    totalSats: summary.feeReserve.totalSats,
-                    confirmedSats: summary.feeReserve.confirmedSats,
-                )
-                self.utxoLabel.text = summary.feeReserve.utxos.isEmpty
-                    ? OWSLocalizedString(
-                        "OPENCSV_WALLET_NO_FEE_UTXOS",
-                        comment: "Shown in advanced wallet details when there are no Bitcoin fee UTXOs.",
-                    )
-                    : summary.feeReserve.utxos.map {
-                        "\($0.txid.prefix(10)): \($0.vout) · \($0.valueSats) sats\($0.reserved ? " · reserved" : "")"
-                    }.joined(separator: "\n")
-                self.walletPolicyLabel.text = [
-                    "Bitcoin spending: OpenCSV fees only",
-                    "Backup: \(summary.backupVerified ? "verified" : "required")",
-                    "Device: \(summary.accountRole.rawValue), \(summary.deviceBindingStatus)",
-                    "Spend state: \(summary.syncProvenance.authoritative)",
-                ].joined(separator: "\n")
-                self.feeBumpCandidates = summary.operations.filter {
-                    ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
-                }
-                let incomingActivity = summary.incomingActivities.suffix(8).reversed().map {
-                    Self.renderIncomingActivity($0)
-                }
-                let outgoingActivity = summary.operations.suffix(8).reversed().map {
-                    let txid = $0.txid.map { String($0.prefix(10)) } ?? "unsigned"
-                    return "\($0.kind) · \($0.state) · \(txid)"
-                }
-                let activity = incomingActivity + outgoingActivity
-                self.operationHistoryLabel.text = activity.isEmpty
-                    ? OWSLocalizedString(
+                    self.operationHistoryLabel.text = OWSLocalizedString(
                         "OPENCSV_WALLET_NO_ACTIVITY",
                         comment: "Shown when there are no OpenCSV wallet operations yet.",
                     )
-                    : activity.joined(separator: "\n")
-                let latestTxid = summary.operations.reversed().compactMap(\.txid).first
-                self.latestExplorerUrl = latestTxid.flatMap { txid in
-                    switch summary.network {
-                    case "mainnet": URL(string: "https://mempool.space/tx/\(txid)")
-                    case "signet": URL(string: "https://mempool.space/signet/tx/\(txid)")
-                    default: nil
-                    }
                 }
-                self.stack.viewWithTag(7301)?.isUserInteractionEnabled = self.latestExplorerUrl != nil
-                (self.stack.viewWithTag(7301) as? UIButton)?.isEnabled = self.latestExplorerUrl != nil
-                self.stack.viewWithTag(7301)?.isHidden = self.latestExplorerUrl == nil
-                self.feeBumpButton?.isHidden = self.feeBumpCandidates.isEmpty
-                self.feeBumpButton?.isEnabled = summary.writeEnabled
-                    && !self.writeInProgress
-                    && !self.feeBumpCandidates.isEmpty
-                self.esploraField.text = summary.esploraUrl?.absoluteString
-                self.spvPeersField.text = summary.spvPeers.joined(separator: ", ")
-                self.scanFromHeightField.text = "\(summary.scanFromHeight)"
-                self.networkField.text = summary.network
-            } catch {
-                self.balanceLabel.text = "—"
-                self.balanceStatusLabel.text = OWSLocalizedString(
-                    "OPENCSV_WALLET_SETUP_INCOMPLETE",
-                    comment: "Status shown when the OpenCSV wallet has not been provisioned on this device.",
-                )
-                self.operationHistoryLabel.text = OWSLocalizedString(
-                    "OPENCSV_WALLET_NO_ACTIVITY",
-                    comment: "Shown when there are no OpenCSV wallet operations yet.",
-                )
             }
         }
+    }
+
+    private func render(
+        _ summary: OpenCsvPayments.WalletSummary,
+        refreshState: RefreshState,
+    ) {
+        owner = summary.owner
+        let usdSummary = Self.usdSummary(summary.balances, instruments: summary.instruments)
+        balanceLabel.text = OpenCsvUsdAmount.format(usdSummary.total)
+        let balanceStatus = usdSummary.hasConfiguredIssuer
+            ? OWSLocalizedString(
+                "OPENCSV_WALLET_USD_READY",
+                comment: "Status below the USD balance when at least one reviewed issuer is configured.",
+            )
+            : OWSLocalizedString(
+                "OPENCSV_WALLET_USD_NOT_AVAILABLE",
+                comment: "Status below the USD balance when this build has no reviewed issuer configured.",
+            )
+        let confirmingCount = summary.incomingActivities.lazy.filter { $0.state == .confirming }.count
+        let unconfirmedAvailableCount = summary.incomingActivities.lazy
+            .filter { $0.state == .availableUnconfirmed }
+            .count
+        var statusLines = [balanceStatus]
+        if unconfirmedAvailableCount > 0 {
+            statusLines.append(String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_UNCONFIRMED_AVAILABLE_COUNT_FORMAT",
+                    comment: "Wallet status for spendable incoming OpenCSV payments that are not settled. Embeds the count.",
+                ),
+                "\(unconfirmedAvailableCount)",
+            ))
+        }
+        if confirmingCount > 0 {
+            statusLines.append(String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT",
+                    comment: "Wallet status for incoming OpenCSV payments still being verified. Embeds the count.",
+                ),
+                "\(confirmingCount)",
+            ))
+        }
+        statusLines.append(Self.freshnessLine(summary: summary, refreshState: refreshState))
+        balanceStatusLabel.text = statusLines.joined(separator: "\n")
+        instrumentDetailsLabel.text = Self.renderHoldings(summary.balances, instruments: summary.instruments)
+        ownerLabel.text = String.nonPluralLocalizedStringWithFormat(
+            OWSLocalizedString(
+                "OPENCSV_WALLET_RECEIVE_KEY_FORMAT",
+                comment: "Abbreviated OpenCSV receiving key. Embeds {{ key prefix }} and {{ key suffix }}.",
+            ),
+            String(summary.owner.prefix(12)).lowercased(),
+            String(summary.owner.suffix(8)).lowercased(),
+        )
+        qrImageView.image = Self.qrImage(for: summary.owner)
+        bitcoinDepositAddress = summary.bitcoinDepositAddress
+        bitcoinAddressLabel.text = summary.bitcoinDepositAddress
+        bitcoinQrImageView.image = Self.qrImage(for: summary.bitcoinDepositAddress)
+        feeReserveLabel.text = String.nonPluralLocalizedStringWithFormat(
+            OWSLocalizedString(
+                "OPENCSV_WALLET_FEE_RESERVE_FORMAT",
+                comment: "Bitcoin fee reserve summary. Embeds {{ total sats }} and {{ confirmed sats }}.",
+            ),
+            "\(summary.feeReserve.totalSats)",
+            "\(summary.feeReserve.confirmedSats)",
+        )
+        updateFeeAction(
+            totalSats: summary.feeReserve.totalSats,
+            confirmedSats: summary.feeReserve.confirmedSats,
+        )
+        utxoLabel.text = summary.feeReserve.utxos.isEmpty
+            ? OWSLocalizedString(
+                "OPENCSV_WALLET_NO_FEE_UTXOS",
+                comment: "Shown in advanced wallet details when there are no Bitcoin fee UTXOs.",
+            )
+            : summary.feeReserve.utxos.map {
+                "\($0.txid.prefix(10)): \($0.vout) · \($0.valueSats) sats\($0.reserved ? " · reserved" : "")"
+            }.joined(separator: "\n")
+        walletPolicyLabel.text = [
+            "Bitcoin spending: OpenCSV fees only",
+            "Backup: \(summary.backupVerified ? "verified" : "required")",
+            "Device: \(summary.accountRole.rawValue), \(summary.deviceBindingStatus)",
+            "Spend state: \(summary.syncProvenance.authoritative)",
+        ].joined(separator: "\n")
+        feeBumpCandidates = summary.operations.filter {
+            ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
+        }
+        let incomingActivity = summary.incomingActivities.suffix(8).reversed().map {
+            Self.renderIncomingActivity($0)
+        }
+        let outgoingActivity = summary.operations.suffix(8).reversed().map {
+            let txid = $0.txid.map { String($0.prefix(10)) } ?? "unsigned"
+            return "\($0.kind) · \($0.state) · \(txid)"
+        }
+        let activity = incomingActivity + outgoingActivity
+        operationHistoryLabel.text = activity.isEmpty
+            ? OWSLocalizedString(
+                "OPENCSV_WALLET_NO_ACTIVITY",
+                comment: "Shown when there are no OpenCSV wallet operations yet.",
+            )
+            : activity.joined(separator: "\n")
+        let latestTxid = summary.operations.reversed().compactMap(\.txid).first
+        latestExplorerUrl = latestTxid.flatMap { txid in
+            switch summary.network {
+            case "mainnet": URL(string: "https://mempool.space/tx/\(txid)")
+            case "signet": URL(string: "https://mempool.space/signet/tx/\(txid)")
+            default: nil
+            }
+        }
+        stack.viewWithTag(7301)?.isUserInteractionEnabled = latestExplorerUrl != nil
+        (stack.viewWithTag(7301) as? UIButton)?.isEnabled = latestExplorerUrl != nil
+        stack.viewWithTag(7301)?.isHidden = latestExplorerUrl == nil
+        feeBumpButton?.isHidden = feeBumpCandidates.isEmpty
+        feeBumpButton?.isEnabled = summary.writeEnabled && !writeInProgress && !feeBumpCandidates.isEmpty
+        esploraField.text = summary.esploraUrl?.absoluteString
+        spvPeersField.text = summary.spvPeers.joined(separator: ", ")
+        scanFromHeightField.text = "\(summary.scanFromHeight)"
+        networkField.text = summary.network
+    }
+
+    private static func freshnessLine(
+        summary: OpenCsvPayments.WalletSummary,
+        refreshState: RefreshState,
+    ) -> String {
+        guard let receipt = summary.verifiedChainView else {
+            let key = refreshState == .failed
+                ? "OPENCSV_WALLET_UPDATE_FAILED_SAVED"
+                : "OPENCSV_WALLET_SAVED_UPDATING"
+            return OWSLocalizedString(
+                key,
+                comment: "Wallet freshness when no phone-owned verified chain receipt has been persisted yet.",
+            )
+        }
+        if refreshState == .current {
+            return String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_VERIFIED_CURRENT_FORMAT",
+                    comment: "Fresh wallet state. Embeds the verified Bitcoin block height.",
+                ),
+                "\(receipt.tipHeight)",
+            )
+        }
+        let time = DateFormatter.localizedString(from: receipt.observedAt, dateStyle: .none, timeStyle: .short)
+        let key = refreshState == .updating
+            ? "OPENCSV_WALLET_VERIFIED_UPDATING_FORMAT"
+            : "OPENCSV_WALLET_VERIFIED_UPDATE_FAILED_FORMAT"
+        return String.nonPluralLocalizedStringWithFormat(
+            OWSLocalizedString(
+                key,
+                comment: "Cached wallet freshness. Embeds the last verified time and Bitcoin block height.",
+            ),
+            time,
+            "\(receipt.tipHeight)",
+        )
     }
 
     private static func qrImage(for text: String) -> UIImage? {
