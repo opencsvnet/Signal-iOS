@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Network
 import Testing
 
 @testable import SignalServiceKit
@@ -1629,6 +1630,176 @@ struct OpenCsvChainViewFfiTest {
     }
 }
 
+private struct OpenCsvZeroConfFixture: Decodable {
+    struct Snapshot: Codable {
+        struct Entry: Codable {}
+        let tipHeight: UInt64
+        let entries: [Entry]
+    }
+
+    let accountRootHex: String
+    let deviceBindingHex: String
+    let amount: UInt64
+    let anchorTxid: String
+    let rawTransactionHex: String
+    let consignmentBase64: String
+    let confirmedSnapshotJson: Snapshot
+}
+
+private final class OpenCsvOneThenMissingEsplora: @unchecked Sendable {
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "org.signal.OpenCsvOneThenMissingEsplora")
+    private let ready = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private let rawTransaction: Data
+    private var rawRequests = 0
+
+    private init(rawTransaction: Data) throws {
+        self.rawTransaction = rawTransaction
+        self.listener = try NWListener(using: .tcp, on: .any)
+    }
+
+    static func start(rawTransaction: Data) throws -> OpenCsvOneThenMissingEsplora {
+        let server = try OpenCsvOneThenMissingEsplora(rawTransaction: rawTransaction)
+        server.listener.stateUpdateHandler = { [weak server] state in
+            if case .ready = state {
+                server?.ready.signal()
+            }
+        }
+        server.listener.newConnectionHandler = { [weak server] connection in
+            server?.handle(connection)
+        }
+        server.listener.start(queue: server.queue)
+        guard server.ready.wait(timeout: .now() + 5) == .success else {
+            server.listener.cancel()
+            throw OpenCsvClientError.ffi("local Esplora fixture did not start")
+        }
+        return server
+    }
+
+    var url: String {
+        "http://127.0.0.1:\(listener.port!.rawValue)"
+    }
+
+    func stop() {
+        listener.cancel()
+    }
+
+    private func handle(_ connection: NWConnection) {
+        connection.start(queue: queue)
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 8_192) { [weak self] data, _, _, _ in
+            guard let self else {
+                connection.cancel()
+                return
+            }
+            let request = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            let isRawTransactionRequest = request.contains("/raw ")
+            let shouldServe: Bool = self.lock.withLock {
+                guard isRawTransactionRequest else { return false }
+                self.rawRequests += 1
+                return self.rawRequests == 1
+            }
+            let status = shouldServe ? "200 OK" : "404 Not Found"
+            let body = shouldServe ? self.rawTransaction : Data()
+            let header = "HTTP/1.1 \(status)\r\nContent-Type: application/octet-stream\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+            var response = Data(header.utf8)
+            response.append(body)
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+}
+
+private extension NSLock {
+    func withLock<T>(_ body: () -> T) -> T {
+        lock()
+        defer { unlock() }
+        return body()
+    }
+}
+
+private func openCsvHexData(_ text: String) -> Data? {
+    guard text.count.isMultiple(of: 2) else { return nil }
+    var data = Data(capacity: text.count / 2)
+    var index = text.startIndex
+    while index < text.endIndex {
+        let next = text.index(index, offsetBy: 2)
+        guard let byte = UInt8(text[index..<next], radix: 16) else { return nil }
+        data.append(byte)
+        index = next
+    }
+    return data
+}
+
+/// Simulator-only field acceptance for the exact provisional trust boundary:
+/// the first Esplora read serves a valid canonical parent, the next reports
+/// it missing, and a database reopen must keep the credited coin frozen.
+struct OpenCsvZeroConfirmationSimulatorTest {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCSV_ZERO_CONF_FIXTURE"] != nil))
+    func exactParentDisappearanceFreezesImmediatelyAndDurably() throws {
+        let fixtureJson = try #require(ProcessInfo.processInfo.environment["OPENCSV_ZERO_CONF_FIXTURE"])
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let fixture = try decoder.decode(OpenCsvZeroConfFixture.self, from: Data(fixtureJson.utf8))
+        let root = try #require(openCsvHexData(fixture.accountRootHex))
+        let binding = try #require(openCsvHexData(fixture.deviceBindingHex))
+        let rawTransaction = try #require(openCsvHexData(fixture.rawTransactionHex))
+        let consignment = try #require(Data(base64Encoded: fixture.consignmentBase64))
+        let snapshotEncoder = JSONEncoder()
+        snapshotEncoder.keyEncodingStrategy = .convertToSnakeCase
+        let snapshotJson = String(decoding: try snapshotEncoder.encode(fixture.confirmedSnapshotJson), as: UTF8.self)
+        let server = try OpenCsvOneThenMissingEsplora.start(rawTransaction: rawTransaction)
+        defer { server.stop() }
+
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("opencsv-zero-conf-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databasePath = directory.appendingPathComponent("account.sqlite").path
+        let config = OpenCsvAccountConfig(
+            network: "regtest",
+            esploraUrl: server.url,
+            peers: ["127.0.0.1:19444"],
+            verificationPeers: ["127.0.0.1:19444"],
+            verificationTimeoutSecs: 5,
+            maxVerificationBlocks: 256,
+            role: .primary,
+            backupVerified: false,
+            requiredConfirmations: 1,
+            parallelRequests: 1,
+        )
+
+        var wallet: OpenCsvAccountWallet? = try OpenCsvAccountWallet(
+            config: config,
+            accountRoot: root,
+            deviceBinding: binding,
+            databasePath: databasePath,
+        )
+        let accepted = try wallet!.verifyUnconfirmed(blob: consignment, confirmedSnapshotJson: snapshotJson)
+        #expect(accepted.isVerified)
+        #expect(accepted.finality == "unconfirmed")
+        #expect(accepted.spendable == true)
+        #expect(accepted.anchorTxid == fixture.anchorTxid)
+        #expect(try wallet!.status().assets.reduce(0) { $0 + $1.amount } == fixture.amount)
+
+        do {
+            _ = try wallet!.verifyUnconfirmed(blob: consignment, confirmedSnapshotJson: snapshotJson)
+            Issue.record("a missing exact parent must freeze rather than re-credit")
+        } catch let OpenCsvClientError.ffi(message) {
+            #expect(message.contains("not currently observed"))
+        }
+        #expect(try wallet!.status().assets.isEmpty)
+
+        wallet = nil
+        let reopened = try OpenCsvAccountWallet(
+            config: config,
+            accountRoot: root,
+            deviceBinding: binding,
+            databasePath: databasePath,
+        )
+        #expect(try reopened.status().assets.isEmpty)
+    }
+}
+
 /// Live end-to-end against a host bitcoind: the whole app-side pipeline —
 /// Swift config encoding → FFI → P2P handshake → header/filter sync →
 /// on-disk occurrence index → registered scan verify. Requires
@@ -1637,16 +1808,24 @@ struct OpenCsvChainViewFfiTest {
 struct OpenCsvScanRegtestTest {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCSV_REGTEST"] == "1"))
     func syncsTheScanIndexFromALiveRegtestNode() throws {
-        let cacheDir = NSTemporaryDirectory() + "opencsv-scan-regtest-\(UUID().uuidString)"
+        let env = ProcessInfo.processInfo.environment
+        let peer = env["OPENCSV_REGTEST_PEER"] ?? "127.0.0.1:18444"
+        let cacheDir = env["OPENCSV_REGTEST_CACHE_KEY"].map { NSTemporaryDirectory() + $0 }
+            ?? NSTemporaryDirectory() + "opencsv-scan-regtest-\(UUID().uuidString)"
+        let expectsProcessResume = env["OPENCSV_REGTEST_EXPECT_RESUME"] == "1"
         let result = try OpenCsvChainView.scanSync(config: .init(
             network: "regtest",
-            peers: ["127.0.0.1:18444"],
+            peers: [peer],
             cacheDir: cacheDir,
             fromHeight: 1,
             requiredConfirmations: 1,
         ))
         #expect(result.tipHeight > 0)
-        #expect(result.filtersBytes > 0, "a real sync walks real filter bytes")
+        if expectsProcessResume {
+            #expect(result.filtersBytes == 0, "a relaunched process must reuse the durable filter cache")
+        } else {
+            #expect(result.filtersBytes > 0, "a real sync walks real filter bytes")
+        }
         // Live diagnostic for the log: the honest bandwidth numbers.
         print(
             "OPENCSV_REGTEST scan sync: tip \(result.tipHeight), "
@@ -1657,7 +1836,6 @@ struct OpenCsvScanRegtestTest {
         // When the host chain carries marker-bearing anchor transactions
         // (OPENCSV_REGTEST_MIN_ANCHORS says how many), the filter walk
         // must discover them — that is the whole design.
-        let env = ProcessInfo.processInfo.environment
         if let minAnchors = env["OPENCSV_REGTEST_MIN_ANCHORS"].flatMap(UInt64.init) {
             #expect(result.anchors >= minAnchors, "the filter walk missed the marker anchor(s)")
             #expect(result.blocksBytes > 0, "an anchor day downloads its block")
@@ -1674,7 +1852,7 @@ struct OpenCsvScanRegtestTest {
         // A second sync resumes from the synced tip: no filter re-walk.
         let resumed = try OpenCsvChainView.scanSync(config: .init(
             network: "regtest",
-            peers: ["127.0.0.1:18444"],
+            peers: [peer],
             cacheDir: cacheDir,
             fromHeight: 1,
             requiredConfirmations: 1,
