@@ -103,6 +103,15 @@ public struct OpenCsvUsdIssuerPolicy: Codable, Equatable {
 /// authorize minting. Mainnet remains empty until an issuer relationship and
 /// manifest have received a separate production review.
 public enum OpenCsvReviewedUsdIssuers {
+    /// Earliest height relevant to the reviewed instrument set in this
+    /// build. The signet preview registry was activated after this public
+    /// checkpoint, so a fresh wallet does not need to walk hundreds of
+    /// thousands of irrelevant compact filters. Adding an older reviewed
+    /// instrument must deliberately lower this value in the same review.
+    public static func earliestRelevantHeight(for network: String) -> UInt64? {
+        network == "signet" ? 316_000 : nil
+    }
+
     public static func policies(for network: String) -> [OpenCsvUsdIssuerPolicy] {
         guard network == "signet" else { return [] }
         return [

@@ -132,13 +132,14 @@ public enum OpenCsvAttachmentProcessor {
 
     private static func retryPending() {
         Task {
-            // Sync the self-scan index first — the sweep's verifications
-            // consult it when SPV peers are configured. Then finish
-            // anything interrupted between anchoring and finalizing before
-            // sweeping: recovery can produce new consignments to deliver.
+            // Re-enqueue message-request-blocked downloads before the phone's
+            // first self-scan. A fresh scan may take minutes; it must not
+            // starve an attachment that became downloadable when the user
+            // accepted the conversation. Verification remains retryable
+            // while the chain view catches up.
+            await OpenCsvPayments.shared.retryAllPendingVerifications()
             await OpenCsvPayments.shared.scanSyncIfNeeded()
             await OpenCsvPayments.shared.recoverInterruptedSends()
-            await OpenCsvPayments.shared.retryAllPendingVerifications()
         }
     }
 }

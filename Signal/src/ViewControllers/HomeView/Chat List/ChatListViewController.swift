@@ -10,6 +10,10 @@ import StoreKit
 public class ChatListViewController: OWSViewController, HomeTabViewController {
     let appReadiness: AppReadinessSetter
 
+#if DEBUG && targetEnvironment(simulator)
+    private var hasHandledOpenCsvSimulatorLaunch = false
+#endif
+
     init(
         chatListMode: ChatListMode,
         appReadiness: AppReadinessSetter,
@@ -238,6 +242,17 @@ public class ChatListViewController: OWSViewController, HomeTabViewController {
         }
 
         appReadiness.setUIIsReady()
+
+#if DEBUG && targetEnvironment(simulator)
+        if !hasHandledOpenCsvSimulatorLaunch,
+           ProcessInfo.processInfo.environment["OPENCSV_SIMULATOR_LAUNCH"] == "wallet"
+        {
+            hasHandledOpenCsvSimulatorLaunch = true
+            DispatchQueue.main.async { [weak self] in
+                self?.showAppSettings(mode: .openCsvWallet)
+            }
+        }
+#endif
 
         presentGetStartedBannerIfNecessary()
         reconcileExperienceUpgrades()
@@ -1373,6 +1388,7 @@ extension ChatListViewController: ChatListProxyButtonDelegate {
 
 extension ChatListViewController {
     enum ShowAppSettingsMode {
+        case openCsvWallet
         case payments
         case payment(paymentsHistoryItem: PaymentsHistoryItem)
         case paymentsTransferIn
@@ -1405,6 +1421,9 @@ extension ChatListViewController {
         switch mode {
         case nil:
             break
+
+        case .openCsvWallet:
+            viewControllers += [OpenCsvWalletViewController(thread: nil)]
 
         case .payments:
             let paymentsSettings = PaymentsSettingsViewController(mode: .inAppSettings, appReadiness: appReadiness)

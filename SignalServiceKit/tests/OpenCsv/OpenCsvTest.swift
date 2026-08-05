@@ -892,9 +892,16 @@ final class OpenCsvWalletStoreTest {
         db.read { tx in
             #expect(store.network(tx: tx) == "signet", "a prototype must not default to mainnet")
             #expect(store.spvPeers(tx: tx).isEmpty)
+            #expect(store.scanFromHeight(tx: tx) == 316_000)
         }
         try db.write { tx in try store.setSpvPeers(["node.example:38333"], tx: tx) }
         db.read { tx in #expect(store.spvPeers(tx: tx) == ["node.example:38333"]) }
+
+        db.write { tx in store.setNetwork("mainnet", tx: tx) }
+        db.read { tx in #expect(store.scanFromHeight(tx: tx) == 1) }
+
+        try db.write { tx in try store.setScanFromHeight(42, tx: tx) }
+        db.read { tx in #expect(store.scanFromHeight(tx: tx) == 42) }
     }
 
     @Test
@@ -1409,6 +1416,17 @@ struct OpenCsvChainViewTest {
         // One indexer is not a cross-check; zero of anything is a demo.
         #expect(OpenCsvPayments.chainViewPlan(peerCount: 0, indexerCount: 1) == .singleSnapshot)
         #expect(OpenCsvPayments.chainViewPlan(peerCount: 0, indexerCount: 0) == .singleSnapshot)
+    }
+
+    @Test
+    func freshSignetWalletUsesReviewedPeersWithoutSingleIndexerDowngrade() {
+        let defaults = OpenCsvPayments.effectiveSpvPeers(configured: [], network: "signet")
+        #expect(defaults == ["172.233.20.188:38333", "15.204.114.107:38333"])
+        #expect(OpenCsvPayments.chainViewPlan(peerCount: defaults.count, indexerCount: 1) == .selfScan)
+
+        let explicit = ["node.example:38333"]
+        #expect(OpenCsvPayments.effectiveSpvPeers(configured: explicit, network: "signet") == explicit)
+        #expect(OpenCsvPayments.effectiveSpvPeers(configured: [], network: "mainnet").isEmpty)
     }
 
     /// A lagging chain view must never produce a final verdict — found

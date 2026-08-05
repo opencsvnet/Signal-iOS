@@ -465,15 +465,18 @@ public struct OpenCsvWalletStore {
     }
 
     /// Where a fresh self-scan index starts walking filters — the wallet's
-    /// birth height. Defaults to 1, one full-history filter walk on first
-    /// sync; later syncs resume from the index's own tip. Never 0: the FFI
-    /// reserves height 0 as its mempool sentinel and rejects it.
+    /// birth height. A reviewed instrument set may provide a public lower
+    /// bound; otherwise the conservative default is 1. Explicit user or
+    /// recovery configuration always wins. Never 0: the FFI reserves height
+    /// 0 as its mempool sentinel and rejects it.
     public func scanFromHeight(tx: DBReadTransaction) -> UInt64 {
-        let stored: UInt64 = (try? keyValueStore.getCodableValue(
+        if let stored: UInt64 = try? keyValueStore.getCodableValue(
             forKey: Self.scanFromHeightKey,
             transaction: tx,
-        )) ?? 1
-        return max(1, stored)
+        ) {
+            return max(1, stored)
+        }
+        return OpenCsvReviewedUsdIssuers.earliestRelevantHeight(for: network(tx: tx)) ?? 1
     }
 
     public func setScanFromHeight(_ height: UInt64, tx: DBWriteTransaction) throws {

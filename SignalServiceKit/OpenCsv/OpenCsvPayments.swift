@@ -423,8 +423,15 @@ public actor OpenCsvPayments {
             throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
         }
         let wallet = try await ensureWallet()
-        let (peers, indexers) = db.read {
-            (self.store.spvPeers(tx: $0), self.store.indexerUrls(tx: $0))
+        let (peers, indexers) = db.read { tx in
+            let network = self.store.network(tx: tx)
+            return (
+                Self.effectiveSpvPeers(
+                    configured: self.store.spvPeers(tx: tx),
+                    network: network,
+                ),
+                self.store.indexerUrls(tx: tx),
+            )
         }
 
         let plan = Self.chainViewPlan(peerCount: peers.count, indexerCount: indexers.count)
@@ -600,8 +607,15 @@ public actor OpenCsvPayments {
         guard verdict.isVerified, verdict.finality != "unconfirmed", let anchor = verdict.anchor else {
             return verdict
         }
-        let (peers, network) = db.read {
-            (self.store.spvPeers(tx: $0), self.store.network(tx: $0))
+        let (peers, network) = db.read { tx in
+            let network = self.store.network(tx: tx)
+            return (
+                Self.effectiveSpvPeers(
+                    configured: self.store.spvPeers(tx: tx),
+                    network: network,
+                ),
+                network,
+            )
         }
         guard !peers.isEmpty else {
             return verdict
@@ -666,8 +680,16 @@ public actor OpenCsvPayments {
         guard !scanSyncInFlight else {
             return
         }
-        let (peers, network, fromHeight) = db.read {
-            (self.store.spvPeers(tx: $0), self.store.network(tx: $0), self.store.scanFromHeight(tx: $0))
+        let (peers, network, fromHeight) = db.read { tx in
+            let network = self.store.network(tx: tx)
+            return (
+                Self.effectiveSpvPeers(
+                    configured: self.store.spvPeers(tx: tx),
+                    network: network,
+                ),
+                network,
+                self.store.scanFromHeight(tx: tx),
+            )
         }
         guard !peers.isEmpty else {
             return
@@ -745,12 +767,13 @@ public actor OpenCsvPayments {
     }
 
     /// The chain-view cache (CBF headers, filters, and the scan index
-    /// under `scan/`), namespaced per network so switching networks can
-    /// never replay one chain's cache against another. Caches, not the
-    /// group container: everything in it is re-derivable from the
-    /// network, and the wallet's real state never lives here.
+    /// under `scan/`), namespaced per format version and network so
+    /// switching networks or changing the reviewed birth-height policy can
+    /// never replay a stale scan. Everything here is re-derivable; wallet
+    /// state never lives here. The old v1 directory is deliberately left
+    /// untouched and ignored so this migration is non-destructive.
     private static func chainCacheDir(network: String) -> String {
-        let dir = OWSFileSystem.cachesDirectoryPath() + "/OpenCsvCbf/" + network
+        let dir = OWSFileSystem.cachesDirectoryPath() + "/OpenCsvCbf/v2/" + network
         _ = OWSFileSystem.ensureDirectoryExists(dir)
         return dir
     }
@@ -1406,7 +1429,12 @@ public actor OpenCsvPayments {
             deviceBindingStatus: status.deviceBinding.status,
             syncProvenance: status.syncProvenance,
             esploraUrl: db.read { URL(string: store.esploraUrl(tx: $0)) },
-            spvPeers: db.read { store.spvPeers(tx: $0) },
+            spvPeers: db.read { tx in
+                Self.effectiveSpvPeers(
+                    configured: store.spvPeers(tx: tx),
+                    network: status.network,
+                )
+            },
             scanFromHeight: db.read { store.scanFromHeight(tx: $0) },
             network: status.network,
         )
@@ -1613,6 +1641,18 @@ public actor OpenCsvPayments {
         "15.204.114.107:38333",
     ]
 
+    /// Signet ships with the same reviewed phone-owned chain view used for
+    /// Bitcoin writes. An empty settings row means "use the reviewed
+    /// defaults", not "silently downgrade receive verification to one
+    /// public indexer". Explicit configuration always replaces defaults;
+    /// production networks never acquire peers implicitly.
+    static func effectiveSpvPeers(configured: [String], network: String) -> [String] {
+        if configured.isEmpty, network == "signet" {
+            return defaultSignetPeers
+        }
+        return configured
+    }
+
     /// Open the durable Rust-owned account with only public policy in JSON.
     /// Secret root/binding bytes cross the FFI in dedicated byte buffers;
     /// linked devices receive public descriptors and no root at all.
@@ -1632,9 +1672,7 @@ public actor OpenCsvPayments {
         ) in
             let network = store.network(tx: tx)
             let configuredPeers = store.spvPeers(tx: tx)
-            let peers = configuredPeers.isEmpty && network == "signet"
-                ? Self.defaultSignetPeers
-                : configuredPeers
+            let peers = Self.effectiveSpvPeers(configured: configuredPeers, network: network)
             let backupPayload = try store.secureBackupPayload(tx: tx)
             return (
                 network,
@@ -1888,7 +1926,13 @@ public actor OpenCsvPayments {
         // crediting snapshot comes from the scan index — no server asked,
         // and the tip agrees with the scan's own confirmation counting.
         // Cached like any snapshot so offline startup replay keeps working.
-        let peers = db.read { self.store.spvPeers(tx: $0) }
+        let peers = db.read { tx in
+            let network = self.store.network(tx: tx)
+            return Self.effectiveSpvPeers(
+                configured: self.store.spvPeers(tx: tx),
+                network: network,
+            )
+        }
         if !peers.isEmpty {
             if !scanSyncedThisLaunch {
                 await scanSyncIfNeeded()
