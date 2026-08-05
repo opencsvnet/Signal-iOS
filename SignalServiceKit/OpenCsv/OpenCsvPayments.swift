@@ -180,6 +180,7 @@ public actor OpenCsvPayments {
         public let instruments: [OpenCsvInstrumentRecord]
         public let operations: [OpenCsvAccountOperationSummary]
         public let feeReserve: OpenCsvAccountStatus.FeeReserve
+        public let batchReserves: OpenCsvAccountStatus.BatchReserves?
         public let bitcoinDepositAddress: String
         public let backupVerified: Bool
         public let writeEnabled: Bool
@@ -1016,10 +1017,7 @@ public actor OpenCsvPayments {
         assetIdHex: String? = nil,
         progress: (@MainActor @Sendable (OpenCsvSendProgress) -> Void)? = nil,
     ) async throws -> OpenCsvWalletStore.PendingAccountOperation {
-        let alreadyPending = try db.read {
-            try self.store.pendingAccountOperations(tx: $0).isEmpty == false
-        }
-        guard !isSending, !alreadyPending else {
+        guard !isSending else {
             throw OpenCsvPaymentsError.sendAlreadyInProgress
         }
         // Reject a malformed key here rather than as an opaque Rust error
@@ -1050,12 +1048,12 @@ public actor OpenCsvPayments {
         let asset = selection.credit
         let assetId = asset.assetId
 
-        // Planning is deliberately cheap and durable. Rust stores the exact
-        // asset/recipient/amount but does not yet select protocol coins or a
-        // Bitcoin input; the background prove step owns those decisions.
+        // Planning is deliberately cheap and durable. Rust starts a two-
+        // second collection window but does not yet select protocol coins or
+        // a Bitcoin input; the background prove step owns those decisions.
         let planned: OpenCsvAccountOperation
         do {
-            planned = try account.planTransfer(
+            planned = try account.planBatchedTransfer(
                 assetId: assetId,
                 toOwner: recipient,
                 amount: amount,
@@ -1068,6 +1066,9 @@ public actor OpenCsvPayments {
                 confirmedSats: status.feeReserve.confirmedSats,
             )
         }
+        guard let batch = planned.batch else {
+            throw OpenCsvClientError.decode("batched transfer plan omitted membership")
+        }
         let pending = OpenCsvWalletStore.PendingAccountOperation(
             operationId: planned.operationId,
             threadUniqueId: threadUniqueId,
@@ -1076,17 +1077,125 @@ public actor OpenCsvPayments {
             assetId: assetId,
             kind: "transfer",
             createdAt: Date(),
+            batchLocalId: batch.batchLocalId,
+            batchDeadlineMs: batch.deadlineMs,
+            batchOrdinal: batch.ordinal,
         )
         do {
             try await db.awaitableWrite { tx in
                 try self.store.upsertPendingAccountOperation(pending, tx: tx)
             }
         } catch {
-            try? account.cancel(planned.operationId)
+            _ = try? account.cancelSendBatch(batch.batchLocalId)
             throw OpenCsvPaymentsError.couldNotPersistPendingSend(underlying: "\(error)")
         }
         requestBackgroundWorkScheduling()
         return pending
+    }
+
+    /// Add an already-selected recipient to an explicitly named collection
+    /// window. A successful return is Rust's guarantee that this recipient
+    /// will be in the same frozen Bitcoin transaction; expiry creates no
+    /// fallback solo operation.
+    public func addRecipientToQueuedBatch(
+        batchLocalId: String,
+        toOwnerHex: String,
+        amount: UInt64,
+        threadUniqueId: String,
+        assetIdHex: String,
+    ) async throws -> OpenCsvWalletStore.PendingAccountOperation {
+        guard !isSending else {
+            throw OpenCsvPaymentsError.sendAlreadyInProgress
+        }
+        let recipient = toOwnerHex.lowercased()
+        guard recipient.count == 64, recipient.allSatisfy(\.isHexDigit) else {
+            throw OpenCsvPaymentsError.malformedRecipient
+        }
+        isSending = true
+        defer { isSending = false }
+        let account = try await ensureAccountWallet()
+        let status = try account.status()
+        let selection = try Self.resolveUsdSendAsset(
+            status.assets,
+            instruments: status.instruments,
+            amount: amount,
+            requestedAssetId: assetIdHex,
+        )
+        let planned = try account.addBatchedRecipient(
+            batchLocalId: batchLocalId,
+            assetId: selection.credit.assetId,
+            toOwner: recipient,
+            amount: amount,
+        )
+        guard let batch = planned.batch, batch.batchLocalId == batchLocalId else {
+            _ = try? account.cancelSendBatch(batchLocalId)
+            throw OpenCsvClientError.decode("Add Recipient response omitted exact batch membership")
+        }
+        let pending = OpenCsvWalletStore.PendingAccountOperation(
+            operationId: planned.operationId,
+            threadUniqueId: threadUniqueId,
+            amount: amount,
+            currency: selection.credit.currency,
+            assetId: selection.credit.assetId,
+            kind: "transfer",
+            createdAt: Date(),
+            batchLocalId: batch.batchLocalId,
+            batchDeadlineMs: batch.deadlineMs,
+            batchOrdinal: batch.ordinal,
+        )
+        do {
+            try await db.awaitableWrite { tx in
+                try self.store.upsertPendingAccountOperation(pending, tx: tx)
+            }
+        } catch {
+            _ = try? account.cancelSendBatch(batchLocalId)
+            try? await db.awaitableWrite { tx in
+                try self.store.removePendingAccountOperations(batchLocalId: batchLocalId, tx: tx)
+            }
+            throw OpenCsvPaymentsError.couldNotPersistPendingSend(underlying: "\(error)")
+        }
+        requestBackgroundWorkScheduling()
+        return pending
+    }
+
+    /// Close membership immediately after the UI has durably added every
+    /// preselected recipient. Automatic one-recipient sends instead let the
+    /// full two-second coalescing window expire.
+    @discardableResult
+    public func freezeQueuedBatch(_ batchLocalId: String) async throws -> OpenCsvSendBatch {
+        guard !isSending else {
+            throw OpenCsvPaymentsError.sendAlreadyInProgress
+        }
+        isSending = true
+        defer { isSending = false }
+        let account = try await ensureAccountWallet()
+        return try account.freezeSendBatch(batchLocalId)
+    }
+
+    /// Roll back the whole unsent manifest if explicit multi-recipient
+    /// assembly cannot complete. Already-announced chat intents receive one
+    /// terminal failure; invisible drafts are simply removed.
+    public func cancelQueuedBatch(_ batchLocalId: String, reason: String) async {
+        guard !isSending else { return }
+        isSending = true
+        defer { isSending = false }
+        guard let account = try? await ensureAccountWallet() else { return }
+        guard (try? account.cancelSendBatch(batchLocalId)) != nil else { return }
+        try? await db.awaitableWrite { tx in
+            let operations = try self.store.pendingAccountOperations(tx: tx)
+                .filter { $0.batchLocalId == batchLocalId }
+            for operation in operations {
+                if operation.announcementEnqueuedAt == nil {
+                    try self.store.removePendingAccountOperation(operationId: operation.operationId, tx: tx)
+                } else {
+                    try self.store.markPendingAccountOperationFailed(
+                        operationId: operation.operationId,
+                        reason: reason,
+                        tx: tx,
+                    )
+                }
+            }
+        }
     }
 
     /// Advance one queued transfer through proof, recovery protection,
@@ -1110,6 +1219,29 @@ public actor OpenCsvPayments {
         isSending = true
         defer { isSending = false }
         let account = try await ensureAccountWallet()
+        if let batchLocalId = pending.batchLocalId {
+            let deliveries = try await finishQueuedBatch(
+                account: account,
+                batchLocalId: batchLocalId,
+                progress: progress,
+            )
+            guard let delivery = deliveries.first(where: { $0.operationId == operationId }) else {
+                throw OpenCsvPaymentsError.consignmentNotReady(
+                    operationId: operationId,
+                    state: (try? account.sendBatchStatus(batchLocalId).state) ?? "unknown",
+                )
+            }
+            return delivery
+        }
+        return try await finishQueuedSolo(account: account, pending: pending, progress: progress)
+    }
+
+    private func finishQueuedSolo(
+        account: OpenCsvAccountWallet,
+        pending: OpenCsvWalletStore.PendingAccountOperation,
+        progress: (@MainActor @Sendable (OpenCsvSendProgress) -> Void)? = nil,
+    ) async throws -> OpenCsvWalletStore.PendingDelivery {
+        let operationId = pending.operationId
         var operation = try account.operationStatus(operationId)
         if operation.state == "planned" || operation.state == "fee_reserved" {
             await progress?(.generatingProof)
@@ -1143,6 +1275,91 @@ public actor OpenCsvPayments {
             )
         }
         return try await persistDeliveryIfReady(operation: operation, pending: pending)
+    }
+
+    /// Advance one durable collection/frozen batch. The same method handles
+    /// foreground completion and crash recovery; every boundary is an
+    /// idempotent Rust journal state.
+    private func finishQueuedBatch(
+        account: OpenCsvAccountWallet,
+        batchLocalId: String,
+        progress: (@MainActor @Sendable (OpenCsvSendProgress) -> Void)? = nil,
+    ) async throws -> [OpenCsvWalletStore.PendingDelivery] {
+        let pending = try db.read { tx in
+            try self.store.pendingAccountOperations(tx: tx)
+                .filter { $0.batchLocalId == batchLocalId }
+                .sorted { ($0.batchOrdinal ?? 0) < ($1.batchOrdinal ?? 0) }
+        }
+        guard !pending.isEmpty else {
+            throw OpenCsvClientError.ffi("queued OpenCSV batch is missing Signal metadata")
+        }
+        var batch = try account.sendBatchStatus(batchLocalId)
+        if batch.state == "collecting" {
+            let remainingMs = max(0, batch.deadlineMs - Int64(Date().timeIntervalSince1970 * 1_000))
+            if remainingMs > 0 {
+                try await Task.sleep(nanoseconds: UInt64(remainingMs) * 1_000_000)
+            }
+            batch = try account.freezeSendBatch(batchLocalId)
+        }
+        if batch.state == "cancelled" {
+            throw OpenCsvClientError.ffi("OpenCSV send batch was cancelled before broadcast")
+        }
+        if batch.state == "solo" {
+            guard let only = pending.first else {
+                throw OpenCsvClientError.ffi("solo OpenCSV batch has no Signal metadata")
+            }
+            return [try await finishQueuedSolo(account: account, pending: only, progress: progress)]
+        }
+        if batch.state == "frozen" {
+            await progress?(.generatingProof)
+            switch try account.proveSendBatch(batchLocalId) {
+            case .solo(let operationId):
+                guard let only = pending.first(where: { $0.operationId == operationId }) else {
+                    throw OpenCsvClientError.ffi("solo OpenCSV operation lost Signal metadata")
+                }
+                return [try await finishQueuedSolo(account: account, pending: only, progress: progress)]
+            case .batch(let prepared):
+                batch = prepared
+            }
+        }
+        if batch.state == "proof_ready", !batch.backupAcked {
+            guard let checkpointHash = batch.checkpointHash else {
+                throw OpenCsvClientError.decode("proof-ready batch omitted checkpoint hash")
+            }
+            await progress?(.protectingRecovery)
+            try await backUpAccountCheckpoint(
+                account: account,
+                batchLocalId: batchLocalId,
+                expectedCheckpointHash: checkpointHash,
+            )
+            batch = try account.sendBatchStatus(batchLocalId)
+        }
+        if batch.state == "proof_ready", batch.backupAcked {
+            await progress?(.broadcasting)
+            batch = try account.signAndBroadcastSendBatch(batchLocalId)
+        } else if batch.state == "signed_persisted" || batch.state == "broadcast_unobserved" {
+            await progress?(.broadcasting)
+            batch = try account.resumeSendBatch(batchLocalId)
+        }
+        if batch.state == "signed_persisted" || batch.state == "broadcast_unobserved" {
+            batch = await observeSignedBatchIfAvailable(account: account, batch: batch)
+        }
+        guard ["mempool", "confirmed"].contains(batch.state) else {
+            throw OpenCsvPaymentsError.consignmentNotReady(
+                operationId: pending[0].operationId,
+                state: batch.state,
+            )
+        }
+
+        var deliveries = [OpenCsvWalletStore.PendingDelivery]()
+        let operationsById = Dictionary(uniqueKeysWithValues: batch.operations.map { ($0.operationId, $0) })
+        for metadata in pending {
+            guard let operation = operationsById[metadata.operationId] else {
+                throw OpenCsvClientError.decode("batch receipt omitted operation \(metadata.operationId)")
+            }
+            deliveries.append(try await persistDeliveryIfReady(operation: operation, pending: metadata))
+        }
+        return deliveries
     }
 
     /// Compatibility call for tests and non-interactive clients that still
@@ -1381,6 +1598,35 @@ public actor OpenCsvPayments {
         return operation
     }
 
+    private func observeSignedBatchIfAvailable(
+        account: OpenCsvAccountWallet,
+        batch: OpenCsvSendBatch,
+    ) async -> OpenCsvSendBatch {
+        guard let txid = batch.txid else { return batch }
+        do {
+            let status = try account.status()
+            if status.network == "signet" {
+                let policy = status.observationPolicy
+                    ?? db.read { self.store.observationChecks(tx: $0) }
+                let observationSet = try await OpenCsvPinnedObserver.observeSignetTransaction(
+                    txid: txid,
+                    policy: policy,
+                )
+                return try account.observeUnconfirmedSendBatch(
+                    batch.batchLocalId,
+                    rawTransaction: observationSet.rawTransaction,
+                    observations: observationSet.evidence,
+                )
+            }
+            if status.network == "regtest" {
+                return try account.sendBatchStatus(batch.batchLocalId)
+            }
+        } catch {
+            Logger.warn("OpenCSV shared transaction remains pending independent observation: \(error)")
+        }
+        return batch
+    }
+
     private func persistDeliveryIfReady(
         operation: OpenCsvAccountOperation,
         pending: OpenCsvWalletStore.PendingAccountOperation,
@@ -1439,8 +1685,51 @@ public actor OpenCsvPayments {
         isSending = true
         defer { isSending = false }
         if let account = try? await ensureAccountWallet() {
+            _ = try? await maintainBatchReserves(
+                account: account,
+                participantCount: 2,
+                createIfMissing: false,
+            )
             let operations = (try? db.read { try self.store.pendingAccountOperations(tx: $0) }) ?? []
-            for pending in operations {
+            let groupedBatches = Dictionary(
+                grouping: operations.compactMap { operation in
+                    operation.batchLocalId.map { ($0, operation) }
+                },
+                by: \.0,
+            )
+            for (batchLocalId, entries) in groupedBatches {
+                let pending = entries.map(\.1).sorted { ($0.batchOrdinal ?? 0) < ($1.batchOrdinal ?? 0) }
+                // Every recipient sees its authenticated intent before any
+                // member can release a signature. The delivery pass that
+                // called us inserts all missing announcements first.
+                guard pending.allSatisfy({ $0.announcementEnqueuedAt != nil }) else { continue }
+                do {
+                    _ = try await finishQueuedBatch(
+                        account: account,
+                        batchLocalId: batchLocalId,
+                    )
+                } catch OpenCsvPaymentsError.consignmentNotReady {
+                    Logger.info("OpenCSV batch \(batchLocalId) is durable and awaiting observation")
+                } catch {
+                    let state = try? account.sendBatchStatus(batchLocalId).state
+                    if state == "cancelled" {
+                        try? await db.awaitableWrite { tx in
+                            for operation in pending {
+                                try self.store.markPendingAccountOperationFailed(
+                                    operationId: operation.operationId,
+                                    reason: "batch_cancelled",
+                                    tx: tx,
+                                )
+                            }
+                        }
+                    }
+                    Logger.warn("could not resume OpenCSV batch \(batchLocalId): \(error)")
+                }
+            }
+
+            // Records written before durable coalescing remain on the exact
+            // established solo recovery path.
+            for pending in operations where pending.batchLocalId == nil {
                 do {
                     var operation = try account.operationStatus(pending.operationId)
                     if operation.state == "planned" || operation.state == "fee_reserved" {
@@ -1749,6 +2038,7 @@ public actor OpenCsvPayments {
             instruments: status.instruments,
             operations: try account.operationSummaries(),
             feeReserve: status.feeReserve,
+            batchReserves: status.batchReserves,
             bitcoinDepositAddress: status.depositAddress,
             backupVerified: status.backupVerified,
             writeEnabled: status.writeEnabled,
@@ -2094,7 +2384,7 @@ public actor OpenCsvPayments {
             )
         }
 
-        #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
         let pendingRebind = isPrimary ? try store.pendingTestDeviceRebind() : nil
         let account: OpenCsvAccountWallet
         do {
@@ -2111,11 +2401,11 @@ public actor OpenCsvPayments {
             guard let pendingRebind else { throw error }
             account = try openAccount(expectedCommitment: pendingRebind.newDeviceBindingCommitment)
         }
-        #else
+#else
         let account = try openAccount(
             expectedCommitment: settings.backupPayload?.deviceBindingCommitment,
         )
-        #endif
+#endif
         if material?.isRestoredReadOnly == true, let payload = settings.backupPayload {
             let currentCommitment = try account.status().deviceBinding.commitment
             // Once a test rebind has committed, the old checkpoint is still
@@ -2167,10 +2457,105 @@ public actor OpenCsvPayments {
     /// Esplora accelerator. Selected spend state is still rechecked through
     /// compact-filter/full-block verification by Rust before signing.
     public func syncAccount() async throws -> OpenCsvAccountSyncReport {
-        try await ensureAccountWallet().sync()
+        let account = try await ensureAccountWallet()
+        let report = try account.sync()
+        do {
+            try await maintainBatchReserves(
+                account: account,
+                participantCount: 2,
+                createIfMissing: true,
+            )
+        } catch {
+            // A read refresh must remain usable with too little fee reserve
+            // or while observers are offline. The Advanced wallet receipt
+            // exposes the maintenance state and the next foreground pass
+            // resumes the exact persisted transaction.
+            Logger.warn("OpenCSV count-2 reserve maintenance is pending: \(error)")
+        }
+        return report
     }
 
-    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+    /// Keep one small stock of count-specific C1 inputs ahead of the send
+    /// path. The split has no arbitrary recipient surface: Rust creates only
+    /// reviewed stock outputs, derived fee cells, and wallet change.
+    private func maintainBatchReserves(
+        account: OpenCsvAccountWallet,
+        participantCount: UInt8,
+        createIfMissing: Bool,
+    ) async throws {
+        var status = try account.status()
+        guard
+            status.role == .primary,
+            status.writeEnabled,
+            ["signet", "regtest"].contains(status.network)
+        else { return }
+        if
+            status.batchReserves?.inventory.contains(where: {
+                $0.participantCount == participantCount
+                    && ["available", "reserved", "signature_released"].contains($0.state)
+                    && $0.count > 0
+            }) == true
+        {
+            return
+        }
+
+        let maintenance = status.batchReserves?.maintenanceOperations
+            .first { operation in
+                operation.participantCount == participantCount
+                    && ["signed_persisted", "broadcast_unobserved", "mempool"].contains(operation.state)
+            }
+        if let current = maintenance {
+            var resumed = try account.resumeBatchReserves(current.maintenanceId)
+            if resumed.state == "signed_persisted" || resumed.state == "broadcast_unobserved" {
+                resumed = try await observeBatchReserveIfAvailable(account: account, operation: resumed)
+            }
+            if resumed.state == "mempool" {
+                _ = try account.refreshBatchReserves(resumed.maintenanceId)
+            }
+            return
+        }
+        guard createIfMissing else { return }
+
+        let prepared = try account.prepareBatchReserves(
+            participantCount: participantCount,
+            targetSatPerVb: 2,
+            maxFeeSats: 2_000,
+        )
+        // The exact signed split is already durable before Rust relays it.
+        // Export its checkpoint promptly so a restored test wallet retains
+        // the maintenance receipt and can resume observation by txid.
+        try await backUpAccountCheckpoint(account: account)
+        _ = try await observeBatchReserveIfAvailable(account: account, operation: prepared)
+        status = try account.status()
+        if
+            status.batchReserves?.maintenanceOperations.contains(where: {
+                $0.maintenanceId == prepared.maintenanceId
+            }) == true
+        {
+            requestBackgroundWorkScheduling()
+        }
+    }
+
+    private func observeBatchReserveIfAvailable(
+        account: OpenCsvAccountWallet,
+        operation: OpenCsvBatchReserveOperation,
+    ) async throws -> OpenCsvBatchReserveOperation {
+        let status = try account.status()
+        guard status.network == "signet" else { return operation }
+        let policy = status.observationPolicy
+            ?? db.read { self.store.observationChecks(tx: $0) }
+        let observation = try await OpenCsvPinnedObserver.observeSignetTransaction(
+            txid: operation.txid,
+            policy: policy,
+        )
+        return try account.observeBatchReserves(
+            maintenanceId: operation.maintenanceId,
+            rawTransaction: observation.rawTransaction,
+            observations: observation.evidence,
+        )
+    }
+
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
     /// Resume the complete test-only restored-device rebind transaction.
     /// Every secret-bearing stage lives in Keychain; the Rust database and
     /// the Secure Backup payload can therefore be reconciled after a crash
@@ -2220,7 +2605,7 @@ public actor OpenCsvPayments {
             response.checkpoint.checkpoint.rootFingerprint == before.rootFingerprint,
             response.checkpoint.checkpoint.owners == before.owners,
             response.checkpoint.checkpoint.deviceBindingCommitment
-                == pending.newDeviceBindingCommitment
+            == pending.newDeviceBindingCommitment
         else {
             throw OpenCsvPaymentsError.secureBackupFailed(
                 underlying: "test rebind returned inconsistent identity or checkpoint data",
@@ -2278,7 +2663,7 @@ public actor OpenCsvPayments {
             throw OpenCsvPaymentsError.secureBackupFailed(underlying: "\(error)")
         }
     }
-    #endif
+#endif
 
     private func secureBackupIsEnabled() -> Bool {
         db.read { tx in
@@ -2297,6 +2682,7 @@ public actor OpenCsvPayments {
     private func backUpAccountCheckpoint(
         account: OpenCsvAccountWallet,
         operationId: String? = nil,
+        batchLocalId: String? = nil,
         expectedCheckpointHash: String? = nil,
     ) async throws {
         guard secureBackupIsEnabled() else {
@@ -2333,6 +2719,12 @@ public actor OpenCsvPayments {
             if let operationId, let expectedCheckpointHash {
                 try account.acknowledgeBackup(
                     operationId: operationId,
+                    checkpointHash: expectedCheckpointHash,
+                )
+            }
+            if let batchLocalId, let expectedCheckpointHash {
+                _ = try account.acknowledgeSendBatchBackup(
+                    batchLocalId: batchLocalId,
                     checkpointHash: expectedCheckpointHash,
                 )
             }

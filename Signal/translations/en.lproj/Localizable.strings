@@ -7079,8 +7079,26 @@
 /* USD send review naming the exact issuer. Embeds amount and issuer name. */
 "OPENCSV_SEND_REVIEW_ISSUER_FORMAT" = "Send %1$@ USD issued by %2$@? The receipt will record this exact issuer.";
 
+/* USD send review recipient count. Embeds the number of recipients. */
+"OPENCSV_SEND_REVIEW_RECIPIENT_COUNT_FORMAT" = "Recipients: %@";
+
 /* Button confirming an issuer-specific USD payment. */
 "OPENCSV_SEND_CONFIRM" = "Send";
+
+/* Button that stages another recipient for the same underlying Bitcoin transaction. */
+"OPENCSV_SEND_ADD_RECIPIENT" = "Add Recipient · Same Bitcoin Transaction";
+
+/* Title of the recipient picker for an explicitly shared OpenCSV transaction. */
+"OPENCSV_SEND_ADD_RECIPIENT_PICKER_TITLE" = "Add Recipient";
+
+/* Title asking for the USD amount for an additional recipient. */
+"OPENCSV_SEND_ADD_RECIPIENT_AMOUNT_TITLE" = "Amount for this recipient";
+
+/* Button that stages an additional recipient before final send confirmation. */
+"OPENCSV_SEND_ADD_RECIPIENT_CONFIRM" = "Add";
+
+/* Error shown when a recipient is already included in the current payment. */
+"OPENCSV_SEND_DUPLICATE_RECIPIENT" = "That recipient is already in this payment.";
 
 /* Status shown when the recipient key was prefilled. Embeds {{ who announced it }}. */
 "OPENCSV_SEND_RECIPIENT_FROM_CHAT_FORMAT" = "Using the key shared by %@.";

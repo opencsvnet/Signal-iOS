@@ -343,9 +343,9 @@ public struct OpenCsvWalletStore {
     private static let keychainService = "OpenCsvPayments"
     private static let primaryAccountMaterialKey = "primaryAccountMaterial.v1"
     private static let restoredAccountRootKey = "restoredAccountRoot.v1"
-    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
     private static let pendingTestDeviceRebindKey = "pendingTestDeviceRebind.v1"
-    #endif
+#endif
     private static let keychainKey = "walletSecrets"
 
     private static let anchorServerUrlKey = "anchorServerUrl"
@@ -452,7 +452,7 @@ public struct OpenCsvWalletStore {
         )
     }
 
-    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
     public func pendingTestDeviceRebind() throws -> OpenCsvPendingTestDeviceRebind? {
         do {
             let data = try keychainStorage.dataValue(
@@ -549,7 +549,7 @@ public struct OpenCsvWalletStore {
             key: Self.pendingTestDeviceRebindKey,
         )
     }
-    #endif
+#endif
 
     // MARK: - Legacy wallet secrets (retained read-only for migration)
 
@@ -1082,6 +1082,10 @@ public struct OpenCsvWalletStore {
         public let assetId: String?
         public let kind: String?
         public let createdAt: Date
+        /// Rust-owned coalescing identity. Nil decodes legacy solo records.
+        public let batchLocalId: String?
+        public let batchDeadlineMs: Int64?
+        public let batchOrdinal: UInt8?
         /// The Signal-authenticated, nonspendable intent message is inserted
         /// atomically with these fields. Optional for records written before
         /// background proving existed.
@@ -1100,6 +1104,9 @@ public struct OpenCsvWalletStore {
             assetId: String?,
             kind: String? = nil,
             createdAt: Date,
+            batchLocalId: String? = nil,
+            batchDeadlineMs: Int64? = nil,
+            batchOrdinal: UInt8? = nil,
             announcementMessageId: String? = nil,
             announcementEnqueuedAt: Date? = nil,
             failureReason: String? = nil,
@@ -1111,6 +1118,9 @@ public struct OpenCsvWalletStore {
             self.assetId = assetId
             self.kind = kind
             self.createdAt = createdAt
+            self.batchLocalId = batchLocalId
+            self.batchDeadlineMs = batchDeadlineMs
+            self.batchOrdinal = batchOrdinal
             self.announcementMessageId = announcementMessageId
             self.announcementEnqueuedAt = announcementEnqueuedAt
             self.failureReason = failureReason
@@ -1138,6 +1148,16 @@ public struct OpenCsvWalletStore {
     public func removePendingAccountOperation(operationId: String, tx: DBWriteTransaction) throws {
         var operations = try pendingAccountOperations(tx: tx)
         operations.removeAll { $0.operationId == operationId }
+        try keyValueStore.setCodable(
+            operations,
+            key: Self.pendingAccountOperationsKey,
+            transaction: tx,
+        )
+    }
+
+    public func removePendingAccountOperations(batchLocalId: String, tx: DBWriteTransaction) throws {
+        var operations = try pendingAccountOperations(tx: tx)
+        operations.removeAll { $0.batchLocalId == batchLocalId }
         try keyValueStore.setCodable(
             operations,
             key: Self.pendingAccountOperationsKey,

@@ -605,7 +605,7 @@ final class OpenCsvWalletStoreTest {
         }
     }
 
-    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
     @Test
     func testDeviceRebindMaterialIsStableAndCrashResumable() throws {
         let keychain = MockKeychainStorage()
@@ -642,7 +642,7 @@ final class OpenCsvWalletStoreTest {
         try store.finishTestDeviceRebind()
         #expect(try store.pendingTestDeviceRebind() == nil)
     }
-    #endif
+#endif
 
     @Test
     func secureBackupPayloadCarriesRootButNoDeviceBinding() throws {
@@ -993,12 +993,16 @@ final class OpenCsvWalletStoreTest {
             assetId: String(repeating: "ab", count: 32),
             kind: "transfer",
             createdAt: Date(timeIntervalSince1970: 1),
+            batchLocalId: "batch-1",
+            batchDeadlineMs: 1_785_945_602_000,
+            batchOrdinal: 0,
         )
         try db.write { tx in
             try store.upsertPendingAccountOperation(operation, tx: tx)
         }
         db.read { tx in
             #expect((try? store.pendingAccountOperations(tx: tx)) == [operation])
+            #expect((try? store.pendingAccountOperations(tx: tx).first?.batchLocalId) == "batch-1")
             #expect(store.backgroundWorkUrgency(tx: tx) == .immediate)
             #expect(store.pendingDeliveries(tx: tx).isEmpty)
         }
@@ -1027,6 +1031,46 @@ final class OpenCsvWalletStoreTest {
             #expect(stored?.failureReason == "insufficient_fees")
             #expect(store.backgroundWorkUrgency(tx: tx) == .immediate)
         }
+    }
+
+    @Test
+    func legacyPendingOperationDecodesWithoutBatchMetadata() throws {
+        let legacy = #"{"operationId":"legacy-1","threadUniqueId":"thread-1","amount":1,"currency":"USD","assetId":"ab","kind":"transfer","createdAt":0}"#
+        let decoded = try JSONDecoder().decode(
+            OpenCsvWalletStore.PendingAccountOperation.self,
+            from: Data(legacy.utf8),
+        )
+        #expect(decoded.operationId == "legacy-1")
+        #expect(decoded.batchLocalId == nil)
+        #expect(decoded.batchDeadlineMs == nil)
+        #expect(decoded.batchOrdinal == nil)
+    }
+
+    @Test
+    func removingCancelledBatchMetadataLeavesIndependentQueueEntries() throws {
+        let makeOperation = { (id: String, batch: String?) in
+            OpenCsvWalletStore.PendingAccountOperation(
+                operationId: id,
+                threadUniqueId: "thread-\(id)",
+                amount: 1,
+                currency: "USD",
+                assetId: "ab",
+                kind: "transfer",
+                createdAt: Date(timeIntervalSince1970: 0),
+                batchLocalId: batch,
+                batchDeadlineMs: batch == nil ? nil : 2_000,
+                batchOrdinal: batch == nil ? nil : 0,
+            )
+        }
+        try db.write { tx in
+            try store.upsertPendingAccountOperation(makeOperation("a", "batch-1"), tx: tx)
+            try store.upsertPendingAccountOperation(makeOperation("b", "batch-1"), tx: tx)
+            try store.upsertPendingAccountOperation(makeOperation("c", "batch-2"), tx: tx)
+            try store.upsertPendingAccountOperation(makeOperation("legacy", nil), tx: tx)
+            try store.removePendingAccountOperations(batchLocalId: "batch-1", tx: tx)
+        }
+        let remaining = try db.read { try store.pendingAccountOperations(tx: $0) }
+        #expect(remaining.map(\.operationId) == ["c", "legacy"])
     }
 
     /// A delivery that can never succeed must stop being retried rather
@@ -1289,7 +1333,7 @@ struct OpenCsvClientFfiTest {
             #expect(status.feeReserve.totalSats == 0)
             #expect(status.depositAddress.hasPrefix("bcrt1"))
             let checkpoint = try wallet.checkpoint()
-            #expect(checkpoint.checkpoint.version == 1)
+            #expect(checkpoint.checkpoint.version == 3)
             #expect(checkpoint.checkpoint.deviceBindingCommitment == status.deviceBinding.commitment)
         }
 

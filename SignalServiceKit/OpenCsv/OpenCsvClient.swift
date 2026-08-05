@@ -445,6 +445,28 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
         public let commitment: String?
     }
 
+    public struct BatchReserves: Codable, Equatable {
+        public struct Inventory: Codable, Equatable {
+            public let participantCount: UInt8
+            public let state: String
+            public let count: UInt
+            public let totalSats: UInt64
+        }
+
+        public struct Maintenance: Codable, Equatable {
+            public let maintenanceId: String
+            public let state: String
+            public let participantCount: UInt8
+            public let stockCount: UInt8
+            public let feeCellCount: UInt16
+            public let txid: String
+            public let updatedAt: Int64
+        }
+
+        public let inventory: [Inventory]
+        public let maintenanceOperations: [Maintenance]
+    }
+
     public struct SyncProvenance: Codable, Equatable {
         public let accelerator: String
         public let authoritative: String
@@ -481,6 +503,7 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
     public let syncProvenance: SyncProvenance
     public let observationPolicy: [OpenCsvObservationCheck]?
     public let observationReceipts: [OpenCsvObservationReceipt]?
+    public let batchReserves: BatchReserves?
     public let rootFingerprint: String
 }
 
@@ -523,6 +546,16 @@ public struct OpenCsvPreparedOperation: Codable, Equatable {
 }
 
 public struct OpenCsvAccountOperation: Codable, Equatable {
+    public struct BatchMembership: Codable, Equatable {
+        public let batchLocalId: String
+        public let state: String
+        public let deadlineMs: Int64
+        public let ordinal: UInt8
+        public let addedAtMs: Int64
+        public let memberCount: UInt
+        public let addRecipientGuaranteed: Bool
+    }
+
     public struct Receipt: Codable, Equatable {
         public let txid: String?
         public let feeSats: UInt64?
@@ -546,6 +579,37 @@ public struct OpenCsvAccountOperation: Codable, Equatable {
     public let deliveryNonce: String
     public let checkpointHash: String?
     public let backupAcked: Bool
+    public let batch: BatchMembership?
+}
+
+public struct OpenCsvSendBatch: Codable, Equatable {
+    public let batchLocalId: String
+    public let state: String
+    public let deadlineMs: Int64
+    public let participantCount: UInt8?
+    public let memberCount: UInt
+    public let operations: [OpenCsvAccountOperation]
+    public let proposalWireBase64: String?
+    public let manifestWireBase64: String?
+    public let signedTxHex: String?
+    public let txid: String?
+    public let checkpointHash: String?
+    public let backupAcked: Bool
+}
+
+public enum OpenCsvSendBatchProofResult: Equatable {
+    case solo(operationId: String)
+    case batch(OpenCsvSendBatch)
+}
+
+public struct OpenCsvBatchReserveOperation: Codable, Equatable {
+    public let maintenanceId: String
+    public let state: String
+    public let participantCount: UInt8
+    public let stockCount: UInt8
+    public let feeCellCount: UInt16
+    public let signedTxHex: String
+    public let txid: String
 }
 
 /// Public, non-secret operation metadata exported in the compact account
@@ -663,6 +727,61 @@ public final class OpenCsvAccountWallet {
         try Self.take(opencsv_account_sync(handle))
     }
 
+    public func prepareBatchReserves(
+        participantCount: UInt8,
+        targetSatPerVb: UInt64,
+        maxFeeSats: UInt64? = nil,
+    ) throws -> OpenCsvBatchReserveOperation {
+        struct FeePolicy: Codable {
+            let targetSatPerVb: UInt64
+            let maxFeeSats: UInt64?
+        }
+        let policy = try Self.encodeJson(FeePolicy(
+            targetSatPerVb: targetSatPerVb,
+            maxFeeSats: maxFeeSats,
+        ))
+        return try policy.withCString {
+            try Self.take(opencsv_account_prepare_batch_reserves(handle, participantCount, $0))
+        }
+    }
+
+    public func observeBatchReserves(
+        maintenanceId: String,
+        rawTransaction: Data,
+        observations: [OpenCsvObservationEvidence],
+    ) throws -> OpenCsvBatchReserveOperation {
+        guard !rawTransaction.isEmpty else {
+            throw OpenCsvClientError.ffi("reserve observer transaction is empty")
+        }
+        struct Envelope: Encodable { let observations: [OpenCsvObservationEvidence] }
+        let evidenceJson = try Self.encodeJson(Envelope(observations: observations))
+        return try maintenanceId.withCString { maintenance in
+            try rawTransaction.withUnsafeBytes { bytes in
+                try evidenceJson.withCString { evidence in
+                    try Self.take(opencsv_account_observe_batch_reserves(
+                        handle,
+                        maintenance,
+                        bytes.bindMemory(to: UInt8.self).baseAddress,
+                        rawTransaction.count,
+                        evidence,
+                    ))
+                }
+            }
+        }
+    }
+
+    public func resumeBatchReserves(_ maintenanceId: String) throws -> OpenCsvBatchReserveOperation {
+        try maintenanceId.withCString {
+            try Self.take(opencsv_account_resume_batch_reserves(handle, $0))
+        }
+    }
+
+    public func refreshBatchReserves(_ maintenanceId: String) throws -> OpenCsvBatchReserveOperation {
+        try maintenanceId.withCString {
+            try Self.take(opencsv_account_refresh_batch_reserves(handle, $0))
+        }
+    }
+
     public func setBackupState(verified: Bool, checkpointVersion: UInt32) throws -> Bool {
         let state: BackupState = try Self.take(opencsv_account_set_backup_state(
             handle,
@@ -703,7 +822,7 @@ public final class OpenCsvAccountWallet {
         }
     }
 
-    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
     /// Test-only signet/regtest device rebind. The Rust symbol and this method
     /// are both absent from normal DEBUG and every release build.
     public func rebindTestDevice(deviceBinding: Data) throws -> OpenCsvTestDeviceRebindResponse {
@@ -747,7 +866,7 @@ public final class OpenCsvAccountWallet {
             checkpointJson: checkpointJson,
         )
     }
-    #endif
+#endif
 
     public func verify(blob: Data, snapshotJson: String) throws -> OpenCsvVerdict {
         guard !blob.isEmpty else {
@@ -852,6 +971,146 @@ public final class OpenCsvAccountWallet {
             Request(assetId: assetId, toOwner: toOwner, amount: amount),
             opencsv_transfer_plan,
         )
+    }
+
+    /// Start or join the wallet-owned two-second collection window.
+    public func planBatchedTransfer(
+        assetId: String,
+        toOwner: String,
+        amount: UInt64,
+    ) throws -> OpenCsvAccountOperation {
+        struct Request: Codable {
+            let assetId: String
+            let toOwner: String
+            let amount: UInt64
+        }
+        return try callJson(
+            Request(assetId: assetId, toOwner: toOwner, amount: amount),
+            opencsv_transfer_batch_plan,
+        )
+    }
+
+    /// Add Recipient only succeeds while Rust can durably guarantee the same
+    /// frozen Bitcoin transaction. Expiry creates no surprise solo send.
+    public func addBatchedRecipient(
+        batchLocalId: String,
+        assetId: String,
+        toOwner: String,
+        amount: UInt64,
+    ) throws -> OpenCsvAccountOperation {
+        struct Request: Codable {
+            let assetId: String
+            let toOwner: String
+            let amount: UInt64
+        }
+        let request = try Self.encodeJson(Request(
+            assetId: assetId,
+            toOwner: toOwner,
+            amount: amount,
+        ))
+        return try batchLocalId.withCString { batch in
+            try request.withCString { request in
+                try Self.take(opencsv_transfer_batch_add_recipient(handle, batch, request))
+            }
+        }
+    }
+
+    public func freezeSendBatch(_ batchLocalId: String) throws -> OpenCsvSendBatch {
+        try batchLocalId.withCString {
+            try Self.take(opencsv_send_batch_freeze(handle, $0))
+        }
+    }
+
+    public func sendBatchStatus(_ batchLocalId: String) throws -> OpenCsvSendBatch {
+        try batchLocalId.withCString {
+            try Self.take(opencsv_send_batch_status(handle, $0))
+        }
+    }
+
+    /// Abandon the complete ordered batch before Rust releases any
+    /// signature. Signal never cancels one member out from under the frozen
+    /// manifest because that would make the remaining UI claim misleading.
+    public func cancelSendBatch(_ batchLocalId: String) throws -> OpenCsvSendBatch {
+        try batchLocalId.withCString {
+            try Self.take(opencsv_send_batch_cancel(handle, $0))
+        }
+    }
+
+    public func proveSendBatch(_ batchLocalId: String) throws -> OpenCsvSendBatchProofResult {
+        let raw = try batchLocalId.withCString {
+            try Self.takeRaw(opencsv_send_batch_prove(handle, $0))
+        }
+        struct Solo: Decodable {
+            let path: String?
+            let operationId: String?
+        }
+        if let solo: Solo = try? Self.decode(raw), solo.path == "solo", let operationId = solo.operationId {
+            return .solo(operationId: operationId)
+        }
+        return .batch(try Self.decode(raw))
+    }
+
+    public func acknowledgeSendBatchBackup(
+        batchLocalId: String,
+        checkpointHash: String,
+    ) throws -> OpenCsvSendBatch {
+        try batchLocalId.withCString { batch in
+            try checkpointHash.withCString { checkpoint in
+                try Self.take(opencsv_send_batch_ack_backup(handle, batch, checkpoint))
+            }
+        }
+    }
+
+    public func signAndBroadcastSendBatch(_ batchLocalId: String) throws -> OpenCsvSendBatch {
+        try batchLocalId.withCString {
+            try Self.take(opencsv_send_batch_sign_and_broadcast(handle, $0))
+        }
+    }
+
+    public func observeUnconfirmedSendBatch(
+        _ batchLocalId: String,
+        rawTransaction: Data,
+        observations: [OpenCsvObservationEvidence],
+    ) throws -> OpenCsvSendBatch {
+        guard !rawTransaction.isEmpty else {
+            throw OpenCsvClientError.ffi("batch observer transaction is empty")
+        }
+        struct Envelope: Encodable { let observations: [OpenCsvObservationEvidence] }
+        let evidenceJson = try Self.encodeJson(Envelope(observations: observations))
+        return try batchLocalId.withCString { batch in
+            try rawTransaction.withUnsafeBytes { bytes in
+                try evidenceJson.withCString { evidence in
+                    try Self.take(opencsv_send_batch_observe_unconfirmed(
+                        handle,
+                        batch,
+                        bytes.bindMemory(to: UInt8.self).baseAddress,
+                        rawTransaction.count,
+                        evidence,
+                    ))
+                }
+            }
+        }
+    }
+
+    public func resumeSendBatch(_ batchLocalId: String) throws -> OpenCsvSendBatch {
+        try batchLocalId.withCString {
+            try Self.take(opencsv_send_batch_resume(handle, $0))
+        }
+    }
+
+    public func feeBumpSendBatch(
+        _ batchLocalId: String,
+        targetSatPerVb: UInt64,
+    ) throws -> OpenCsvSendBatch {
+        try batchLocalId.withCString {
+            try Self.take(opencsv_send_batch_fee_bump(handle, $0, targetSatPerVb))
+        }
+    }
+
+    public func refreshSendBatchSpv(_ batchLocalId: String) throws -> OpenCsvSendBatch {
+        try batchLocalId.withCString {
+            try Self.take(opencsv_send_batch_refresh_spv(handle, $0))
+        }
     }
 
     /// Advance a durable planned/fee-reserved operation to proof-ready. A

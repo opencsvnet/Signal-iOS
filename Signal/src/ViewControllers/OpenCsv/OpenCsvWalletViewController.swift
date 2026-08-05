@@ -28,6 +28,7 @@ class OpenCsvWalletViewController: OWSViewController {
     private let bitcoinQrImageView = UIImageView()
     private let bitcoinAddressLabel = UILabel()
     private let utxoLabel = UILabel()
+    private let batchReserveLabel = UILabel()
     private let operationHistoryLabel = UILabel()
     private let instrumentDetailsLabel = UILabel()
     private let walletPolicyLabel = UILabel()
@@ -47,9 +48,9 @@ class OpenCsvWalletViewController: OWSViewController {
     private var receiveButton: UIButton?
     private var feeReserveDetailsButton: UIButton?
     private var advancedButton: UIButton?
-    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
     private var testRecoveryButton: UIButton?
-    #endif
+#endif
     private var feeBumpCandidates = [OpenCsvAccountOperationSummary]()
     private var observationModeControls = [String: UISegmentedControl]()
     private var writeInProgress = false
@@ -252,18 +253,22 @@ class OpenCsvWalletViewController: OWSViewController {
         utxoLabel.numberOfLines = 0
         utxoLabel.textColor = Theme.secondaryTextAndIconColor
         advancedStack.addArrangedSubview(utxoLabel)
+        batchReserveLabel.font = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        batchReserveLabel.numberOfLines = 0
+        batchReserveLabel.textColor = Theme.secondaryTextAndIconColor
+        advancedStack.addArrangedSubview(batchReserveLabel)
         walletPolicyLabel.font = .dynamicTypeCaption1
         walletPolicyLabel.numberOfLines = 0
         walletPolicyLabel.textColor = Theme.secondaryTextAndIconColor
         advancedStack.addArrangedSubview(walletPolicyLabel)
-        #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
         testRecoveryButton = addButton(
             "Complete restored test-wallet setup",
             action: #selector(didTapCompleteTestWalletRecovery),
             to: advancedStack,
         )
         testRecoveryButton?.isHidden = true
-        #endif
+#endif
 
         instrumentDetailsLabel.font = .dynamicTypeFootnote
         instrumentDetailsLabel.numberOfLines = 0
@@ -496,19 +501,20 @@ class OpenCsvWalletViewController: OWSViewController {
             : summary.feeReserve.utxos.map {
                 "\($0.txid.prefix(10)): \($0.vout) · \($0.valueSats) sats\($0.reserved ? " · reserved" : "")"
             }.joined(separator: "\n")
+        batchReserveLabel.text = Self.renderBatchReserves(summary.batchReserves)
         walletPolicyLabel.text = [
             "Bitcoin spending: OpenCSV fees only",
             "Backup: \(summary.backupVerified ? "verified" : "required")",
             "Device: \(summary.accountRole.rawValue), \(summary.deviceBindingStatus)",
             "Spend state: \(summary.syncProvenance.authoritative)",
         ].joined(separator: "\n")
-        #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
         testRecoveryButton?.isHidden = !(
             summary.accountRole == .primary
                 && ["signet", "regtest"].contains(summary.network)
                 && summary.deviceBindingStatus != "bound"
         )
-        #endif
+#endif
         feeBumpCandidates = summary.operations.filter {
             ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
         }
@@ -592,6 +598,25 @@ class OpenCsvWalletViewController: OWSViewController {
         }
         guard let profile = check.pinProfile else { return name }
         return "\(name) · pin \(profile)"
+    }
+
+    private static func renderBatchReserves(_ reserves: OpenCsvAccountStatus.BatchReserves?) -> String {
+        guard let reserves else { return "Shared-transaction stock: not prepared" }
+        let inventory = reserves.inventory
+            .filter { $0.count > 0 }
+            .sorted { ($0.participantCount, $0.state) < ($1.participantCount, $1.state) }
+            .map {
+                "count-\($0.participantCount) · \($0.state) ×\($0.count) · \($0.totalSats) sats"
+            }
+        let maintenance = reserves.maintenanceOperations
+            .filter { $0.state != "confirmed" }
+            .map {
+                "split count-\($0.participantCount) · \($0.state) · \($0.txid.prefix(10))"
+            }
+        let lines = inventory + maintenance
+        return lines.isEmpty
+            ? "Shared-transaction stock: preparing when fee reserve permits"
+            : (["Shared-transaction stock"] + lines).joined(separator: "\n")
     }
 
     private static func renderObservationReceipts(_ receipts: [OpenCsvObservationReceipt]) -> String {
@@ -953,7 +978,7 @@ class OpenCsvWalletViewController: OWSViewController {
         presentActionSheet(sheet)
     }
 
-    #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
+#if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
     @objc
     private func didTapCompleteTestWalletRecovery() {
         testRecoveryButton?.isEnabled = false
@@ -970,7 +995,7 @@ class OpenCsvWalletViewController: OWSViewController {
             }
         }
     }
-    #endif
+#endif
 
     private func promptForFeeRate(operation: OpenCsvAccountOperationSummary) {
         let alert = UIAlertController(

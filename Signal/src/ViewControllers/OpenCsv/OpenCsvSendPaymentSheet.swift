@@ -20,14 +20,25 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private let balanceLabel = UILabel()
     private let amountField = UITextField()
     private let recipientLabel = UILabel()
+    private let batchRecipientsLabel = UILabel()
+    private let addRecipientButton = UIButton(type: .system)
     private let sendButton = UIButton(type: .system)
     private let shareKeyButton = UIButton(type: .system)
     private let errorLabel = UILabel()
 
     private var resolvedRecipientKey: String?
+    private var walletOwnerKey: String?
     private var usdBalances = [OpenCsvCredit]()
     private var usdInstruments = [OpenCsvInstrumentRecord]()
     private var hasUsdBalance = false
+    private var batchDrafts = [BatchDraft]()
+
+    private struct BatchDraft {
+        let thread: TSThread
+        let recipient: String
+        let name: String
+        let amount: UInt64
+    }
 
     init(thread: TSThread) {
         self.thread = thread
@@ -75,6 +86,23 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         recipientLabel.numberOfLines = 0
         recipientLabel.isHidden = true
 
+        batchRecipientsLabel.font = .dynamicTypeFootnote
+        batchRecipientsLabel.textColor = Theme.secondaryTextAndIconColor
+        batchRecipientsLabel.textAlignment = .center
+        batchRecipientsLabel.numberOfLines = 0
+        batchRecipientsLabel.isHidden = true
+
+        addRecipientButton.setTitle(
+            OWSLocalizedString(
+                "OPENCSV_SEND_ADD_RECIPIENT",
+                comment: "Button that adds another recipient to the same Bitcoin transaction.",
+            ),
+            for: .normal,
+        )
+        addRecipientButton.titleLabel?.font = .dynamicTypeBody
+        addRecipientButton.addTarget(self, action: #selector(didTapAddRecipient), for: .touchUpInside)
+        addRecipientButton.isHidden = true
+
         sendButton.titleLabel?.font = .dynamicTypeHeadline
         sendButton.addTarget(self, action: #selector(didTapSend), for: .touchUpInside)
         setSendState(.ready)
@@ -100,6 +128,8 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             balanceLabel,
             amountField,
             recipientLabel,
+            batchRecipientsLabel,
+            addRecipientButton,
             sendButton,
             shareKeyButton,
             errorLabel,
@@ -231,6 +261,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         balanceLabel.font = total == 0 ? .dynamicTypeBody : .dynamicTypeFootnote
         balanceLabel.textAlignment = total == 0 ? .center : .natural
         configureUsdProduct(usdBalances, instruments: trustedUsd)
+        walletOwnerKey = summary.owner
         resolveRecipient(ownKey: summary.owner)
     }
 
@@ -257,6 +288,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         // able to announce its key so someone else can fund it.
         shareKeyButton.isHidden = resolvedRecipientKey != nil
         sendButton.isHidden = !hasAssets || resolvedRecipientKey == nil
+        addRecipientButton.isHidden = !hasAssets || resolvedRecipientKey == nil
         sendButton.isEnabled = hasAssets && resolvedRecipientKey != nil
         if !hasAssets {
             errorLabel.text = nil
@@ -267,8 +299,29 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     /// The recipient is the newest key announced in this chat by someone
     /// other than us — resolved, named, and never typed.
     private func resolveRecipient(ownKey: String) {
-        let thread = self.thread
-        let found: (key: String, announcer: String)? = SSKEnvironment.shared.databaseStorageRef.read { tx in
+        let found = Self.recipientAnnouncement(in: thread, ownKey: ownKey)
+        if let found {
+            resolvedRecipientKey = found.key
+            let format = OWSLocalizedString(
+                "OPENCSV_SEND_TO_FORMAT",
+                comment: "Recipient line on the send sheet. Embeds {{ the recipient's name }}.",
+            )
+            recipientLabel.text = String.nonPluralLocalizedStringWithFormat(format, found.announcer)
+        } else {
+            resolvedRecipientKey = nil
+            recipientLabel.text = OWSLocalizedString(
+                "OPENCSV_SEND_NO_RECIPIENT_KEY",
+                comment: "Shown when nobody in this chat has shared a payment key yet.",
+            )
+        }
+        renderFormAvailability()
+    }
+
+    private static func recipientAnnouncement(
+        in thread: TSThread,
+        ownKey: String,
+    ) -> (key: String, announcer: String)? {
+        SSKEnvironment.shared.databaseStorageRef.read { tx in
             var found: (key: String, announcer: String)?
             var scanned = 0
             try? InteractionFinder(threadUniqueId: thread.uniqueId)
@@ -299,21 +352,13 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 }
             return found
         }
-        if let found {
-            resolvedRecipientKey = found.key
-            let format = OWSLocalizedString(
-                "OPENCSV_SEND_TO_FORMAT",
-                comment: "Recipient line on the send sheet. Embeds {{ the recipient's name }}.",
-            )
-            recipientLabel.text = String.nonPluralLocalizedStringWithFormat(format, found.announcer)
-        } else {
-            resolvedRecipientKey = nil
-            recipientLabel.text = OWSLocalizedString(
-                "OPENCSV_SEND_NO_RECIPIENT_KEY",
-                comment: "Shown when nobody in this chat has shared a payment key yet.",
-            )
-        }
-        renderFormAvailability()
+    }
+
+    private func renderBatchDrafts() {
+        batchRecipientsLabel.isHidden = batchDrafts.isEmpty
+        batchRecipientsLabel.text = batchDrafts.map { draft in
+            "+ \(draft.name): \(OpenCsvUsdAmount.format(draft.amount)) USD"
+        }.joined(separator: "\n")
     }
 
     private func showError(_ text: String) {
@@ -355,6 +400,81 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     }
 
     @objc
+    private func didTapAddRecipient() {
+        guard let ownKey = walletOwnerKey else { return }
+        let picker = OpenCsvBatchRecipientPickerViewController { [weak self] selectedThread in
+            guard let self else { return }
+            guard let found = Self.recipientAnnouncement(in: selectedThread, ownKey: ownKey) else {
+                self.showError(OWSLocalizedString(
+                    "OPENCSV_SEND_NO_RECIPIENT_KEY",
+                    comment: "Shown when nobody in this chat has shared a payment key yet.",
+                ))
+                return
+            }
+            guard
+                selectedThread.uniqueId != self.thread.uniqueId,
+                !self.batchDrafts.contains(where: { $0.thread.uniqueId == selectedThread.uniqueId })
+            else {
+                self.showError(OWSLocalizedString(
+                    "OPENCSV_SEND_DUPLICATE_RECIPIENT",
+                    comment: "Error shown when a recipient is already included in this payment.",
+                ))
+                return
+            }
+            self.promptForBatchAmount(
+                thread: selectedThread,
+                recipient: found.key,
+                name: found.announcer,
+            )
+        }
+        navigationController?.pushViewController(picker, animated: true)
+    }
+
+    private func promptForBatchAmount(thread: TSThread, recipient: String, name: String) {
+        let alert = UIAlertController(
+            title: OWSLocalizedString(
+                "OPENCSV_SEND_ADD_RECIPIENT_AMOUNT_TITLE",
+                comment: "Title asking for the USD amount for an additional batch recipient.",
+            ),
+            message: name,
+            preferredStyle: .alert,
+        )
+        alert.addTextField { textField in
+            textField.keyboardType = .decimalPad
+            textField.placeholder = "0.00 USD"
+        }
+        alert.addAction(UIAlertAction(title: CommonStrings.cancelButton, style: .cancel))
+        alert.addAction(UIAlertAction(
+            title: OWSLocalizedString(
+                "OPENCSV_SEND_ADD_RECIPIENT_CONFIRM",
+                comment: "Button that stages an additional recipient before final send confirmation.",
+            ),
+            style: .default,
+        ) { [weak self, weak alert] _ in
+            guard let self else { return }
+            guard
+                let raw = alert?.textFields?.first?.text,
+                let amount = OpenCsvUsdAmount.parse(raw),
+                amount > 0
+            else {
+                self.showError(OWSLocalizedString(
+                    "OPENCSV_SEND_ERROR_BAD_AMOUNT",
+                    comment: "Error shown when the OpenCSV amount field is not a positive integer.",
+                ))
+                return
+            }
+            self.batchDrafts.append(BatchDraft(
+                thread: thread,
+                recipient: recipient,
+                name: name,
+                amount: amount,
+            ))
+            self.renderBatchDrafts()
+        })
+        present(alert, animated: true)
+    }
+
+    @objc
     private func didTapSend() {
         errorLabel.text = nil
         guard let recipient = resolvedRecipientKey else { return }
@@ -369,12 +489,24 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             ))
             return
         }
+        var totalAmount = amount
+        for draft in batchDrafts {
+            let (next, overflow) = totalAmount.addingReportingOverflow(draft.amount)
+            guard !overflow else {
+                showError(OWSLocalizedString(
+                    "OPENCSV_SEND_ERROR_BAD_AMOUNT",
+                    comment: "Error shown when the OpenCSV amount field is not a positive integer.",
+                ))
+                return
+            }
+            totalAmount = next
+        }
         let selection: OpenCsvUsdSendSelection
         do {
             selection = try OpenCsvPayments.resolveUsdSendAsset(
                 usdBalances,
                 instruments: usdInstruments,
-                amount: amount,
+                amount: totalAmount,
                 requestedAssetId: nil,
             )
         } catch {
@@ -382,9 +514,14 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             return
         }
         let issuer = selection.instrument.manifest?.terms.issuerName ?? "Unknown issuer"
+        let recipientCount = batchDrafts.count + 1
         let format = OWSLocalizedString(
             "OPENCSV_SEND_REVIEW_ISSUER_FORMAT",
             comment: "USD send review naming the exact issuer. Embeds amount and issuer name.",
+        )
+        let recipientCountFormat = OWSLocalizedString(
+            "OPENCSV_SEND_REVIEW_RECIPIENT_COUNT_FORMAT",
+            comment: "USD send review recipient count. Embeds the number of recipients.",
         )
         let alert = UIAlertController(
             title: OWSLocalizedString(
@@ -393,8 +530,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             ),
             message: String.nonPluralLocalizedStringWithFormat(
                 format,
-                OpenCsvUsdAmount.format(amount),
+                OpenCsvUsdAmount.format(totalAmount),
                 issuer,
+            ) + "\n" + String.nonPluralLocalizedStringWithFormat(
+                recipientCountFormat,
+                "\(recipientCount)",
             ),
             preferredStyle: .alert,
         )
@@ -410,12 +550,18 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 amount: amount,
                 recipient: recipient,
                 assetId: selection.credit.assetId,
+                batchDrafts: self?.batchDrafts ?? [],
             )
         })
         present(alert, animated: true)
     }
 
-    private func send(amount: UInt64, recipient: String, assetId: String) {
+    private func send(
+        amount: UInt64,
+        recipient: String,
+        assetId: String,
+        batchDrafts: [BatchDraft],
+    ) {
         // Only the fast durable planning boundary happens while this sheet
         // is visible. Proof, backup, broadcast, and attachment delivery
         // resume by operation id after the conversation is usable again.
@@ -423,7 +569,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         let thread = self.thread
         Task {
             do {
-                _ = try await OpenCsvPayments.shared.queuePayment(
+                let first = try await OpenCsvPayments.shared.queuePayment(
                     toOwnerHex: recipient,
                     amount: amount,
                     threadUniqueId: thread.uniqueId,
@@ -443,6 +589,32 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                         }
                     },
                 )
+                guard let batchLocalId = first.batchLocalId else {
+                    throw OpenCsvClientError.decode("queued payment omitted batch membership")
+                }
+                try await OpenCsvDelivery.announcePending(first)
+                do {
+                    for draft in batchDrafts {
+                        let additional = try await OpenCsvPayments.shared.addRecipientToQueuedBatch(
+                            batchLocalId: batchLocalId,
+                            toOwnerHex: draft.recipient,
+                            amount: draft.amount,
+                            threadUniqueId: draft.thread.uniqueId,
+                            assetIdHex: assetId,
+                        )
+                        try await OpenCsvDelivery.announcePending(additional)
+                    }
+                    if !batchDrafts.isEmpty {
+                        try await OpenCsvPayments.shared.freezeQueuedBatch(batchLocalId)
+                    }
+                } catch {
+                    await OpenCsvPayments.shared.cancelQueuedBatch(
+                        batchLocalId,
+                        reason: "explicit_batch_assembly_failed",
+                    )
+                    OpenCsvDelivery.processPending()
+                    throw error
+                }
                 self.setSendState(.queued)
                 self.dismiss(animated: true)
                 OpenCsvDelivery.processPending()
@@ -511,6 +683,66 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 "OPENCSV_SEND_ERROR_GENERIC",
                 comment: "Generic error shown when an OpenCSV payment could not be sent.",
             )
+        }
+    }
+}
+
+private final class OpenCsvBatchRecipientPickerViewController: RecipientPickerContainerViewController,
+    RecipientPickerDelegate, UsernameLinkScanDelegate
+{
+    private let completion: (TSThread) -> Void
+
+    init(completion: @escaping (TSThread) -> Void) {
+        self.completion = completion
+        super.init()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = OWSLocalizedString(
+            "OPENCSV_SEND_ADD_RECIPIENT_PICKER_TITLE",
+            comment: "Title of the recipient picker for a shared Bitcoin transaction.",
+        )
+        view.backgroundColor = .Signal.groupedBackground
+        recipientPicker.allowsAddByAddress = false
+        recipientPicker.shouldHideLocalRecipient = true
+        recipientPicker.groupsToShow = .noGroups
+        recipientPicker.delegate = self
+        addRecipientPicker()
+    }
+
+    func recipientPicker(
+        _ recipientPickerViewController: RecipientPickerViewController,
+        selectionStyleForRecipient recipient: PickedRecipient,
+        transaction: DBReadTransaction,
+    ) -> UITableViewCell.SelectionStyle {
+        guard let address = recipient.address, address.isValid, !address.isLocalAddress else {
+            return .none
+        }
+        return .default
+    }
+
+    func recipientPicker(
+        _ recipientPickerViewController: RecipientPickerViewController,
+        didSelectRecipient recipient: PickedRecipient,
+    ) {
+        guard let address = recipient.address, address.isValid, !address.isLocalAddress else { return }
+        let thread = SSKEnvironment.shared.databaseStorageRef.write {
+            TSContactThread.getOrCreateThread(withContactAddress: address, transaction: $0)
+        }
+        guard let navigationController else {
+            completion(thread)
+            return
+        }
+        navigationController.popViewController(animated: true)
+        if let transitionCoordinator = navigationController.transitionCoordinator {
+            transitionCoordinator.animate(alongsideTransition: nil) { [completion] _ in
+                completion(thread)
+            }
+        } else {
+            DispatchQueue.main.async { [completion] in
+                completion(thread)
+            }
         }
     }
 }
