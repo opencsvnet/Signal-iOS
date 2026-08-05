@@ -865,6 +865,52 @@ final class OpenCsvWalletStoreTest {
         }
     }
 
+    @Test
+    func plannedTransferMetadataSurvivesBeforeProofAndSchedulesImmediateWork() throws {
+        let operation = OpenCsvWalletStore.PendingAccountOperation(
+            operationId: "planned-transfer-1",
+            threadUniqueId: "thread-1",
+            amount: 1_000_000,
+            currency: "USD",
+            assetId: String(repeating: "ab", count: 32),
+            kind: "transfer",
+            createdAt: Date(timeIntervalSince1970: 1),
+        )
+        try db.write { tx in
+            try store.upsertPendingAccountOperation(operation, tx: tx)
+        }
+        db.read { tx in
+            #expect((try? store.pendingAccountOperations(tx: tx)) == [operation])
+            #expect(store.backgroundWorkUrgency(tx: tx) == .immediate)
+            #expect(store.pendingDeliveries(tx: tx).isEmpty)
+        }
+        try db.write { tx in
+            try store.markPendingAccountOperationAnnounced(
+                operationId: operation.operationId,
+                messageId: "message-1",
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            let stored = (try? store.pendingAccountOperations(tx: tx))?.first
+            #expect(stored?.announcementMessageId == "message-1")
+            #expect(stored?.announcementEnqueuedAt != nil)
+            #expect(store.backgroundWorkUrgency(tx: tx) == .immediate)
+        }
+        try db.write { tx in
+            try store.markPendingAccountOperationFailed(
+                operationId: operation.operationId,
+                reason: "insufficient_fees",
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            let stored = (try? store.pendingAccountOperations(tx: tx))?.first
+            #expect(stored?.failureReason == "insufficient_fees")
+            #expect(store.backgroundWorkUrgency(tx: tx) == .immediate)
+        }
+    }
+
     /// A delivery that can never succeed must stop being retried rather
     /// than looping on every foreground — but must not be discarded, since
     /// it is the only copy of a payment that already happened on-chain.
@@ -896,12 +942,22 @@ final class OpenCsvWalletStoreTest {
     @Test
     func multipleDeliveriesAreIndependent() throws {
         let a = OpenCsvWalletStore.PendingDelivery(
-            threadUniqueId: "t", body: "a", replayEntry: "o:1",
-            amount: 1, currency: nil, assetId: nil, createdAt: Date(timeIntervalSince1970: 0),
+            threadUniqueId: "t",
+            body: "a",
+            replayEntry: "o:1",
+            amount: 1,
+            currency: nil,
+            assetId: nil,
+            createdAt: Date(timeIntervalSince1970: 0),
         )
         let b = OpenCsvWalletStore.PendingDelivery(
-            threadUniqueId: "t", body: "b", replayEntry: "o:2",
-            amount: 2, currency: nil, assetId: nil, createdAt: Date(timeIntervalSince1970: 1),
+            threadUniqueId: "t",
+            body: "b",
+            replayEntry: "o:2",
+            amount: 2,
+            currency: nil,
+            assetId: nil,
+            createdAt: Date(timeIntervalSince1970: 1),
         )
         try db.write { tx in
             try store.addPendingDelivery(a, tx: tx)
@@ -1226,7 +1282,6 @@ struct OpenCsvClientFfiTest {
         #expect(try restored.restoreCheckpoint(checkpointJson).rootFingerprint == status.rootFingerprint)
     }
 }
-
 
 /// S9: the risky part of this feature is not any single function, it is
 /// the transitions — detection agreeing across call sites, and a verdict
@@ -1940,8 +1995,8 @@ struct OpenCsvScanRegtestTest {
         // Live diagnostic for the log: the honest bandwidth numbers.
         print(
             "OPENCSV_REGTEST scan sync: tip \(result.tipHeight), "
-            + "anchors \(result.anchors), filters \(result.filtersBytes) B, "
-            + "blocks \(result.blocksBytes) B",
+                + "anchors \(result.anchors), filters \(result.filtersBytes) B, "
+                + "blocks \(result.blocksBytes) B",
         )
 
         // When the host chain carries marker-bearing anchor transactions

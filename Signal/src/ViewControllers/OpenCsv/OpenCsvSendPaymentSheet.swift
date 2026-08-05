@@ -125,6 +125,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         case proving
         case protectingRecovery
         case broadcasting
+        case queued
         case sent
     }
 
@@ -135,37 +136,43 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 return (
                     "OPENCSV_SEND_BUTTON",
                     "Button that proves and sends an OpenCSV payment.",
-                    true
+                    true,
                 )
             case .checkingWallet:
                 return (
                     "OPENCSV_SEND_STATE_CHECKING_WALLET",
                     "Send button state while the fee wallet and current chain state are checked.",
-                    false
+                    false,
                 )
             case .proving:
                 return (
                     "OPENCSV_SEND_STATE_PROVING",
                     "Send button state while the payment proof is generated on this phone.",
-                    false
+                    false,
                 )
             case .protectingRecovery:
                 return (
                     "OPENCSV_SEND_STATE_PROTECTING_RECOVERY",
                     "Send button state while the wallet recovery checkpoint is protected.",
-                    false
+                    false,
                 )
             case .broadcasting:
                 return (
                     "OPENCSV_SEND_STATE_BROADCASTING",
                     "Send button state while the Bitcoin record is broadcast.",
-                    false
+                    false,
+                )
+            case .queued:
+                return (
+                    "OPENCSV_SEND_STATE_QUEUED",
+                    "Send button state after a durable payment is queued for background proving.",
+                    false,
                 )
             case .sent:
                 return (
                     "OPENCSV_SEND_STATE_SENT",
                     "Send button state after the payment has been sent.",
-                    false
+                    false,
                 )
             }
         }()
@@ -409,14 +416,14 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     }
 
     private func send(amount: UInt64, recipient: String, assetId: String) {
-        // Once signing or broadcast may have happened, the button must not
-        // blindly re-arm: the durable operation is resumed instead of
-        // creating a second spend. The staged labels make the wait visible.
+        // Only the fast durable planning boundary happens while this sheet
+        // is visible. Proof, backup, broadcast, and attachment delivery
+        // resume by operation id after the conversation is usable again.
         setSendState(.checkingWallet)
         let thread = self.thread
         Task {
             do {
-                let delivery = try await OpenCsvPayments.shared.sendPayment(
+                _ = try await OpenCsvPayments.shared.queuePayment(
                     toOwnerHex: recipient,
                     amount: amount,
                     threadUniqueId: thread.uniqueId,
@@ -426,6 +433,8 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                         case .checkingWallet:
                             self?.setSendState(.checkingWallet)
                         case .generatingProof:
+                            // Interactive queueing never reaches this stage;
+                            // retained for the compatibility one-shot path.
                             self?.setSendState(.proving)
                         case .protectingRecovery:
                             self?.setSendState(.protectingRecovery)
@@ -434,23 +443,12 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                         }
                     },
                 )
-                self.setSendState(.sent)
-                do {
-                    try await OpenCsvDelivery.deliver(delivery)
-                } catch {
-                    Logger.warn("OpenCSV consignment queued for retry: \(error)")
-                }
+                self.setSendState(.queued)
                 self.dismiss(animated: true)
-            } catch OpenCsvPaymentsError.consignmentNotReady(let operationId, let state) {
-                // Rust has already persisted (and may have submitted) the
-                // exact signed transaction. Foreground recovery resumes the
-                // same operation; never re-arm the button for a second spend.
-                Logger.info("OpenCSV operation \(operationId) queued in \(state)")
-                self.setSendState(.sent)
-                self.dismiss(animated: true)
+                OpenCsvDelivery.processPending()
             } catch {
-                // Failures surfaced here occurred before the durable signed
-                // boundary, so retrying the same user intent is safe.
+                // Planning either failed before insertion or cancelled the
+                // exact planned id after Signal metadata could not persist.
                 self.showError(Self.userFacingMessage(for: error))
             }
         }

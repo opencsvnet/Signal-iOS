@@ -20,6 +20,104 @@ import UniformTypeIdentifiers
 /// using it here would clear the record for a message that may never exist.
 enum OpenCsvDelivery {
 
+    /// Send a lightweight Signal-authenticated intent before expensive proof
+    /// generation. It is intentionally ordinary text—not a consignment—and
+    /// says it is nonspendable. The later proof-bearing attachment carries
+    /// the same operation id.
+    static func announcePending(_ operation: OpenCsvWalletStore.PendingAccountOperation) async throws {
+        let body = [
+            "OpenCSV payment pending",
+            "\(OpenCsvUsdAmount.format(operation.amount)) \(operation.currency ?? "USD")",
+            "Preparing proof on this phone. Not spendable yet.",
+            "OpenCSV payment: \(operation.operationId)",
+        ].joined(separator: "\n")
+        let validatedBody = try await DependenciesBridge.shared.attachmentContentValidator
+            .prepareOversizeTextIfNeeded(MessageBody(text: body, ranges: .empty))
+
+        try await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in
+            let store = OpenCsvWalletStore(
+                keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+            )
+            guard
+                let current = try store.pendingAccountOperations(tx: tx)
+                    .first(where: { $0.operationId == operation.operationId })
+            else {
+                return
+            }
+            guard current.announcementEnqueuedAt == nil else { return }
+            guard let thread = TSThread.anyFetch(uniqueId: operation.threadUniqueId, transaction: tx) else {
+                throw OpenCsvDeliveryError.threadMissing
+            }
+            let unprepared = UnpreparedOutgoingMessage.build(
+                thread: thread,
+                timestamp: MessageTimestampGenerator.sharedInstance.generateTimestamp(),
+                messageBody: validatedBody,
+                mediaAttachments: [],
+                isViewOnce: false,
+                quotedReplyDraft: nil,
+                linkPreviewDataSource: nil,
+                transaction: tx,
+            )
+            let prepared = try unprepared.prepare(tx: tx)
+            guard let messageId = prepared.messageForIntentDonation(tx: tx)?.uniqueId else {
+                throw OpenCsvDeliveryError.messageMissing
+            }
+            try OpenCsvPayments.shared.markOperationAnnounced(
+                operationId: operation.operationId,
+                messageId: messageId,
+                tx: tx,
+            )
+            _ = ThreadUtil.enqueueMessagePromise(message: prepared, transaction: tx)
+        }
+        Logger.info("announced pending OpenCSV operation \(operation.operationId)")
+    }
+
+    /// Close a previously announced intent if Rust reaches a terminal
+    /// rejection. Insertion and metadata removal share one transaction, so
+    /// foreground retries cannot produce duplicate failure messages.
+    static func announceFailure(_ operation: OpenCsvWalletStore.PendingAccountOperation) async throws {
+        guard let failureReason = operation.failureReason else { return }
+        let body = [
+            "OpenCSV payment failed",
+            "\(OpenCsvUsdAmount.format(operation.amount)) \(operation.currency ?? "USD")",
+            "Nothing is spendable from this attempt.",
+            "Reason: \(failureReason)",
+            "OpenCSV payment: \(operation.operationId)",
+        ].joined(separator: "\n")
+        let validatedBody = try await DependenciesBridge.shared.attachmentContentValidator
+            .prepareOversizeTextIfNeeded(MessageBody(text: body, ranges: .empty))
+
+        try await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in
+            let store = OpenCsvWalletStore(
+                keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+            )
+            guard
+                let current = try store.pendingAccountOperations(tx: tx)
+                    .first(where: { $0.operationId == operation.operationId }),
+                current.failureReason != nil
+            else {
+                return
+            }
+            guard let thread = TSThread.anyFetch(uniqueId: operation.threadUniqueId, transaction: tx) else {
+                throw OpenCsvDeliveryError.threadMissing
+            }
+            let unprepared = UnpreparedOutgoingMessage.build(
+                thread: thread,
+                timestamp: MessageTimestampGenerator.sharedInstance.generateTimestamp(),
+                messageBody: validatedBody,
+                mediaAttachments: [],
+                isViewOnce: false,
+                quotedReplyDraft: nil,
+                linkPreviewDataSource: nil,
+                transaction: tx,
+            )
+            let prepared = try unprepared.prepare(tx: tx)
+            _ = ThreadUtil.enqueueMessagePromise(message: prepared, transaction: tx)
+            try store.removePendingAccountOperation(operationId: operation.operationId, tx: tx)
+        }
+        Logger.info("announced failed OpenCSV operation \(operation.operationId)")
+    }
+
     /// Insert the message carrying `delivery`, write its outgoing verdict,
     /// enqueue the send, and clear the pending record — atomically.
     ///
@@ -51,7 +149,7 @@ enum OpenCsvDelivery {
         let validatedBody = try await DependenciesBridge.shared.attachmentContentValidator
             .prepareOversizeTextIfNeeded(MessageBody(text: delivery.body, ranges: .empty))
 
-        try await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in
+        let deliveredMessageId = try await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in
             guard let thread = TSThread.anyFetch(uniqueId: delivery.threadUniqueId, transaction: tx) else {
                 throw OpenCsvDeliveryError.threadMissing
             }
@@ -69,6 +167,7 @@ enum OpenCsvDelivery {
             // rows in this same transaction, so the attachment id the
             // conversation cell will read exists before we commit.
             let prepared = try unprepared.prepare(tx: tx)
+            let messageId = prepared.messageForIntentDonation(tx: tx)?.uniqueId
             if let attachmentId = prepared.attachmentIdsForUpload(tx: tx).first {
                 OpenCsvPayments.shared.setOutgoingVerdict(verdict, attachmentId: attachmentId, tx: tx)
             } else {
@@ -76,8 +175,17 @@ enum OpenCsvDelivery {
             }
             _ = ThreadUtil.enqueueMessagePromise(message: prepared, transaction: tx)
             try OpenCsvPayments.shared.clearDelivered(id: delivery.id, tx: tx)
+            return messageId
         }
         await OpenCsvPayments.shared.acknowledgeDelivered(delivery)
+        if let deliveredMessageId {
+            OpenCsvPayments.shared.notifyOutgoingPaymentDelivered(
+                threadUniqueId: delivery.threadUniqueId,
+                messageUniqueId: deliveredMessageId,
+                amount: delivery.amount,
+                currency: delivery.currency,
+            )
+        }
         Logger.info("delivered OpenCSV consignment \(delivery.id)")
     }
 
@@ -102,8 +210,22 @@ enum OpenCsvDelivery {
     /// each pick up the same still-pending record.
     private static let retryQueue = SerialTaskQueue()
 
+    /// Start the same idempotent recovery pass immediately after the send
+    /// sheet journals a payment. The caller returns to chat; this queue owns
+    /// proof generation and the eventual attachment delivery.
+    static func processPending() {
+        retryPending()
+    }
+
     private static func retryPending() {
         retryQueue.enqueue {
+            for operation in await OpenCsvPayments.shared.operationsNeedingAnnouncement() {
+                do {
+                    try await announcePending(operation)
+                } catch {
+                    Logger.warn("could not announce pending OpenCSV operation \(operation.operationId): \(error)")
+                }
+            }
             // A prior send may have reached the mempool only after the
             // foreground call stopped observing it. Reconstruct its durable
             // delivery before taking the retry snapshot. Without this
@@ -111,6 +233,13 @@ enum OpenCsvDelivery {
             // spend a long time rebuilding the chain view, and create the
             // delivery only after the sole retry pass has already finished.
             await OpenCsvPayments.shared.recoverInterruptedSends()
+            for operation in await OpenCsvPayments.shared.failedOperationsNeedingAnnouncement() {
+                do {
+                    try await announceFailure(operation)
+                } catch {
+                    Logger.warn("could not announce failed OpenCSV operation \(operation.operationId): \(error)")
+                }
+            }
             for delivery in await OpenCsvPayments.shared.deliveriesNeedingRetry() {
                 do {
                     try await deliver(delivery)
@@ -186,4 +315,6 @@ final class OpenCsvBGProcessingTaskRunner: BGProcessingTaskRunner {
 enum OpenCsvDeliveryError: Error {
     /// The conversation the payment was sent in no longer exists.
     case threadMissing
+    /// A persisted text announcement unexpectedly produced no message row.
+    case messageMissing
 }

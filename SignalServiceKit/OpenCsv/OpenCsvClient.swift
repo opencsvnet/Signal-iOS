@@ -550,6 +550,7 @@ public final class OpenCsvAccountWallet {
             struct Checkpoint: Decodable {
                 let operations: [OpenCsvAccountOperationSummary]
             }
+
             let checkpoint: Checkpoint
         }
         let envelope: Envelope = try Self.decode(checkpointJson())
@@ -610,6 +611,27 @@ public final class OpenCsvAccountWallet {
             Request(assetId: assetId, toOwner: toOwner, amount: amount),
             opencsv_transfer_prepare,
         )
+    }
+
+    /// Persist the exact transfer intent and return before proof generation.
+    /// The response is the same public operation shape used by status calls;
+    /// it contains no selected coins, Bitcoin input, change address, or key.
+    public func planTransfer(assetId: String, toOwner: String, amount: UInt64) throws -> OpenCsvAccountOperation {
+        struct Request: Codable {
+            let assetId: String
+            let toOwner: String
+            let amount: UInt64
+        }
+        return try callJson(
+            Request(assetId: assetId, toOwner: toOwner, amount: amount),
+            opencsv_transfer_plan,
+        )
+    }
+
+    /// Advance a durable planned/fee-reserved operation to proof-ready. A
+    /// repeated call after proof-ready returns the exact stored receipt.
+    public func proveOperation(_ operationId: String) throws -> OpenCsvPreparedOperation {
+        try operationId.withCString { try Self.take(opencsv_operation_prove(handle, $0)) }
     }
 
     public func acknowledgeBackup(operationId: String, checkpointHash: String) throws {
@@ -834,7 +856,6 @@ public final class OpenCsvWallet {
         })
     }
 
-
     /// Export a proved-but-unanchored transaction so it survives process
     /// death.
     ///
@@ -898,7 +919,6 @@ public final class OpenCsvWallet {
         let status: Status = try Self.take(opencsv_wallet_status(handle))
         return status.coins
     }
-
 
     /// Public supply of an asset at the snapshot tip (needs no wallet).
     public static func audit(assetIdHex: String, snapshotJson: String) throws -> UInt64 {

@@ -86,7 +86,8 @@ public enum OpenCsvBackgroundWorkPolicy {
         hasPendingOperation: Bool,
         hasInFlightSend: Bool,
     ) -> OpenCsvBackgroundWorkUrgency {
-        if hasPendingDelivery || hasPendingOperation || hasInFlightSend
+        if
+            hasPendingDelivery || hasPendingOperation || hasInFlightSend
             || activityStates.contains(.confirming)
         {
             return .immediate
@@ -485,10 +486,12 @@ public struct OpenCsvWalletStore {
     /// note that one indexer is not a cross-check.
     public func indexerUrls(tx: DBReadTransaction) -> [String] {
         do {
-            if let urls: [String] = try keyValueStore.getCodableValue(
-                forKey: Self.indexerUrlsKey,
-                transaction: tx,
-            ) {
+            if
+                let urls: [String] = try keyValueStore.getCodableValue(
+                    forKey: Self.indexerUrlsKey,
+                    transaction: tx,
+                )
+            {
                 return urls
             }
         } catch {
@@ -518,10 +521,12 @@ public struct OpenCsvWalletStore {
     /// recovery configuration always wins. Never 0: the FFI reserves height
     /// 0 as its mempool sentinel and rejects it.
     public func scanFromHeight(tx: DBReadTransaction) -> UInt64 {
-        if let stored: UInt64 = try? keyValueStore.getCodableValue(
-            forKey: Self.scanFromHeightKey,
-            transaction: tx,
-        ) {
+        if
+            let stored: UInt64 = try? keyValueStore.getCodableValue(
+                forKey: Self.scanFromHeightKey,
+                transaction: tx,
+            )
+        {
             return max(1, stored)
         }
         return OpenCsvReviewedUsdIssuers.earliestRelevantHeight(for: network(tx: tx)) ?? 1
@@ -553,10 +558,12 @@ public struct OpenCsvWalletStore {
 
     public func verdict(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> OpenCsvVerdictRecord? {
         do {
-            if let consignmentId = keyValueStore.getString(
-                Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
-                transaction: tx,
-            ) {
+            if
+                let consignmentId = keyValueStore.getString(
+                    Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
+                    transaction: tx,
+                )
+            {
                 return try keyValueStore.getCodableValue(
                     forKey: Self.canonicalVerdictKey(consignmentId),
                     transaction: tx,
@@ -719,10 +726,12 @@ public struct OpenCsvWalletStore {
         attachmentId: Attachment.IDType,
         tx: DBReadTransaction,
     ) -> Bool {
-        guard let consignmentId = keyValueStore.getString(
-            Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
-            transaction: tx,
-        ) else {
+        guard
+            let consignmentId = keyValueStore.getString(
+                Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
+                transaction: tx,
+            )
+        else {
             return true
         }
         return keyValueStore.getString(
@@ -732,10 +741,12 @@ public struct OpenCsvWalletStore {
     }
 
     public func blobForAttachment(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> Data? {
-        if let consignmentId = keyValueStore.getString(
-            Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
-            transaction: tx,
-        ) {
+        if
+            let consignmentId = keyValueStore.getString(
+                Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
+                transaction: tx,
+            )
+        {
             return blob(forReplayEntry: "c:\(consignmentId)", tx: tx)
         }
         return blob(forReplayEntry: "a:\(attachmentId)", tx: tx)
@@ -885,6 +896,15 @@ public struct OpenCsvWalletStore {
         public let assetId: String?
         public let kind: String?
         public let createdAt: Date
+        /// The Signal-authenticated, nonspendable intent message is inserted
+        /// atomically with these fields. Optional for records written before
+        /// background proving existed.
+        public var announcementMessageId: String?
+        public var announcementEnqueuedAt: Date?
+        /// Stable Rust rejection reason awaiting one idempotent Signal
+        /// follow-up. The record is removed in the same transaction that
+        /// inserts that failure message.
+        public var failureReason: String?
 
         public init(
             operationId: String,
@@ -894,6 +914,9 @@ public struct OpenCsvWalletStore {
             assetId: String?,
             kind: String? = nil,
             createdAt: Date,
+            announcementMessageId: String? = nil,
+            announcementEnqueuedAt: Date? = nil,
+            failureReason: String? = nil,
         ) {
             self.operationId = operationId
             self.threadUniqueId = threadUniqueId
@@ -902,6 +925,9 @@ public struct OpenCsvWalletStore {
             self.assetId = assetId
             self.kind = kind
             self.createdAt = createdAt
+            self.announcementMessageId = announcementMessageId
+            self.announcementEnqueuedAt = announcementEnqueuedAt
+            self.failureReason = failureReason
         }
     }
 
@@ -933,6 +959,41 @@ public struct OpenCsvWalletStore {
         )
     }
 
+    public func markPendingAccountOperationAnnounced(
+        operationId: String,
+        messageId: String,
+        tx: DBWriteTransaction,
+    ) throws {
+        var operations = try pendingAccountOperations(tx: tx)
+        guard let index = operations.firstIndex(where: { $0.operationId == operationId }) else {
+            return
+        }
+        operations[index].announcementMessageId = messageId
+        operations[index].announcementEnqueuedAt = operations[index].announcementEnqueuedAt ?? Date()
+        try keyValueStore.setCodable(
+            operations,
+            key: Self.pendingAccountOperationsKey,
+            transaction: tx,
+        )
+    }
+
+    public func markPendingAccountOperationFailed(
+        operationId: String,
+        reason: String,
+        tx: DBWriteTransaction,
+    ) throws {
+        var operations = try pendingAccountOperations(tx: tx)
+        guard let index = operations.firstIndex(where: { $0.operationId == operationId }) else {
+            return
+        }
+        operations[index].failureReason = reason
+        try keyValueStore.setCodable(
+            operations,
+            key: Self.pendingAccountOperationsKey,
+            transaction: tx,
+        )
+    }
+
     /// Every undelivered consignment, oldest first.
     ///
     /// A decode failure drops that one record from the result and is
@@ -941,10 +1002,12 @@ public struct OpenCsvWalletStore {
     public func pendingDeliveries(tx: DBReadTransaction) -> [PendingDelivery] {
         pendingDeliveryIds(tx: tx).compactMap { id in
             do {
-                guard let delivery: PendingDelivery = try keyValueStore.getCodableValue(
-                    forKey: Self.pendingDeliveryKey(id),
-                    transaction: tx,
-                ) else {
+                guard
+                    let delivery: PendingDelivery = try keyValueStore.getCodableValue(
+                        forKey: Self.pendingDeliveryKey(id),
+                        transaction: tx,
+                    )
+                else {
                     owsFailDebug("pending OpenCSV delivery \(id) is indexed but missing")
                     return nil
                 }
@@ -985,10 +1048,12 @@ public struct OpenCsvWalletStore {
     }
 
     public func markPendingDeliveryEnqueued(id: String, tx: DBWriteTransaction) throws {
-        guard var delivery: PendingDelivery = try keyValueStore.getCodableValue(
-            forKey: Self.pendingDeliveryKey(id),
-            transaction: tx,
-        ) else {
+        guard
+            var delivery: PendingDelivery = try keyValueStore.getCodableValue(
+                forKey: Self.pendingDeliveryKey(id),
+                transaction: tx,
+            )
+        else {
             return
         }
         delivery.enqueuedAt = delivery.enqueuedAt ?? Date()
