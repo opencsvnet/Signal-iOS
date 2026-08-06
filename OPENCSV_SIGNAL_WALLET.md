@@ -87,3 +87,16 @@ settings reject network changes after account creation instead of repurposing
 descriptors, checkpoints, or the sibling `.cbf` cache. Regtest chain resets
 and signet/mainnet testing therefore use clean isolated installations; the app
 never deletes or silently reuses a cache from another chain.
+
+### USD network boundary
+
+The USD instrument reviewed into the current Signal build is the permanent
+testnet instrument for this integration. It is marked test-only, has no
+monetary or redemption value, and is admitted only when the Rust account is
+bound to Bitcoin signet. Its asset identity, history, checkpoints, and BIP84
+fee tree must never be promoted or migrated to mainnet.
+
+Production deployment will start with a separately reviewed USD instrument,
+issuer manifest, account database, backup namespace, and Bitcoin mainnet fee
+tree. Until that explicit production setup exists, the reviewed mainnet issuer
+set remains empty and Signal cannot present or transfer a production USD asset.
