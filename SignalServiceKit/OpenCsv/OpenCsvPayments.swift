@@ -368,7 +368,7 @@ public actor OpenCsvPayments {
                     body: String.nonPluralLocalizedStringWithFormat(
                         notificationFormat,
                         OpenCsvUsdAmount.format(record.amount),
-                        record.currency ?? "USD",
+                        record.presentationCurrency,
                     ),
                     wantsSound: true,
                 )
@@ -453,11 +453,13 @@ public actor OpenCsvPayments {
         messageUniqueId: String,
         amount: UInt64,
         currency: String?,
+        assetId: String?,
     ) {
+        let productName = OpenCsvProductPresentation.currencyName(currency: currency, assetId: assetId)
         notifyPaymentStatus(
             threadUniqueId: threadUniqueId,
             messageUniqueId: messageUniqueId,
-            body: "OpenCSV payment sent: \(OpenCsvUsdAmount.format(amount)) \(currency ?? "USD")",
+            body: "OpenCSV payment sent: \(OpenCsvUsdAmount.format(amount)) \(productName)",
             wantsSound: false,
         )
     }

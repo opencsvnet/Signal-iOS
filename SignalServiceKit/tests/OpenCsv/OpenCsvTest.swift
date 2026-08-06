@@ -1253,6 +1253,40 @@ struct OpenCsvReviewedUsdIssuersTest {
         #expect(OpenCsvReviewedUsdIssuers.policies(for: "mainnet").isEmpty)
         #expect(OpenCsvReviewedUsdIssuers.policies(for: "regtest").isEmpty)
     }
+
+    @Test
+    func testUsdPresentationRequiresExactReviewedSignetIdentity() throws {
+        let assetId = OpenCsvReviewedUsdIssuers.signetTestUsdAssetId
+        #expect(OpenCsvProductPresentation.currencyName(
+            currency: "USD",
+            assetId: assetId,
+        ) == "Test USD")
+        #expect(OpenCsvProductPresentation.currencyName(
+            currency: "USD",
+            assetId: String(repeating: "00", count: 32),
+        ) == "USD")
+        #expect(OpenCsvProductPresentation.currencyName(
+            currency: "EUR",
+            assetId: assetId,
+        ) == "EUR")
+
+        let policy = try #require(OpenCsvReviewedUsdIssuers.policies(for: "signet").first)
+        let instrument = OpenCsvInstrumentRecord(
+            assetId: assetId,
+            trustState: "trusted_configuration",
+            profile: "trusted_usd_v1",
+            issuerPriority: policy.priority,
+            manifest: policy.manifest,
+        )
+        #expect(OpenCsvProductPresentation.currencyName(
+            network: "signet",
+            instruments: [instrument],
+        ) == "Test USD")
+        #expect(OpenCsvProductPresentation.currencyName(
+            network: "mainnet",
+            instruments: [instrument],
+        ) == "USD")
+    }
 }
 
 /// Exercises the real Rust FFI linked into SignalServiceKit.

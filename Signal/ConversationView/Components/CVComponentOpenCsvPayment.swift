@@ -8,7 +8,7 @@ import SignalServiceKit
 public import SignalUI
 
 /// Renders an OpenCSV consignment attachment as a payment bubble:
-/// an amount line (`+100 USD`) and the client-side verification status.
+/// an amount line (`+100 Test USD`) and the client-side verification status.
 /// Modeled on `CVComponentPaymentAttachment`.
 public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
 
@@ -67,7 +67,7 @@ public class CVComponentOpenCsvPayment: CVComponentBase, CVComponent {
                 comment: "Shown in an OpenCSV payment bubble for a verified payment that pays neither party.",
             )
         }
-        let currency = verdict.currency ?? ""
+        let currency = verdict.presentationCurrency
         // Outgoing amounts are what the recipient receives, so they read as
         // a debit; the change output is not part of the story.
         let sign = verdict.direction == .outgoing ? "−" : "+"

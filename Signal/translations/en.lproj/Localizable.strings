@@ -6653,7 +6653,7 @@
 "OPENCSV_LEGACY_MOBILECOIN_WARNING" = "Legacy MobileCoin recovery material is still stored safely. It is read-only and has not been deleted.";
 
 /* Title of an OpenCSV asset issuance bubble in the conversation view. */
-"OPENCSV_MINT_TITLE" = "OpenCSV issuance";
+"OPENCSV_MINT_TITLE" = "Test USD issuance";
 
 /* Notification that a verified OpenCSV payment is spendable before confirmation. Embeds the amount and currency. */
 "OPENCSV_NOTIFICATION_AVAILABLE_UNCONFIRMED_FORMAT" = "%1$@ %2$@ is verified and available before confirmation.";
@@ -6718,6 +6718,15 @@
 /* Balance line on the send sheet. Embeds {{ the balance }}. */
 "OPENCSV_SEND_BALANCE_FORMAT" = "Balance: %@";
 
+/* Button that proves and sends an OpenCSV payment. */
+"OPENCSV_SEND_BUTTON" = "Send Test USD";
+
+/* Status below a cached balance while refreshing. Embeds the cache time. */
+"OPENCSV_SEND_CACHED_UPDATING_FORMAT" = "Cached %1$@ · Updating…";
+
+/* Status below a cached balance while refreshing when no prior timestamp exists. */
+"OPENCSV_SEND_CACHED_UPDATING_TIME_UNKNOWN" = "Cached · Updating… · cache time unavailable";
+
 /* Button confirming an issuer-specific USD payment. */
 "OPENCSV_SEND_CONFIRM" = "Send";
 
@@ -6725,16 +6734,16 @@
 "OPENCSV_SEND_DUPLICATE_RECIPIENT" = "That recipient is already in this payment.";
 
 /* Explanation shown in the OpenCSV send sheet when the wallet has no assets. */
-"OPENCSV_SEND_EMPTY_STATE" = "No spendable USD yet. Signal cannot mint it; receive USD from a reviewed issuer first.";
+"OPENCSV_SEND_EMPTY_STATE" = "No spendable Test USD yet. Signal cannot mint it; receive Test USD from a reviewed issuer first.";
 
 /* Error shown when the wallet checkpoint could not be included in Signal Secure Backup. */
 "OPENCSV_SEND_ERROR_BACKUP_FAILED" = "Signal could not protect the latest wallet recovery checkpoint. Try the backup again before sending.";
 
 /* Error shown when Signal Secure Backup must be enabled before an OpenCSV write. */
-"OPENCSV_SEND_ERROR_BACKUP_REQUIRED" = "Turn on Signal Secure Backup before sending USD. Receiving remains available.";
+"OPENCSV_SEND_ERROR_BACKUP_REQUIRED" = "Turn on Signal Secure Backup before sending Test USD. Receiving remains available.";
 
 /* Error shown when the OpenCSV amount field is not a positive integer. */
-"OPENCSV_SEND_ERROR_BAD_AMOUNT" = "Enter a positive USD amount with no more than six decimal places.";
+"OPENCSV_SEND_ERROR_BAD_AMOUNT" = "Enter a positive Test USD amount with no more than six decimal places.";
 
 /* Error shown when the recipient key is not valid hex. */
 "OPENCSV_SEND_ERROR_BAD_RECIPIENT" = "That recipient key is not valid.";
@@ -6752,7 +6761,7 @@
 "OPENCSV_SEND_ERROR_INSUFFICIENT_FORMAT" = "Not enough funds. Available: %@.";
 
 /* Error shown when USD is sufficient only by combining issuers. Embeds total USD. */
-"OPENCSV_SEND_ERROR_ISSUER_SPLIT_FORMAT" = "You have %@ USD across multiple issuers, but this version sends from one issuer at a time. Send a smaller amount.";
+"OPENCSV_SEND_ERROR_ISSUER_SPLIT_FORMAT" = "You have %@ Test USD across multiple issuers, but this version sends from one issuer at a time. Send a smaller amount.";
 
 /* Error shown when the wallet has fewer than the two coins a transfer needs. */
 "OPENCSV_SEND_ERROR_NEED_TWO_COINS" = "This wallet needs at least two coins to send.";
@@ -6763,23 +6772,44 @@
 /* Confirmation that the wallet's receiving key was posted to the chat. */
 "OPENCSV_SEND_KEY_SHARED" = "Receiving key posted to the chat.";
 
+/* Placeholder for the Bitcoin network field in the OpenCSV send sheet. */
+"OPENCSV_SEND_NETWORK_PLACEHOLDER" = "signet";
+
 /* Shown when nobody in this chat has shared a payment key yet. */
 "OPENCSV_SEND_NO_RECIPIENT_KEY" = "No payment key in this chat yet. Ask them to open their wallet and share it — or share yours to get paid.";
 
-/* Status below the cached balance while the send sheet refreshes the wallet. */
-"OPENCSV_SEND_REFRESHING_SAVED_STATE" = "Showing saved balance · updating…";
-
 /* USD send review naming the exact issuer. Embeds amount and issuer name. */
-"OPENCSV_SEND_REVIEW_ISSUER_FORMAT" = "Send %1$@ USD issued by %2$@? The receipt will record this exact issuer.";
+"OPENCSV_SEND_REVIEW_ISSUER_FORMAT" = "Send %1$@ Test USD issued by %2$@? The receipt will record this exact issuer and that it has no monetary value.";
 
 /* USD send review recipient count. Embeds the number of recipients. */
 "OPENCSV_SEND_REVIEW_RECIPIENT_COUNT_FORMAT" = "Recipients: %@";
 
 /* Title reviewing an issuer-specific USD payment. */
-"OPENCSV_SEND_REVIEW_TITLE" = "Review USD payment";
+"OPENCSV_SEND_REVIEW_TITLE" = "Review Test USD payment";
 
 /* Button that posts this wallet's receiving key into the chat. */
 "OPENCSV_SEND_SHARE_KEY_BUTTON" = "Share My Key in Chat";
+
+/* Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet. */
+"OPENCSV_SEND_SPV_PEERS_PLACEHOLDER" = "host:port, host:port";
+
+/* Send button state while the Bitcoin record is broadcast. */
+"OPENCSV_SEND_STATE_BROADCASTING" = "Submitting to Bitcoin…";
+
+/* Send button state while the fee wallet and current chain state are checked. */
+"OPENCSV_SEND_STATE_CHECKING_WALLET" = "Checking fee reserve…";
+
+/* Send button state while the wallet recovery checkpoint is protected. */
+"OPENCSV_SEND_STATE_PROTECTING_RECOVERY" = "Protecting recovery…";
+
+/* Send button state while the payment proof is generated on this phone. */
+"OPENCSV_SEND_STATE_PROVING" = "Proving on this phone…";
+
+/* Send button state after a durable payment is queued for background proving. */
+"OPENCSV_SEND_STATE_QUEUED" = "Saved · proving in background";
+
+/* Send button state after the payment has been sent. */
+"OPENCSV_SEND_STATE_SENT" = "Sent";
 
 /* Status shown while the OpenCSV wallet is loading. */
 "OPENCSV_SEND_STATUS_LOADING" = "Loading wallet…";
@@ -6814,14 +6844,30 @@
 /* Incoming wallet activity that failed definitive verification. */
 "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION" = "Incoming payment · needs attention · not spendable";
 
+/* Wallet freshness when cached data has no timestamp and refresh failed. */
+"OPENCSV_WALLET_CACHED_TIME_UNKNOWN_FAILED" = "Cached · Update failed · cache time unavailable";
+
+/* Wallet freshness when cached data has no timestamp and refresh is active. */
+"OPENCSV_WALLET_CACHED_TIME_UNKNOWN_UPDATING" = "Cached · Updating… · cache time unavailable";
+
+/* Cached wallet freshness after refresh failed. Embeds the cache time. */
+"OPENCSV_WALLET_CACHED_UPDATE_FAILED_FORMAT" = "Cached %1$@ · Update failed";
+
+/* Cached wallet freshness while refreshing. Embeds the cache time. */
+"OPENCSV_WALLET_CACHED_UPDATING_FORMAT" = "Cached %1$@ · Updating…";
+
 /* Status shown while the OpenCSV wallet is loading. */
 "OPENCSV_WALLET_CHECKING" = "Checking wallet…";
 
 /* Wallet status for incoming OpenCSV payments still being verified. Embeds the count. */
 "OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT" = "%@ incoming payment(s) still verifying · not included above";
 
-/* Disclosure button revealing wallet and chain details. */
+/* Button that shows advanced OpenCSV wallet settings.
+   Disclosure button revealing wallet and chain details. */
 "OPENCSV_WALLET_DETAILS" = "Wallet details";
+
+/* Placeholder for the generic Esplora read accelerator in the OpenCSV wallet. */
+"OPENCSV_WALLET_ESPLORA_PLACEHOLDER" = "https://mempool.space/signet/api";
 
 /* Confirmation that the Bitcoin fee-reserve deposit address was copied. */
 "OPENCSV_WALLET_FEE_ADDRESS_COPIED" = "Fee-reserve address copied.";
@@ -6851,6 +6897,9 @@
 /* Network-fee action subtitle for confirmed sats. Embeds {{ confirmed sats }}. */
 "OPENCSV_WALLET_FEES_READY_FORMAT" = "%1$@ sats ready";
 
+/* Button that hides advanced OpenCSV wallet settings. */
+"OPENCSV_WALLET_HIDE_DETAILS" = "Hide wallet details";
+
 /* Action for hiding Bitcoin fee-reserve details. */
 "OPENCSV_WALLET_HIDE_NETWORK_FEES" = "Hide network fees";
 
@@ -6868,7 +6917,7 @@
 "OPENCSV_WALLET_NO_FEE_UTXOS" = "No fee UTXOs";
 
 /* State shown when no reviewed USD issuer manifests are configured. */
-"OPENCSV_WALLET_NO_TRUSTED_USD_ISSUERS" = "No reviewed USD issuers configured";
+"OPENCSV_WALLET_NO_TRUSTED_USD_ISSUERS" = "No reviewed Test USD issuers configured";
 
 /* Button opening the latest OpenCSV Bitcoin fee transaction in a public explorer. */
 "OPENCSV_WALLET_OPEN_LATEST_TRANSACTION" = "View latest transaction";
@@ -6886,7 +6935,10 @@
 "OPENCSV_WALLET_RECEIVE_KEY_FORMAT" = "%1$@…%2$@ · tap to copy";
 
 /* Heading above the OpenCSV receiving QR code. */
-"OPENCSV_WALLET_RECEIVE_USD" = "Receive USD";
+"OPENCSV_WALLET_RECEIVE_USD" = "Receive Test USD";
+
+/* Placeholder for the earliest Bitcoin height covered by the phone-owned OpenCSV scan. */
+"OPENCSV_WALLET_SCAN_FROM_HEIGHT_PLACEHOLDER" = "316000";
 
 /* Status shown when the OpenCSV wallet has not been provisioned on this device. */
 "OPENCSV_WALLET_SETUP_INCOMPLETE" = "Finish wallet setup to see your balance";
@@ -6904,19 +6956,25 @@
 "OPENCSV_WALLET_UNTRUSTED_INSTRUMENT" = "Untrusted issuer claim";
 
 /* Disclosure that one USD product can contain exact issuer-specific claims. */
-"OPENCSV_WALLET_USD_DISCLOSURE" = "One wallet balance · issuer-specific claims are kept distinct";
+"OPENCSV_WALLET_USD_DISCLOSURE" = "Test USD has no monetary value · issuer-specific claims stay distinct";
 
 /* Count of configured issuer instruments under USD. */
 "OPENCSV_WALLET_USD_ISSUER_COUNT_FORMAT" = "%@ reviewed issuer instrument(s)";
 
 /* Status below the USD balance when this build has no reviewed issuer configured. */
-"OPENCSV_WALLET_USD_NOT_AVAILABLE" = "USD is not available in this build yet";
+"OPENCSV_WALLET_USD_NOT_AVAILABLE" = "Test USD is not available in this build yet";
 
 /* Status below the USD balance when at least one reviewed issuer is configured. */
 "OPENCSV_WALLET_USD_READY" = "Available balance";
 
 /* Fresh wallet state. Embeds the verified Bitcoin block height. */
 "OPENCSV_WALLET_VERIFIED_CURRENT_FORMAT" = "Verified just now · block %1$@";
+
+/* Cached wallet freshness after refresh failed. Embeds cache time and verified Bitcoin height. */
+"OPENCSV_WALLET_VERIFIED_UPDATE_FAILED_FORMAT" = "Cached %1$@ · block %2$@ · Update failed";
+
+/* Cached wallet freshness while refreshing. Embeds cache time and verified Bitcoin height. */
+"OPENCSV_WALLET_VERIFIED_UPDATING_FORMAT" = "Cached %1$@ · block %2$@ · Updating…";
 
 /* Signal doesn't support old versions of iOS and shows a warning if you're on unsupported version. Some users can upgrade their device to a newer version of iOS to continue using Signal. If that's the case, they'll be shown this text. */
 "OS_EXPIRED_AND_CAN_UPGRADE_OS" = "Signal no longer works on this device. To use Signal again, update your device to a newer version of iOS.";

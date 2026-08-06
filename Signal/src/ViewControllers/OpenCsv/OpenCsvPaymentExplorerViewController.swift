@@ -91,7 +91,7 @@ class OpenCsvPaymentExplorerViewController: OWSViewController {
                     "OPENCSV_PAYMENT_AMOUNT_NOT_YOURS",
                     comment: "Shown in an OpenCSV payment bubble for a verified payment that pays neither party.",
                 )
-                : "\(sign)\(verdict.formattedAmount) \(verdict.currency ?? "")"
+                : "\(sign)\(verdict.formattedAmount) \(verdict.presentationCurrency)"
             addTitle(amount.ows_stripped(), font: UIFont.dynamicTypeLargeTitle1Clamped.withSize(34))
             addKeyValue(
                 key: OWSLocalizedString("OPENCSV_EXPLORER_DATE", comment: "Label for the verification date row."),

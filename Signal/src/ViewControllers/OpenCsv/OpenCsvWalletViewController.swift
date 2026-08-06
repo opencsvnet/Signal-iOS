@@ -20,6 +20,7 @@ class OpenCsvWalletViewController: OWSViewController {
     private let stack = UIStackView()
     private let scrollView = UIScrollView()
     private let balanceLabel = UILabel()
+    private let currencyLabel = UILabel()
     private let balanceStatusLabel = UILabel()
     private let receiveDetailsStack = UIStackView()
     private let qrImageView = UIImageView()
@@ -121,8 +122,10 @@ class OpenCsvWalletViewController: OWSViewController {
             balanceStack.trailingAnchor.constraint(equalTo: balanceCard.layoutMarginsGuide.trailingAnchor),
             balanceStack.bottomAnchor.constraint(equalTo: balanceCard.layoutMarginsGuide.bottomAnchor),
         ])
-        let currencyLabel = UILabel()
-        currencyLabel.text = "USD"
+        currencyLabel.text = OpenCsvProductPresentation.currencyName(
+            currency: "USD",
+            assetId: OpenCsvReviewedUsdIssuers.signetTestUsdAssetId,
+        )
         currencyLabel.font = .dynamicTypeFootnote
         currencyLabel.textColor = Theme.secondaryTextAndIconColor
         balanceStack.addArrangedSubview(currencyLabel)
@@ -154,7 +157,10 @@ class OpenCsvWalletViewController: OWSViewController {
                 "OPENCSV_WALLET_RECEIVE",
                 comment: "Action for revealing the OpenCSV receiving code.",
             ),
-            subtitle: "USD",
+            subtitle: OpenCsvProductPresentation.currencyName(
+                currency: "USD",
+                assetId: OpenCsvReviewedUsdIssuers.signetTestUsdAssetId,
+            ),
             imageName: "qrcode",
             action: #selector(didTapReceive),
         )
@@ -339,29 +345,37 @@ class OpenCsvWalletViewController: OWSViewController {
             ),
             action: #selector(didTapAdvanced),
         )
-        for (field, placeholderKey, placeholderComment) in [
+        for (field, placeholder) in [
             (
                 networkField,
-                "OPENCSV_SEND_NETWORK_PLACEHOLDER",
-                "Placeholder for the Bitcoin network field in the OpenCSV send sheet.",
+                OWSLocalizedString(
+                    "OPENCSV_SEND_NETWORK_PLACEHOLDER",
+                    comment: "Placeholder for the Bitcoin network field in the OpenCSV send sheet.",
+                ),
             ),
             (
                 spvPeersField,
-                "OPENCSV_SEND_SPV_PEERS_PLACEHOLDER",
-                "Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet.",
+                OWSLocalizedString(
+                    "OPENCSV_SEND_SPV_PEERS_PLACEHOLDER",
+                    comment: "Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet.",
+                ),
             ),
             (
                 scanFromHeightField,
-                "OPENCSV_WALLET_SCAN_FROM_HEIGHT_PLACEHOLDER",
-                "Placeholder for the earliest Bitcoin height covered by the phone-owned OpenCSV scan.",
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_SCAN_FROM_HEIGHT_PLACEHOLDER",
+                    comment: "Placeholder for the earliest Bitcoin height covered by the phone-owned OpenCSV scan.",
+                ),
             ),
             (
                 esploraField,
-                "OPENCSV_WALLET_ESPLORA_PLACEHOLDER",
-                "Placeholder for the generic Esplora read accelerator in the OpenCSV wallet.",
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_ESPLORA_PLACEHOLDER",
+                    comment: "Placeholder for the generic Esplora read accelerator in the OpenCSV wallet.",
+                ),
             ),
         ] {
-            field.placeholder = OWSLocalizedString(placeholderKey, comment: placeholderComment)
+            field.placeholder = placeholder
             field.borderStyle = .roundedRect
             field.autocapitalizationType = .none
             field.autocorrectionType = .no
@@ -373,7 +387,7 @@ class OpenCsvWalletViewController: OWSViewController {
         observationExplanation.font = .dynamicTypeFootnote
         observationExplanation.textColor = Theme.secondaryTextAndIconColor
         observationExplanation.numberOfLines = 0
-        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Require must pass before unconfirmed USD can be forwarded. Cryptographic and transaction checks always remain mandatory."
+        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Require must pass before unconfirmed Test USD can be forwarded. Cryptographic and transaction checks always remain mandatory."
         advancedStack.addArrangedSubview(observationExplanation)
         advancedStack.addArrangedSubview(observationStack)
         observationReceiptLabel.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -432,6 +446,11 @@ class OpenCsvWalletViewController: OWSViewController {
         refreshState: RefreshState,
     ) {
         owner = summary.owner
+        let productName = OpenCsvProductPresentation.currencyName(
+            network: summary.network,
+            instruments: summary.instruments,
+        )
+        currencyLabel.text = productName
         let usdSummary = Self.usdSummary(summary.balances, instruments: summary.instruments)
         balanceLabel.text = OpenCsvUsdAmount.format(usdSummary.total)
         let balanceStatus = usdSummary.hasConfiguredIssuer
@@ -468,7 +487,11 @@ class OpenCsvWalletViewController: OWSViewController {
         }
         statusLines.append(Self.freshnessLine(summary: summary, refreshState: refreshState))
         balanceStatusLabel.text = statusLines.joined(separator: "\n")
-        instrumentDetailsLabel.text = Self.renderHoldings(summary.balances, instruments: summary.instruments)
+        instrumentDetailsLabel.text = Self.renderHoldings(
+            summary.balances,
+            instruments: summary.instruments,
+            productName: productName,
+        )
         ownerLabel.text = String.nonPluralLocalizedStringWithFormat(
             OWSLocalizedString(
                 "OPENCSV_WALLET_RECEIVE_KEY_FORMAT",
@@ -519,7 +542,7 @@ class OpenCsvWalletViewController: OWSViewController {
             ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
         }
         let incomingActivity = summary.incomingActivities.suffix(8).reversed().map {
-            Self.renderIncomingActivity($0)
+            Self.renderIncomingActivity($0, productName: productName)
         }
         let outgoingActivity = summary.operations.suffix(8).reversed().map {
             let txid = $0.txid.map { String($0.prefix(10)) } ?? "unsigned"
@@ -637,12 +660,38 @@ class OpenCsvWalletViewController: OWSViewController {
         refreshState: RefreshState,
     ) -> String {
         guard let receipt = summary.verifiedChainView else {
-            let key = refreshState == .failed
-                ? "OPENCSV_WALLET_UPDATE_FAILED_SAVED"
-                : "OPENCSV_WALLET_SAVED_UPDATING"
-            return OWSLocalizedString(
-                key,
-                comment: "Wallet freshness when no phone-owned verified chain receipt has been persisted yet.",
+            guard let cachedAt = summary.syncProvenance.lastSyncDate else {
+                if refreshState == .failed {
+                    return OWSLocalizedString(
+                        "OPENCSV_WALLET_CACHED_TIME_UNKNOWN_FAILED",
+                        comment: "Wallet freshness when cached data has no timestamp and refresh failed.",
+                    )
+                }
+                return OWSLocalizedString(
+                    "OPENCSV_WALLET_CACHED_TIME_UNKNOWN_UPDATING",
+                    comment: "Wallet freshness when cached data has no timestamp and refresh is active.",
+                )
+            }
+            let cacheTime = DateFormatter.localizedString(
+                from: cachedAt,
+                dateStyle: .none,
+                timeStyle: .short,
+            )
+            if refreshState == .failed {
+                return String.nonPluralLocalizedStringWithFormat(
+                    OWSLocalizedString(
+                        "OPENCSV_WALLET_CACHED_UPDATE_FAILED_FORMAT",
+                        comment: "Cached wallet freshness after refresh failed. Embeds the cache time.",
+                    ),
+                    cacheTime,
+                )
+            }
+            return String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_CACHED_UPDATING_FORMAT",
+                    comment: "Cached wallet freshness while refreshing. Embeds the cache time.",
+                ),
+                cacheTime,
             )
         }
         if refreshState == .current {
@@ -655,13 +704,20 @@ class OpenCsvWalletViewController: OWSViewController {
             )
         }
         let time = DateFormatter.localizedString(from: receipt.observedAt, dateStyle: .none, timeStyle: .short)
-        let key = refreshState == .updating
-            ? "OPENCSV_WALLET_VERIFIED_UPDATING_FORMAT"
-            : "OPENCSV_WALLET_VERIFIED_UPDATE_FAILED_FORMAT"
+        if refreshState == .updating {
+            return String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_VERIFIED_UPDATING_FORMAT",
+                    comment: "Cached wallet freshness while refreshing. Embeds cache time and verified Bitcoin height.",
+                ),
+                time,
+                "\(receipt.tipHeight)",
+            )
+        }
         return String.nonPluralLocalizedStringWithFormat(
             OWSLocalizedString(
-                key,
-                comment: "Cached wallet freshness. Embeds the last verified time and Bitcoin block height.",
+                "OPENCSV_WALLET_VERIFIED_UPDATE_FAILED_FORMAT",
+                comment: "Cached wallet freshness after refresh failed. Embeds cache time and verified Bitcoin height.",
             ),
             time,
             "\(receipt.tipHeight)",
@@ -680,6 +736,7 @@ class OpenCsvWalletViewController: OWSViewController {
     private static func renderHoldings(
         _ balances: [OpenCsvCredit],
         instruments: [OpenCsvInstrumentRecord],
+        productName: String,
     ) -> String {
         let records = Dictionary(uniqueKeysWithValues: instruments.map { ($0.assetId, $0) })
         let trustedUsd = instruments.filter {
@@ -699,8 +756,8 @@ class OpenCsvWalletViewController: OWSViewController {
             return overflow ? UInt64.max : combined
         }
         var sections = [[
-            "USD",
-            "\(OpenCsvUsdAmount.format(total)) USD",
+            productName,
+            "\(OpenCsvUsdAmount.format(total)) \(productName)",
             OWSLocalizedString(
                 "OPENCSV_WALLET_USD_DISCLOSURE",
                 comment: "Disclosure that one USD product can contain exact issuer-specific claims.",
@@ -731,7 +788,7 @@ class OpenCsvWalletViewController: OWSViewController {
                 : manifest.terms.redemptionSummary
             return [
                 manifest.terms.issuerName,
-                "\(OpenCsvUsdAmount.format(balance)) USD",
+                "\(OpenCsvUsdAmount.format(balance)) \(productName)",
                 "\(manifest.terms.displayName) · \(backing)",
                 shortId,
             ].joined(separator: "\n")
@@ -764,7 +821,10 @@ class OpenCsvWalletViewController: OWSViewController {
         return sections.joined(separator: "\n\n")
     }
 
-    private static func renderIncomingActivity(_ activity: OpenCsvIncomingActivity) -> String {
+    private static func renderIncomingActivity(
+        _ activity: OpenCsvIncomingActivity,
+        productName: String,
+    ) -> String {
         switch activity.state {
         case .confirming:
             return OWSLocalizedString(
@@ -784,7 +844,7 @@ class OpenCsvWalletViewController: OWSViewController {
                     comment: "Incoming wallet activity spendable before Bitcoin confirmation. Embeds amount and currency.",
                 ),
                 OpenCsvUsdAmount.format(amount),
-                activity.currency ?? "USD",
+                activity.currency == "USD" ? productName : (activity.currency ?? ""),
             )
         case .available, .settled:
             guard let amount = activity.amount else {
@@ -799,7 +859,7 @@ class OpenCsvWalletViewController: OWSViewController {
                     comment: "Incoming wallet activity that has become spendable. Embeds amount and currency.",
                 ),
                 OpenCsvUsdAmount.format(amount),
-                activity.currency ?? "USD",
+                activity.currency == "USD" ? productName : (activity.currency ?? ""),
             )
         case .needsAttention:
             return OWSLocalizedString(
@@ -945,11 +1005,17 @@ class OpenCsvWalletViewController: OWSViewController {
 
     private func setAdvancedVisible(_ isVisible: Bool) {
         advancedStack.isHidden = !isVisible
-        let key = isVisible
-            ? "OPENCSV_WALLET_HIDE_DETAILS"
-            : "OPENCSV_WALLET_DETAILS"
+        let title = isVisible
+            ? OWSLocalizedString(
+                "OPENCSV_WALLET_HIDE_DETAILS",
+                comment: "Button that hides advanced OpenCSV wallet settings.",
+            )
+            : OWSLocalizedString(
+                "OPENCSV_WALLET_DETAILS",
+                comment: "Button that shows advanced OpenCSV wallet settings.",
+            )
         advancedButton?.setTitle(
-            OWSLocalizedString(key, comment: "Button that toggles advanced OpenCSV wallet settings."),
+            title,
             for: .normal,
         )
     }

@@ -32,6 +32,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private var usdInstruments = [OpenCsvInstrumentRecord]()
     private var hasUsdBalance = false
     private var batchDrafts = [BatchDraft]()
+    private var productName = "USD"
 
     private struct BatchDraft {
         let thread: TSThread
@@ -78,7 +79,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         amountField.font = UIFont.dynamicTypeLargeTitle1Clamped.withSize(44)
         amountField.keyboardType = .decimalPad
         amountField.textAlignment = .center
-        amountField.placeholder = "0.00 USD"
+        amountField.placeholder = "0.00"
         amountField.isHidden = true
 
         recipientLabel.font = .dynamicTypeBody
@@ -160,53 +161,67 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     }
 
     private func setSendState(_ state: SendState) {
-        let (key, comment, enabled): (String, String, Bool) = {
+        let (title, enabled): (String, Bool) = {
             switch state {
             case .ready:
                 return (
-                    "OPENCSV_SEND_BUTTON",
-                    "Button that proves and sends an OpenCSV payment.",
+                    OWSLocalizedString(
+                        "OPENCSV_SEND_BUTTON",
+                        comment: "Button that proves and sends an OpenCSV payment.",
+                    ),
                     true,
                 )
             case .checkingWallet:
                 return (
-                    "OPENCSV_SEND_STATE_CHECKING_WALLET",
-                    "Send button state while the fee wallet and current chain state are checked.",
+                    OWSLocalizedString(
+                        "OPENCSV_SEND_STATE_CHECKING_WALLET",
+                        comment: "Send button state while the fee wallet and current chain state are checked.",
+                    ),
                     false,
                 )
             case .proving:
                 return (
-                    "OPENCSV_SEND_STATE_PROVING",
-                    "Send button state while the payment proof is generated on this phone.",
+                    OWSLocalizedString(
+                        "OPENCSV_SEND_STATE_PROVING",
+                        comment: "Send button state while the payment proof is generated on this phone.",
+                    ),
                     false,
                 )
             case .protectingRecovery:
                 return (
-                    "OPENCSV_SEND_STATE_PROTECTING_RECOVERY",
-                    "Send button state while the wallet recovery checkpoint is protected.",
+                    OWSLocalizedString(
+                        "OPENCSV_SEND_STATE_PROTECTING_RECOVERY",
+                        comment: "Send button state while the wallet recovery checkpoint is protected.",
+                    ),
                     false,
                 )
             case .broadcasting:
                 return (
-                    "OPENCSV_SEND_STATE_BROADCASTING",
-                    "Send button state while the Bitcoin record is broadcast.",
+                    OWSLocalizedString(
+                        "OPENCSV_SEND_STATE_BROADCASTING",
+                        comment: "Send button state while the Bitcoin record is broadcast.",
+                    ),
                     false,
                 )
             case .queued:
                 return (
-                    "OPENCSV_SEND_STATE_QUEUED",
-                    "Send button state after a durable payment is queued for background proving.",
+                    OWSLocalizedString(
+                        "OPENCSV_SEND_STATE_QUEUED",
+                        comment: "Send button state after a durable payment is queued for background proving.",
+                    ),
                     false,
                 )
             case .sent:
                 return (
-                    "OPENCSV_SEND_STATE_SENT",
-                    "Send button state after the payment has been sent.",
+                    OWSLocalizedString(
+                        "OPENCSV_SEND_STATE_SENT",
+                        comment: "Send button state after the payment has been sent.",
+                    ),
                     false,
                 )
             }
         }()
-        sendButton.setTitle(OWSLocalizedString(key, comment: comment), for: .normal)
+        sendButton.setTitle(title, for: .normal)
         sendButton.isEnabled = enabled
     }
 
@@ -237,6 +252,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         }
         let trustedIds = Set(trustedUsd.map(\.assetId))
         let usdBalances = summary.balances.filter { trustedIds.contains($0.assetId) }
+        productName = OpenCsvProductPresentation.currencyName(
+            network: summary.network,
+            instruments: trustedUsd,
+        )
+        amountField.placeholder = "0.00 \(productName)"
         let total = usdBalances.reduce(UInt64(0)) { partial, credit in
             let (combined, overflow) = partial.addingReportingOverflow(credit.amount)
             return overflow ? UInt64.max : combined
@@ -251,12 +271,24 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                     "OPENCSV_SEND_BALANCE_FORMAT",
                     comment: "Balance line on the send sheet. Embeds {{ the balance }}.",
                 ),
-                "\(OpenCsvUsdAmount.format(total)) USD",
+                "\(OpenCsvUsdAmount.format(total)) \(productName)",
             )
-        let refreshing = OWSLocalizedString(
-            "OPENCSV_SEND_REFRESHING_SAVED_STATE",
-            comment: "Status below the cached balance while the send sheet refreshes the wallet.",
-        )
+        let cacheDate = summary.verifiedChainView?.observedAt ?? summary.syncProvenance.lastSyncDate
+        let refreshing: String
+        if let cacheDate {
+            refreshing = String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_SEND_CACHED_UPDATING_FORMAT",
+                    comment: "Status below a cached balance while refreshing. Embeds the cache time.",
+                ),
+                DateFormatter.localizedString(from: cacheDate, dateStyle: .none, timeStyle: .short),
+            )
+        } else {
+            refreshing = OWSLocalizedString(
+                "OPENCSV_SEND_CACHED_UPDATING_TIME_UNKNOWN",
+                comment: "Status below a cached balance while refreshing when no prior timestamp exists.",
+            )
+        }
         balanceLabel.text = isUpdating ? [balance, refreshing].joined(separator: "\n") : balance
         balanceLabel.font = total == 0 ? .dynamicTypeBody : .dynamicTypeFootnote
         balanceLabel.textAlignment = total == 0 ? .center : .natural
@@ -357,7 +389,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     private func renderBatchDrafts() {
         batchRecipientsLabel.isHidden = batchDrafts.isEmpty
         batchRecipientsLabel.text = batchDrafts.map { draft in
-            "+ \(draft.name): \(OpenCsvUsdAmount.format(draft.amount)) USD"
+            "+ \(draft.name): \(OpenCsvUsdAmount.format(draft.amount)) \(productName)"
         }.joined(separator: "\n")
     }
 
@@ -441,7 +473,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         )
         alert.addTextField { textField in
             textField.keyboardType = .decimalPad
-            textField.placeholder = "0.00 USD"
+            textField.placeholder = "0.00 \(self.productName)"
         }
         alert.addAction(UIAlertAction(title: CommonStrings.cancelButton, style: .cancel))
         alert.addAction(UIAlertAction(

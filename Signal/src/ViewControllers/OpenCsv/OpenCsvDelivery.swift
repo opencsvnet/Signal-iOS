@@ -25,9 +25,13 @@ enum OpenCsvDelivery {
     /// says it is nonspendable. The later proof-bearing attachment carries
     /// the same operation id.
     static func announcePending(_ operation: OpenCsvWalletStore.PendingAccountOperation) async throws {
+        let currency = OpenCsvProductPresentation.currencyName(
+            currency: operation.currency,
+            assetId: operation.assetId,
+        )
         let body = [
             "OpenCSV payment pending",
-            "\(OpenCsvUsdAmount.format(operation.amount)) \(operation.currency ?? "USD")",
+            "\(OpenCsvUsdAmount.format(operation.amount)) \(currency)",
             "Preparing proof on this phone. Not spendable yet.",
             "OpenCSV payment: \(operation.operationId)",
         ].joined(separator: "\n")
@@ -77,9 +81,13 @@ enum OpenCsvDelivery {
     /// foreground retries cannot produce duplicate failure messages.
     static func announceFailure(_ operation: OpenCsvWalletStore.PendingAccountOperation) async throws {
         guard let failureReason = operation.failureReason else { return }
+        let currency = OpenCsvProductPresentation.currencyName(
+            currency: operation.currency,
+            assetId: operation.assetId,
+        )
         let body = [
             "OpenCSV payment failed",
-            "\(OpenCsvUsdAmount.format(operation.amount)) \(operation.currency ?? "USD")",
+            "\(OpenCsvUsdAmount.format(operation.amount)) \(currency)",
             "Nothing is spendable from this attempt.",
             "Reason: \(failureReason)",
             "OpenCSV payment: \(operation.operationId)",
@@ -184,6 +192,7 @@ enum OpenCsvDelivery {
                 messageUniqueId: deliveredMessageId,
                 amount: delivery.amount,
                 currency: delivery.currency,
+                assetId: delivery.assetId,
             )
         }
         Logger.info("delivered OpenCSV consignment \(delivery.id)")

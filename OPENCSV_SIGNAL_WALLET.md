@@ -10,10 +10,11 @@ transaction API.
 
 - A primary phone stores a random OpenCSV account root and a separate
   `ThisDeviceOnly` binding in Keychain. Rust derives the BIP84 fee wallet,
-  OpenCSV owner, and issuer branches.
+  OpenCSV owner, and public instrument identities. Signal's binary exports no
+  issuer or mint capability.
 - Signal Secure Backup carries the account root plus the exact versioned Rust
   checkpoint. The BDK chain graph is rebuildable cache data.
-- Mint, transfer, signing, and fee bump remain frozen until a current backup
+- Transfer, signing, and fee bump remain frozen until a current backup
   succeeds. A restored root without its non-migratable binding opens
   read/export-only; this fork never manufactures a replacement binding.
 - Linked devices receive only public BIP84 watch descriptors and the public
@@ -39,10 +40,11 @@ The stable Swift boundary sends action intent only:
    delivered. A mempool transaction remains fee-bumpable; confirmation makes
    a delivered operation terminal.
 
-Mint uses the same path and can only issue an asset controlled by this
-account's derived issuer. RBF can only target an unconfirmed OpenCSV operation
-and may reduce protected change without altering the funding input, record,
-marker, change destination, or output positions.
+Signal cannot mint or create assets. Privileged test issuance remains in the
+non-default, headless `opencsv-issuer` Rust tool; its issuer symbols are absent
+from the default Signal XCFramework and header. RBF can only target an
+unconfirmed OpenCSV operation and may reduce protected change without altering
+the funding input, record, marker, change destination, or output positions.
 
 ## Receive and replay safety
 
@@ -60,11 +62,12 @@ re-armed as a fresh spend.
 
 ## Performance and progress
 
-The production first-hop transfer receipt measured 11.253 seconds on the
-iPhone 16e. Proof work is serialized by the wallet actor and never belongs on
-Signal's main actor; the send flow must keep showing durable progress rather
-than treating that interval as a network stall. Debug prover builds can take
-minutes and are not a field-performance receipt.
+The proof-lineage v4 one-input release receipt measured 6.435 seconds proving,
+19.75 ms verification, and 788,047 bytes on the iPhone 16e. Proof work never
+belongs on Signal's main actor; the send flow first persists and shows an
+immediate pending intent, then proves in the background. Proof,
+signing/persistence, relay, observer, and SPV timings are reported separately.
+Debug prover builds can take minutes and are not a product-performance receipt.
 
 ## Legacy MobileCoin state
 
@@ -88,13 +91,15 @@ descriptors, checkpoints, or the sibling `.cbf` cache. Regtest chain resets
 and signet/mainnet testing therefore use clean isolated installations; the app
 never deletes or silently reuses a cache from another chain.
 
-### USD network boundary
+### Test USD network boundary
 
-The USD instrument reviewed into the current Signal build is the permanent
-testnet instrument for this integration. It is marked test-only, has no
+The user-facing product reviewed into the current Signal build is **Test USD**.
+Wire data continues to use `USD`; Signal derives the Test USD label only from
+the exact reviewed, test-only signet identity. It has no
 monetary or redemption value, and is admitted only when the Rust account is
-bound to Bitcoin signet. Its asset identity, history, checkpoints, and BIP84
-fee tree must never be promoted or migrated to mainnet.
+bound to Bitcoin signet. Unknown or removed assets remain visible and
+read-only with `asset_not_reviewed`. Its asset identity, history, checkpoints,
+and BIP84 fee tree must never be promoted or migrated to mainnet.
 
 Production deployment will start with a separately reviewed USD instrument,
 issuer manifest, account database, backup namespace, and Bitcoin mainnet fee

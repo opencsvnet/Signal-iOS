@@ -103,6 +103,10 @@ public struct OpenCsvUsdIssuerPolicy: Codable, Equatable {
 /// authorize minting. Mainnet remains empty until an issuer relationship and
 /// manifest have received a separate production review.
 public enum OpenCsvReviewedUsdIssuers {
+    /// Exact asset identity of Signal's permanent, no-value signet product.
+    /// This is presentation and spend-policy identity, not a ticker match.
+    public static let signetTestUsdAssetId = "1d58a8145eedac17efe66371293eb472a4c68554141cc14380360e6eb720b507"
+
     /// Earliest height relevant to the reviewed instrument set in this
     /// build. The signet preview registry was activated after this public
     /// checkpoint, so a fresh wallet does not need to walk hundreds of
@@ -137,6 +141,46 @@ public enum OpenCsvReviewedUsdIssuers {
                 priority: 0,
             ),
         ]
+    }
+}
+
+/// Product names shown by Signal. Protocol data continues to use `USD`;
+/// presentation upgrades it to `Test USD` only for the exact reviewed,
+/// test-only signet instrument.
+public enum OpenCsvProductPresentation {
+    public static func currencyName(currency: String?, assetId: String?) -> String {
+        guard
+            currency == "USD",
+            assetId == OpenCsvReviewedUsdIssuers.signetTestUsdAssetId,
+            OpenCsvReviewedUsdIssuers.policies(for: "signet").contains(where: {
+                $0.manifest.terms.network == "signet"
+                    && $0.manifest.terms.unitCode == "USD"
+                    && $0.manifest.terms.testOnly
+            })
+        else {
+            return currency ?? ""
+        }
+        return "Test USD"
+    }
+
+    public static func currencyName(
+        network: String,
+        instruments: [OpenCsvInstrumentRecord],
+    ) -> String {
+        guard
+            network == "signet",
+            instruments.contains(where: {
+                $0.assetId == OpenCsvReviewedUsdIssuers.signetTestUsdAssetId
+                    && $0.profile == "trusted_usd_v1"
+                    && $0.trustState == "trusted_configuration"
+                    && $0.manifest?.terms.network == "signet"
+                    && $0.manifest?.terms.unitCode == "USD"
+                    && $0.manifest?.terms.testOnly == true
+            })
+        else {
+            return "USD"
+        }
+        return "Test USD"
     }
 }
 

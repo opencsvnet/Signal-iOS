@@ -134,6 +134,10 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         currency == "USD" ? OpenCsvUsdAmount.format(amount) : "\(amount)"
     }
 
+    public var presentationCurrency: String {
+        OpenCsvProductPresentation.currencyName(currency: currency, assetId: assetId)
+    }
+
     /// A verdict for a consignment someone sent us.
     ///
     /// A verified consignment that credits none of our coins is

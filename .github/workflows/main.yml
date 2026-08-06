@@ -61,6 +61,11 @@ jobs:
         with:
           bundler-cache: true
 
+      - name: Synchronize CocoaPods workspace
+        run: |
+          bundle exec pod install --deployment
+          git diff --exit-code -- Podfile.lock
+
       - name: Build and Test
         run: Scripts/build-and-test.sh
 
