@@ -31,6 +31,13 @@ export OPENCSV_LOCAL_RUST_PATH="$rust_root"
 export OPENCSV_TEST_WALLET_RECOVERY=1
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
+# Signal's hosted workflow names the Xcode application bundle, while Xcode's
+# command-line tools expect DEVELOPER_DIR to name its Contents/Developer
+# directory. Accept both forms so the recovery gate matches the main job.
+if [ -d "$DEVELOPER_DIR/Contents/Developer" ]; then
+    export DEVELOPER_DIR="$DEVELOPER_DIR/Contents/Developer"
+fi
+
 if [ ! -x "$DEVELOPER_DIR/usr/bin/xcodebuild" ]; then
     echo "error: DEVELOPER_DIR does not contain a usable Xcode installation: $DEVELOPER_DIR" >&2
     exit 1
