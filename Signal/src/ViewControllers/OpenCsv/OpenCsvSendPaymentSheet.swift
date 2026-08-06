@@ -597,6 +597,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         // Only the fast durable planning boundary happens while this sheet
         // is visible. Proof, backup, broadcast, and attachment delivery
         // resume by operation id after the conversation is usable again.
+        let startedAt = Date()
         setSendState(.checkingWallet)
         let thread = self.thread
         Task {
@@ -649,6 +650,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 }
                 self.setSendState(.queued)
                 self.dismiss(animated: true)
+                let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
+                Logger.info(
+                    "OpenCSV send sheet dismissed after durable intent in \(elapsedMs) ms"
+                        + " (\(batchDrafts.count + 1) recipient(s))",
+                )
                 OpenCsvDelivery.processPending()
             } catch {
                 // Planning either failed before insertion or cancelled the
@@ -703,6 +709,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
             return OWSLocalizedString(
                 "OPENCSV_SEND_ERROR_IN_PROGRESS",
                 comment: "Error shown when a payment is already being sent.",
+            )
+        case OpenCsvClientError.ffi(let message) where message.contains("asset_not_reviewed"):
+            return OWSLocalizedString(
+                "OPENCSV_SEND_ERROR_ASSET_NOT_REVIEWED",
+                comment: "Error shown when an issuer instrument is no longer approved for new sends.",
             )
         case OpenCsvPaymentsError.feeReserveRequired(let minimumSats, _):
             let format = OWSLocalizedString(

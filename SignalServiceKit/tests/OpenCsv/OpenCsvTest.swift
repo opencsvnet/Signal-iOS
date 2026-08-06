@@ -1286,6 +1286,30 @@ struct OpenCsvReviewedUsdIssuersTest {
             network: "mainnet",
             instruments: [instrument],
         ) == "USD")
+
+        let lookalike = OpenCsvInstrumentRecord(
+            assetId: assetId,
+            trustState: "trusted_configuration",
+            profile: "trusted_usd_v1",
+            issuerPriority: policy.priority,
+            manifest: OpenCsvInstrumentManifest(
+                terms: OpenCsvInstrumentTerms(
+                    network: "signet",
+                    displayName: "Lookalike",
+                    unitCode: "USD",
+                    decimals: 6,
+                    issuerName: "Not reviewed",
+                    termsUri: "https://example.invalid",
+                    redemptionSummary: "not reviewed",
+                    testOnly: true,
+                ),
+                genesis: policy.manifest.genesis,
+            ),
+        )
+        #expect(OpenCsvProductPresentation.currencyName(
+            network: "signet",
+            instruments: [lookalike],
+        ) == "USD")
     }
 }
 

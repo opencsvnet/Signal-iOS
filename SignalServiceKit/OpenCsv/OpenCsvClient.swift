@@ -167,15 +167,16 @@ public enum OpenCsvProductPresentation {
         network: String,
         instruments: [OpenCsvInstrumentRecord],
     ) -> String {
+        let reviewedTestManifests = OpenCsvReviewedUsdIssuers.policies(for: network).compactMap {
+            $0.manifest.terms.testOnly ? $0.manifest : nil
+        }
         guard
             network == "signet",
             instruments.contains(where: {
                 $0.assetId == OpenCsvReviewedUsdIssuers.signetTestUsdAssetId
                     && $0.profile == "trusted_usd_v1"
                     && $0.trustState == "trusted_configuration"
-                    && $0.manifest?.terms.network == "signet"
-                    && $0.manifest?.terms.unitCode == "USD"
-                    && $0.manifest?.terms.testOnly == true
+                    && $0.manifest.map { reviewedTestManifests.contains($0) } == true
             })
         else {
             return "USD"

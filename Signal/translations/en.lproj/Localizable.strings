@@ -6736,6 +6736,9 @@
 /* Explanation shown in the OpenCSV send sheet when the wallet has no assets. */
 "OPENCSV_SEND_EMPTY_STATE" = "No spendable Test USD yet. Signal cannot mint it; receive Test USD from a reviewed issuer first.";
 
+/* Error shown when an issuer instrument is no longer approved for new sends. */
+"OPENCSV_SEND_ERROR_ASSET_NOT_REVIEWED" = "This issuer is no longer reviewed for new Test USD payments. Its balance remains visible and read-only.";
+
 /* Error shown when the wallet checkpoint could not be included in Signal Secure Backup. */
 "OPENCSV_SEND_ERROR_BACKUP_FAILED" = "Signal could not protect the latest wallet recovery checkpoint. Try the backup again before sending.";
 

@@ -23,7 +23,7 @@ env:
 jobs:
   build_and_test:
     name: Build and Test
-    timeout-minutes: 20
+    timeout-minutes: 45
     runs-on: macos-26-xlarge
     env:
       FASTLANE_XCODEBUILD_SETTINGS_RETRIES: 7
@@ -66,6 +66,21 @@ jobs:
           bundle exec pod install --deployment
           git diff --exit-code -- Podfile.lock
 
+      - name: Verify Signal has no issuer capability
+        shell: bash
+        run: |
+          archive=$(find Pods -path '*/OpenCsv.xcframework/*simulator*/libopencsv_ffi.a' -print -quit)
+          header=$(find Pods -path '*/OpenCsv.xcframework/*/Headers/opencsv.h' -print -quit)
+          test -n "$archive" && test -n "$header"
+          if strings "$archive" | grep -Eq 'opencsv_wallet_init_issuer|opencsv_prove_mint'; then
+            echo "issuer capability leaked into Signal's default OpenCSV framework" >&2
+            exit 1
+          fi
+          if grep -Eq 'opencsv_wallet_init_issuer|opencsv_prove_mint' "$header"; then
+            echo "issuer API leaked into Signal's default OpenCSV header" >&2
+            exit 1
+          fi
+
       - name: Build and Test
         run: Scripts/build-and-test.sh
 
@@ -103,3 +118,47 @@ jobs:
 
       - name: Check for any changes
         run: git diff --exit-code
+
+  opencsv_recovery_build:
+    name: OpenCSV recovery build
+    timeout-minutes: 45
+    runs-on: macos-26-xlarge
+
+    steps:
+      - name: Set Xcode version
+        run: echo DEVELOPER_DIR=/Applications/Xcode_26.6.app >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v6
+
+      - name: Check Xcode version
+        run: Scripts/check_xcode_version.py --relaxed
+
+      - name: Download Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - uses: ./.github/actions/clone-everything
+        with:
+          access-token: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Checkout the exact pinned OpenCSV source
+        shell: bash
+        run: |
+          revision=$(ruby -ne 'puts $1 if $_ =~ /pod .OpenCsv.*commit: .([0-9a-f]{40})./' Podfile)
+          test "${#revision}" -eq 40
+          rust_root="$RUNNER_TEMP/opencsv-rs"
+          git init "$rust_root"
+          git -C "$rust_root" remote add origin https://github.com/opencsvnet/opencsv-rs.git
+          git -C "$rust_root" fetch --depth 1 origin "$revision"
+          git -C "$rust_root" checkout --detach FETCH_HEAD
+          test "$(git -C "$rust_root" rev-parse HEAD)" = "$revision"
+          echo "OPENCSV_LOCAL_RUST_PATH=$rust_root" >> "$GITHUB_ENV"
+
+      - name: Build DEBUG-only recovery configuration
+        env:
+          OPENCSV_DERIVED_DATA_PATH: ${{ runner.temp }}/OpenCsvRecoveryDerivedData
+        run: Scripts/build-opencsv-test-wallet-recovery.sh

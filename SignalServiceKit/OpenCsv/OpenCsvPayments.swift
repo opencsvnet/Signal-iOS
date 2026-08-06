@@ -1019,6 +1019,7 @@ public actor OpenCsvPayments {
         assetIdHex: String? = nil,
         progress: (@MainActor @Sendable (OpenCsvSendProgress) -> Void)? = nil,
     ) async throws -> OpenCsvWalletStore.PendingAccountOperation {
+        let startedAt = Date()
         guard !isSending else {
             throw OpenCsvPaymentsError.sendAlreadyInProgress
         }
@@ -1092,6 +1093,8 @@ public actor OpenCsvPayments {
             throw OpenCsvPaymentsError.couldNotPersistPendingSend(underlying: "\(error)")
         }
         requestBackgroundWorkScheduling()
+        let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
+        Logger.info("durable OpenCSV send intent \(planned.operationId) saved in \(elapsedMs) ms")
         return pending
     }
 

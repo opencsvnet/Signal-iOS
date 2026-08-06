@@ -72,6 +72,8 @@ xcodebuild \
     'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG OPENCSV_TEST_WALLET_RECOVERY' \
     'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) DEBUG=1 OPENCSV_TEST_WALLET_RECOVERY=1' \
     'OTHER_CFLAGS=$(inherited) -DOPENCSV_TEST_WALLET_RECOVERY=1' \
+    'GCC_TREAT_WARNINGS_AS_ERRORS=YES' \
+    'SWIFT_TREAT_WARNINGS_AS_ERRORS=YES' \
     build
 
 echo ">> recovery build: $derived_data/Build/Products/Debug-iphonesimulator/Signal.app"
