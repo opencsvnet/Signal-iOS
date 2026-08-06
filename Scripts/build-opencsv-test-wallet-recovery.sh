@@ -69,6 +69,14 @@ rm -f "$symbol_receipt"
 derived_data="${OPENCSV_DERIVED_DATA_PATH:-$signal_root/build/OpenCsvRecoveryDerivedData}"
 destination="${OPENCSV_SIMULATOR_DESTINATION:-generic/platform=iOS Simulator}"
 
+# Signal-owned targets already enable Clang warnings-as-errors and append
+# Swift's -warnings-as-errors in Config/Project.xcconfig. Assert that policy
+# explicitly instead of overriding the workspace-wide build settings: a global
+# override also reaches third-party pods, several of which intentionally pass
+# -suppress-warnings, and Swift correctly rejects the contradictory options.
+grep -Eq '^GCC_TREAT_WARNINGS_AS_ERRORS = YES$' "$signal_root/Config/Project.xcconfig"
+grep -Eq '^OTHER_SWIFT_FLAGS = .* -warnings-as-errors$' "$signal_root/Config/Project.xcconfig"
+
 xcodebuild \
     -quiet \
     -workspace Signal.xcworkspace \
@@ -79,8 +87,6 @@ xcodebuild \
     'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG OPENCSV_TEST_WALLET_RECOVERY' \
     'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) DEBUG=1 OPENCSV_TEST_WALLET_RECOVERY=1' \
     'OTHER_CFLAGS=$(inherited) -DOPENCSV_TEST_WALLET_RECOVERY=1' \
-    'GCC_TREAT_WARNINGS_AS_ERRORS=YES' \
-    'SWIFT_TREAT_WARNINGS_AS_ERRORS=YES' \
     build
 
 echo ">> recovery build: $derived_data/Build/Products/Debug-iphonesimulator/Signal.app"
