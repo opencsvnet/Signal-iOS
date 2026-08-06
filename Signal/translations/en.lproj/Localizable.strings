@@ -448,11 +448,11 @@
 /* Button in chat attachment panel to let user open Settings app and give Signal persmission to access photos. */
 "ATTACHMENT_KEYBOARD_OPEN_SETTINGS" = "Open Settings";
 
-/* A button to select a payment from the Attachment Keyboard */
-"ATTACHMENT_KEYBOARD_PAYMENT" = "Payment";
-
 /* A button to send an OpenCSV payment from the Attachment Keyboard */
 "ATTACHMENT_KEYBOARD_OPENCSV_PAYMENT" = "OpenCSV";
+
+/* A button to select a payment from the Attachment Keyboard */
+"ATTACHMENT_KEYBOARD_PAYMENT" = "Payment";
 
 /* A button to open the photo picker from the Attachment Keyboard */
 "ATTACHMENT_KEYBOARD_PHOTOS" = "Photos";
@@ -6559,6 +6559,365 @@
 /* Button text which opens the settings app */
 "OPEN_SETTINGS_BUTTON" = "Settings";
 
+/* Label for the anchor's block height and position. */
+"OPENCSV_EXPLORER_ANCHOR_LOCATION" = "Anchor";
+
+/* Label for the number of anchors in the phone's index. */
+"OPENCSV_EXPLORER_ANCHORS_INDEXED" = "Anchors indexed";
+
+/* Label for the confirmations row. */
+"OPENCSV_EXPLORER_CONFIRMATIONS" = "Confirmations";
+
+/* Confirmations row. Embeds {{ confirmation count }} and {{ the phone's synced tip height }}. */
+"OPENCSV_EXPLORER_CONFIRMATIONS_FORMAT" = "%@ (tip %@)";
+
+/* Toast confirming a value was copied to the clipboard. */
+"OPENCSV_EXPLORER_COPIED" = "Copied";
+
+/* Label for the anchor binding context row. */
+"OPENCSV_EXPLORER_CTX" = "Binding ctx";
+
+/* Label for the verification date row. */
+"OPENCSV_EXPLORER_DATE" = "Verified";
+
+/* Plain-language double-spend result shown for a settled OpenCSV payment. */
+"OPENCSV_EXPLORER_EXCLUSION" = "No earlier occurrence of this coin was found on the chain.";
+
+/* Plain-language mempool ordering and replacement disclosure for a zero-confirmation payment. */
+"OPENCSV_EXPLORER_EXCLUSION_UNCONFIRMED" = "No earlier confirmed occurrence was found. Mempool ordering is not consensus; this payment can still be replaced or conflict before settlement.";
+
+/* Provenance line for a payment verified by cross-checking independent indexers. */
+"OPENCSV_EXPLORER_PROVENANCE_CROSS_CHECK" = "Verified by cross-checking independent indexers";
+
+/* Provenance line for a payment this phone verified against the chain with no server. */
+"OPENCSV_EXPLORER_PROVENANCE_SELF_SCAN" = "Fully verified by this phone — no server was asked, none was believed";
+
+/* Provenance line for a payment verified against a single anchor snapshot. */
+"OPENCSV_EXPLORER_PROVENANCE_SNAPSHOT" = "Verified against a single anchor snapshot (demo trust)";
+
+/* Provenance for a proof-verified payment whose exact mempool anchor is spendable before settlement. */
+"OPENCSV_EXPLORER_PROVENANCE_UNCONFIRMED" = "Proof, ownership, anchor binding, and exact mempool transaction verified · spendable before confirmation · replacement risk";
+
+/* Label for the 64-byte anchor record row. */
+"OPENCSV_EXPLORER_RECORD" = "Record";
+
+/* Provenance line for a rejected payment. Embeds {{ the rejection reason }}. */
+"OPENCSV_EXPLORER_REJECTED_FORMAT" = "Rejected: %@";
+
+/* Button that re-runs verification against the phone's current chain view. */
+"OPENCSV_EXPLORER_REVERIFY" = "Re-verify now";
+
+/* Toast shown when a live re-verification does not verify. */
+"OPENCSV_EXPLORER_REVERIFY_FAILED" = "Did not verify against the current chain view";
+
+/* Toast shown when a live re-verification succeeds. */
+"OPENCSV_EXPLORER_REVERIFY_OK" = "Verified again, just now, by this phone";
+
+/* Section header for the on-chain anchor evidence. */
+"OPENCSV_EXPLORER_SECTION_ANCHOR" = "Chain evidence";
+
+/* Section header for the phone's own chain view stats. */
+"OPENCSV_EXPLORER_SECTION_CHAIN_VIEW" = "This phone's chain view";
+
+/* Button that shares the raw consignment file. */
+"OPENCSV_EXPLORER_SHARE_FILE" = "Share consignment file";
+
+/* Label for the bytes the last sync cost. */
+"OPENCSV_EXPLORER_SYNC_COST" = "Last sync cost";
+
+/* Label for the phone's synced chain tip. */
+"OPENCSV_EXPLORER_TIP" = "Synced tip";
+
+/* Title of the OpenCSV payment detail (explorer) sheet. */
+"OPENCSV_EXPLORER_TITLE" = "Payment details";
+
+/* Label for the anchor transaction id row. */
+"OPENCSV_EXPLORER_TXID" = "Transaction";
+
+/* Button opening the anchor transaction on a public block explorer. */
+"OPENCSV_EXPLORER_VIEW_EXTERNAL" = "View on public explorer";
+
+/* Provenance line while verification is retryable. Embeds {{ the last failure reason }}. */
+"OPENCSV_EXPLORER_WITHHELD_FORMAT" = "Verification pending — last attempt: %@. Retries when the app is opened.";
+
+/* Provenance line while verification has not yet been attempted. */
+"OPENCSV_EXPLORER_WITHHELD_NO_ATTEMPT" = "Verification pending — retries when the app is opened.";
+
+/* Button opening the protected export flow for a legacy MobileCoin recovery phrase. */
+"OPENCSV_LEGACY_MOBILECOIN_EXPORT" = "View recovery phrase";
+
+/* Section header for legacy MobileCoin recovery material. */
+"OPENCSV_LEGACY_MOBILECOIN_TITLE" = "Legacy MobileCoin";
+
+/* Read-only warning shown when legacy MobileCoin recovery material remains on the device. */
+"OPENCSV_LEGACY_MOBILECOIN_WARNING" = "Legacy MobileCoin recovery material is still stored safely. It is read-only and has not been deleted.";
+
+/* Title of an OpenCSV asset issuance bubble in the conversation view. */
+"OPENCSV_MINT_TITLE" = "OpenCSV issuance";
+
+/* Notification that a verified OpenCSV payment is spendable before confirmation. Embeds the amount and currency. */
+"OPENCSV_NOTIFICATION_AVAILABLE_UNCONFIRMED_FORMAT" = "%1$@ %2$@ is verified and available before confirmation.";
+
+/* Notification that an incoming OpenCSV payment is confirming and is not spendable yet. */
+"OPENCSV_NOTIFICATION_CONFIRMING" = "Payment received. Verifying its proof and Bitcoin anchor…";
+
+/* Notification that an OpenCSV payment could not be accepted. */
+"OPENCSV_NOTIFICATION_NEEDS_ATTENTION" = "A payment could not be verified. Open the conversation for details.";
+
+/* Notification that an OpenCSV payment reached settlement depth. Embeds the amount and currency. */
+"OPENCSV_NOTIFICATION_SETTLED_FORMAT" = "%1$@ %2$@ is now settled on Bitcoin.";
+
+/* Title of an OpenCSV payment status notification. */
+"OPENCSV_NOTIFICATION_TITLE" = "OpenCSV payment";
+
+/* Notification that a zero-confirmation payment dependency disappeared or was replaced. */
+"OPENCSV_NOTIFICATION_UNCONFIRMED_CHANGED" = "An unconfirmed payment changed on Bitcoin. Dependent spending is frozen while Signal repairs it.";
+
+/* Shown in an OpenCSV payment bubble for a verified payment that pays neither party. */
+"OPENCSV_PAYMENT_AMOUNT_NOT_YOURS" = "OpenCSV payment";
+
+/* Placeholder shown in an OpenCSV payment bubble when no verified amount is available. */
+"OPENCSV_PAYMENT_AMOUNT_UNKNOWN" = "OpenCSV payment";
+
+/* Status for a verified payment that is spendable before Bitcoin confirmation. */
+"OPENCSV_PAYMENT_STATUS_AVAILABLE_UNCONFIRMED" = "available before confirmation · replacement risk";
+
+/* Status shown in an OpenCSV payment bubble when the proof failed verification. */
+"OPENCSV_PAYMENT_STATUS_FAILED" = "verification failed";
+
+/* Status shown in an OpenCSV payment bubble while the proof has not been verified yet. */
+"OPENCSV_PAYMENT_STATUS_PENDING" = "verifying…";
+
+/* Status shown in an OpenCSV payment bubble when the proof verified. */
+"OPENCSV_PAYMENT_STATUS_VERIFIED" = "verified";
+
+/* Status for a verified OpenCSV payment that credits neither party in this chat. */
+"OPENCSV_PAYMENT_STATUS_VERIFIED_NOT_YOURS" = "verified · not for this wallet";
+
+/* Status shown in an OpenCSV payment bubble when the proof verified against the phone's own chain scan, trusting no server. */
+"OPENCSV_PAYMENT_STATUS_VERIFIED_SELF_SCAN" = "fully verified by this phone";
+
+/* Title of an OpenCSV payment bubble in the conversation view. */
+"OPENCSV_PAYMENT_TITLE" = "OpenCSV payment";
+
+/* Button that adds another recipient to the same Bitcoin transaction. */
+"OPENCSV_SEND_ADD_RECIPIENT" = "Add Recipient · Same Bitcoin Transaction";
+
+/* Title asking for the USD amount for an additional batch recipient. */
+"OPENCSV_SEND_ADD_RECIPIENT_AMOUNT_TITLE" = "Amount for this recipient";
+
+/* Button that stages an additional recipient before final send confirmation. */
+"OPENCSV_SEND_ADD_RECIPIENT_CONFIRM" = "Add";
+
+/* Title of the recipient picker for a shared Bitcoin transaction. */
+"OPENCSV_SEND_ADD_RECIPIENT_PICKER_TITLE" = "Add Recipient";
+
+/* Refers to the local user as the source of a shared OpenCSV key. */
+"OPENCSV_SEND_ANNOUNCER_YOU" = "you";
+
+/* Balance line on the send sheet. Embeds {{ the balance }}. */
+"OPENCSV_SEND_BALANCE_FORMAT" = "Balance: %@";
+
+/* Button confirming an issuer-specific USD payment. */
+"OPENCSV_SEND_CONFIRM" = "Send";
+
+/* Error shown when a recipient is already included in this payment. */
+"OPENCSV_SEND_DUPLICATE_RECIPIENT" = "That recipient is already in this payment.";
+
+/* Explanation shown in the OpenCSV send sheet when the wallet has no assets. */
+"OPENCSV_SEND_EMPTY_STATE" = "No spendable USD yet. Signal cannot mint it; receive USD from a reviewed issuer first.";
+
+/* Error shown when the wallet checkpoint could not be included in Signal Secure Backup. */
+"OPENCSV_SEND_ERROR_BACKUP_FAILED" = "Signal could not protect the latest wallet recovery checkpoint. Try the backup again before sending.";
+
+/* Error shown when Signal Secure Backup must be enabled before an OpenCSV write. */
+"OPENCSV_SEND_ERROR_BACKUP_REQUIRED" = "Turn on Signal Secure Backup before sending USD. Receiving remains available.";
+
+/* Error shown when the OpenCSV amount field is not a positive integer. */
+"OPENCSV_SEND_ERROR_BAD_AMOUNT" = "Enter a positive USD amount with no more than six decimal places.";
+
+/* Error shown when the recipient key is not valid hex. */
+"OPENCSV_SEND_ERROR_BAD_RECIPIENT" = "That recipient key is not valid.";
+
+/* Error shown when the Bitcoin fee reserve cannot fund an OpenCSV send. Embeds {{ minimum sats }}. */
+"OPENCSV_SEND_ERROR_FEE_RESERVE_FORMAT" = "The Bitcoin fee reserve needs one confirmed, unreserved output of at least %1$@ sats before sending.";
+
+/* Generic error shown when an OpenCSV payment could not be sent. */
+"OPENCSV_SEND_ERROR_GENERIC" = "Could not send the payment.";
+
+/* Error shown when a payment is already being sent. */
+"OPENCSV_SEND_ERROR_IN_PROGRESS" = "A payment is already being sent.";
+
+/* Error shown when the amount exceeds the balance. Embeds {{ available amount }}. */
+"OPENCSV_SEND_ERROR_INSUFFICIENT_FORMAT" = "Not enough funds. Available: %@.";
+
+/* Error shown when USD is sufficient only by combining issuers. Embeds total USD. */
+"OPENCSV_SEND_ERROR_ISSUER_SPLIT_FORMAT" = "You have %@ USD across multiple issuers, but this version sends from one issuer at a time. Send a smaller amount.";
+
+/* Error shown when the wallet has fewer than the two coins a transfer needs. */
+"OPENCSV_SEND_ERROR_NEED_TWO_COINS" = "This wallet needs at least two coins to send.";
+
+/* Confirmation that the wallet's receiving key was copied. */
+"OPENCSV_SEND_KEY_COPIED" = "Receiving key copied.";
+
+/* Confirmation that the wallet's receiving key was posted to the chat. */
+"OPENCSV_SEND_KEY_SHARED" = "Receiving key posted to the chat.";
+
+/* Shown when nobody in this chat has shared a payment key yet. */
+"OPENCSV_SEND_NO_RECIPIENT_KEY" = "No payment key in this chat yet. Ask them to open their wallet and share it — or share yours to get paid.";
+
+/* Status below the cached balance while the send sheet refreshes the wallet. */
+"OPENCSV_SEND_REFRESHING_SAVED_STATE" = "Showing saved balance · updating…";
+
+/* USD send review naming the exact issuer. Embeds amount and issuer name. */
+"OPENCSV_SEND_REVIEW_ISSUER_FORMAT" = "Send %1$@ USD issued by %2$@? The receipt will record this exact issuer.";
+
+/* USD send review recipient count. Embeds the number of recipients. */
+"OPENCSV_SEND_REVIEW_RECIPIENT_COUNT_FORMAT" = "Recipients: %@";
+
+/* Title reviewing an issuer-specific USD payment. */
+"OPENCSV_SEND_REVIEW_TITLE" = "Review USD payment";
+
+/* Button that posts this wallet's receiving key into the chat. */
+"OPENCSV_SEND_SHARE_KEY_BUTTON" = "Share My Key in Chat";
+
+/* Status shown while the OpenCSV wallet is loading. */
+"OPENCSV_SEND_STATUS_LOADING" = "Loading wallet…";
+
+/* Title of the OpenCSV payment send sheet. */
+"OPENCSV_SEND_TITLE" = "OpenCSV Payment";
+
+/* Recipient line on the send sheet. Embeds {{ the recipient's name }}. */
+"OPENCSV_SEND_TO_FORMAT" = "to %@";
+
+/* Button that opens the OpenCSV wallet from the send sheet. */
+"OPENCSV_SEND_VIEW_WALLET" = "View Wallet";
+
+/* Section header for OpenCSV wallet operation history. */
+"OPENCSV_WALLET_ACTIVITY" = "Activity";
+
+/* Incoming wallet activity that has become spendable. */
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE" = "Incoming payment · settled on Bitcoin";
+
+/* Incoming wallet activity that has become spendable. Embeds amount and currency. */
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE_FORMAT" = "+%1$@ %2$@ · settled on Bitcoin";
+
+/* Incoming wallet activity that is spendable before Bitcoin confirmation. */
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED" = "Incoming payment · available before confirmation · replacement risk";
+
+/* Incoming wallet activity spendable before Bitcoin confirmation. Embeds amount and currency. */
+"OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED_FORMAT" = "+%1$@ %2$@ · available before confirmation · replacement risk";
+
+/* Incoming wallet activity that is visible but not spendable. */
+"OPENCSV_WALLET_ACTIVITY_CONFIRMING" = "Incoming payment · verifying proof and anchor";
+
+/* Incoming wallet activity that failed definitive verification. */
+"OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION" = "Incoming payment · needs attention · not spendable";
+
+/* Status shown while the OpenCSV wallet is loading. */
+"OPENCSV_WALLET_CHECKING" = "Checking wallet…";
+
+/* Wallet status for incoming OpenCSV payments still being verified. Embeds the count. */
+"OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT" = "%@ incoming payment(s) still verifying · not included above";
+
+/* Disclosure button revealing wallet and chain details. */
+"OPENCSV_WALLET_DETAILS" = "Wallet details";
+
+/* Confirmation that the Bitcoin fee-reserve deposit address was copied. */
+"OPENCSV_WALLET_FEE_ADDRESS_COPIED" = "Fee-reserve address copied.";
+
+/* Button that raises the fee of an unconfirmed OpenCSV transaction.
+   Title for selecting an OpenCSV transaction to fee-bump. */
+"OPENCSV_WALLET_FEE_BUMP" = "Raise transaction fee";
+
+/* Title asking for a target Bitcoin fee rate. */
+"OPENCSV_WALLET_FEE_RATE" = "Target fee rate";
+
+/* Explanation of the restricted Bitcoin fee reserve. */
+"OPENCSV_WALLET_FEE_RESERVE_EXPLANATION" = "Used only to anchor OpenCSV operations. This wallet cannot send Bitcoin to arbitrary recipients.";
+
+/* Bitcoin fee reserve summary. Embeds {{ total sats }} and {{ confirmed sats }}. */
+"OPENCSV_WALLET_FEE_RESERVE_FORMAT" = "%1$@ sats · %2$@ confirmed";
+
+/* Error shown when the Bitcoin fee reserve cannot yet fund an OpenCSV operation. Embeds {{ minimum sats }}. */
+"OPENCSV_WALLET_FEE_RESERVE_REQUIRED_FORMAT" = "Add at least %1$@ sats to the fee-reserve address and wait for confirmation before sending.";
+
+/* Network-fee action subtitle when the Bitcoin fee reserve is empty. */
+"OPENCSV_WALLET_FEES_EMPTY" = "Add signet sats";
+
+/* Network-fee action subtitle for unconfirmed sats. Embeds {{ total sats }}. */
+"OPENCSV_WALLET_FEES_PENDING_FORMAT" = "%1$@ sats pending";
+
+/* Network-fee action subtitle for confirmed sats. Embeds {{ confirmed sats }}. */
+"OPENCSV_WALLET_FEES_READY_FORMAT" = "%1$@ sats ready";
+
+/* Action for hiding Bitcoin fee-reserve details. */
+"OPENCSV_WALLET_HIDE_NETWORK_FEES" = "Hide network fees";
+
+/* Action for hiding the OpenCSV receiving code. */
+"OPENCSV_WALLET_HIDE_RECEIVE" = "Hide receive code";
+
+/* Action for viewing and funding the Bitcoin fee reserve.
+   Heading above Bitcoin fee-reserve details. */
+"OPENCSV_WALLET_NETWORK_FEES" = "Network fees";
+
+/* Shown when there are no OpenCSV wallet operations yet. */
+"OPENCSV_WALLET_NO_ACTIVITY" = "No OpenCSV transactions yet.";
+
+/* Shown in advanced wallet details when there are no Bitcoin fee UTXOs. */
+"OPENCSV_WALLET_NO_FEE_UTXOS" = "No fee UTXOs";
+
+/* State shown when no reviewed USD issuer manifests are configured. */
+"OPENCSV_WALLET_NO_TRUSTED_USD_ISSUERS" = "No reviewed USD issuers configured";
+
+/* Button opening the latest OpenCSV Bitcoin fee transaction in a public explorer. */
+"OPENCSV_WALLET_OPEN_LATEST_TRANSACTION" = "View latest transaction";
+
+/* Confirmation that an OpenCSV wallet operation was committed. */
+"OPENCSV_WALLET_OPERATION_COMMITTED" = "OpenCSV operation saved.";
+
+/* Title for a legacy asset with no committed instrument manifest. */
+"OPENCSV_WALLET_PROTOTYPE_ASSET" = "Unverified prototype asset";
+
+/* Action for revealing the OpenCSV receiving code. */
+"OPENCSV_WALLET_RECEIVE" = "Receive";
+
+/* Abbreviated OpenCSV receiving key. Embeds {{ key prefix }} and {{ key suffix }}. */
+"OPENCSV_WALLET_RECEIVE_KEY_FORMAT" = "%1$@…%2$@ · tap to copy";
+
+/* Heading above the OpenCSV receiving QR code. */
+"OPENCSV_WALLET_RECEIVE_USD" = "Receive USD";
+
+/* Status shown when the OpenCSV wallet has not been provisioned on this device. */
+"OPENCSV_WALLET_SETUP_INCOMPLETE" = "Finish wallet setup to see your balance";
+
+/* Warning label for a test-only instrument. */
+"OPENCSV_WALLET_TEST_INSTRUMENT" = "Test only · no monetary value";
+
+/* Title of the OpenCSV wallet screen. */
+"OPENCSV_WALLET_TITLE" = "Wallet";
+
+/* Wallet status for spendable incoming OpenCSV payments that are not settled. Embeds the count. */
+"OPENCSV_WALLET_UNCONFIRMED_AVAILABLE_COUNT_FORMAT" = "%@ payment(s) available before confirmation · replacement risk";
+
+/* Title for a manifested instrument outside the reviewed issuer configuration. */
+"OPENCSV_WALLET_UNTRUSTED_INSTRUMENT" = "Untrusted issuer claim";
+
+/* Disclosure that one USD product can contain exact issuer-specific claims. */
+"OPENCSV_WALLET_USD_DISCLOSURE" = "One wallet balance · issuer-specific claims are kept distinct";
+
+/* Count of configured issuer instruments under USD. */
+"OPENCSV_WALLET_USD_ISSUER_COUNT_FORMAT" = "%@ reviewed issuer instrument(s)";
+
+/* Status below the USD balance when this build has no reviewed issuer configured. */
+"OPENCSV_WALLET_USD_NOT_AVAILABLE" = "USD is not available in this build yet";
+
+/* Status below the USD balance when at least one reviewed issuer is configured. */
+"OPENCSV_WALLET_USD_READY" = "Available balance";
+
+/* Fresh wallet state. Embeds the verified Bitcoin block height. */
+"OPENCSV_WALLET_VERIFIED_CURRENT_FORMAT" = "Verified just now · block %1$@";
+
 /* Signal doesn't support old versions of iOS and shows a warning if you're on unsupported version. Some users can upgrade their device to a newer version of iOS to continue using Signal. If that's the case, they'll be shown this text. */
 "OS_EXPIRED_AND_CAN_UPGRADE_OS" = "Signal no longer works on this device. To use Signal again, update your device to a newer version of iOS.";
 
@@ -6684,448 +7043,6 @@
 
 /* Title for sheet shown when tapping oversized text that has expired and is unavailable for download */
 "OVERSIZE_TEXT_UNAVAILABLE_SHEET_TITLE" = "Complete Message Not Available";
-
-/* Shown in an OpenCSV payment bubble for a verified payment that pays neither party. */
-"OPENCSV_PAYMENT_AMOUNT_NOT_YOURS" = "OpenCSV payment";
-
-/* Status for a verified OpenCSV payment that credits neither party in this chat. */
-"OPENCSV_PAYMENT_STATUS_VERIFIED_NOT_YOURS" = "verified · not for this wallet";
-
-/* Placeholder shown in an OpenCSV payment bubble when no verified amount is available. */
-"OPENCSV_PAYMENT_AMOUNT_UNKNOWN" = "OpenCSV payment";
-
-/* Status shown in an OpenCSV payment bubble when the proof failed verification. */
-"OPENCSV_PAYMENT_STATUS_FAILED" = "verification failed";
-
-/* Status shown in an OpenCSV payment bubble while the proof has not been verified yet. */
-"OPENCSV_PAYMENT_STATUS_PENDING" = "verifying…";
-
-/* Status shown in an OpenCSV payment bubble when the proof verified. */
-"OPENCSV_PAYMENT_STATUS_VERIFIED" = "verified";
-
-/* Status shown when the proof and exact mempool anchor verified, so the payment is spendable before settlement. */
-"OPENCSV_PAYMENT_STATUS_AVAILABLE_UNCONFIRMED" = "available before confirmation · replacement risk";
-
-/* Status shown in an OpenCSV payment bubble when the proof verified against the phone's own chain scan, trusting no server. */
-"OPENCSV_PAYMENT_STATUS_VERIFIED_SELF_SCAN" = "fully verified by this phone";
-
-/* Title of an OpenCSV payment bubble in the conversation view. */
-"OPENCSV_PAYMENT_TITLE" = "OpenCSV payment";
-
-/* Title of an OpenCSV payment status notification. */
-"OPENCSV_NOTIFICATION_TITLE" = "OpenCSV payment";
-
-/* Notification that an incoming OpenCSV attachment is still being verified. */
-"OPENCSV_NOTIFICATION_CONFIRMING" = "Payment received. Verifying its proof and Bitcoin anchor…";
-
-/* Notification that a verified OpenCSV payment is now spendable. Embeds amount and currency. */
-"OPENCSV_NOTIFICATION_AVAILABLE_FORMAT" = "%1$@ %2$@ is verified and now available.";
-
-/* Notification that a verified OpenCSV payment is spendable before Bitcoin confirmation. Embeds amount and currency. */
-"OPENCSV_NOTIFICATION_AVAILABLE_UNCONFIRMED_FORMAT" = "%1$@ %2$@ is verified and available before confirmation.";
-
-/* Notification that a previously spendable-unconfirmed OpenCSV payment reached settlement depth. Embeds amount and currency. */
-"OPENCSV_NOTIFICATION_SETTLED_FORMAT" = "%1$@ %2$@ is now settled on Bitcoin.";
-
-/* Notification that an unconfirmed payment's exact parent transaction disappeared or was replaced. */
-"OPENCSV_NOTIFICATION_UNCONFIRMED_CHANGED" = "An unconfirmed payment changed on Bitcoin. Dependent spending is frozen while Signal repairs it.";
-
-/* Notification that an OpenCSV payment could not be accepted. */
-"OPENCSV_NOTIFICATION_NEEDS_ATTENTION" = "A payment could not be verified. Open the conversation for details.";
-
-/* Label for the anchor's block height and position. */
-"OPENCSV_EXPLORER_ANCHOR_LOCATION" = "Anchor";
-
-/* Label for the number of anchors in the phone's index. */
-"OPENCSV_EXPLORER_ANCHORS_INDEXED" = "Anchors indexed";
-
-/* Label for the confirmations row. */
-"OPENCSV_EXPLORER_CONFIRMATIONS" = "Confirmations";
-
-/* Confirmations row. Embeds {{ confirmation count }} and {{ the phone's synced tip height }}. */
-"OPENCSV_EXPLORER_CONFIRMATIONS_FORMAT" = "%@ (tip %@)";
-
-/* Toast confirming a value was copied to the clipboard. */
-"OPENCSV_EXPLORER_COPIED" = "Copied";
-
-/* Label for the anchor binding context row. */
-"OPENCSV_EXPLORER_CTX" = "Binding ctx";
-
-/* Label for the verification date row. */
-"OPENCSV_EXPLORER_DATE" = "Verified";
-
-/* Plain-language double-spend result shown for a verified OpenCSV payment. */
-"OPENCSV_EXPLORER_EXCLUSION" = "No earlier occurrence of this coin was found on the chain.";
-
-/* Zero-confirmation exclusion disclosure: settled history is checked, while mempool order and replacement remain risks. */
-"OPENCSV_EXPLORER_EXCLUSION_UNCONFIRMED" = "No earlier confirmed occurrence was found. Mempool ordering is not consensus; this payment can still be replaced or conflict before settlement.";
-
-/* Provenance for a proof-verified payment whose exact raw transaction is observed but not settled. */
-"OPENCSV_EXPLORER_PROVENANCE_UNCONFIRMED" = "Proof, ownership, anchor binding, and exact mempool transaction verified · spendable before confirmation · replacement risk";
-
-/* Provenance line for a payment verified by cross-checking independent indexers. */
-"OPENCSV_EXPLORER_PROVENANCE_CROSS_CHECK" = "Verified by cross-checking independent indexers";
-
-/* Provenance line for a payment this phone verified against the chain with no server. */
-"OPENCSV_EXPLORER_PROVENANCE_SELF_SCAN" = "Fully verified by this phone — no server was asked, none was believed";
-
-/* Provenance line for a payment verified against a single anchor snapshot. */
-"OPENCSV_EXPLORER_PROVENANCE_SNAPSHOT" = "Verified against a single anchor snapshot (demo trust)";
-
-/* Label for the 64-byte anchor record row. */
-"OPENCSV_EXPLORER_RECORD" = "Record";
-
-/* Provenance line for a rejected payment. Embeds {{ the rejection reason }}. */
-"OPENCSV_EXPLORER_REJECTED_FORMAT" = "Rejected: %@";
-
-/* Button that re-runs verification against the phone's current chain view. */
-"OPENCSV_EXPLORER_REVERIFY" = "Re-verify now";
-
-/* Toast shown when a live re-verification does not verify. */
-"OPENCSV_EXPLORER_REVERIFY_FAILED" = "Did not verify against the current chain view";
-
-/* Toast shown when a live re-verification succeeds. */
-"OPENCSV_EXPLORER_REVERIFY_OK" = "Verified again, just now, by this phone";
-
-/* Section header for the on-chain anchor evidence. */
-"OPENCSV_EXPLORER_SECTION_ANCHOR" = "Chain evidence";
-
-/* Section header for the phone's own chain view stats. */
-"OPENCSV_EXPLORER_SECTION_CHAIN_VIEW" = "This phone's chain view";
-
-/* Button that shares the raw consignment file. */
-"OPENCSV_EXPLORER_SHARE_FILE" = "Share consignment file";
-
-/* Label for the bytes the last sync cost. */
-"OPENCSV_EXPLORER_SYNC_COST" = "Last sync cost";
-
-/* Label for the phone's synced chain tip. */
-"OPENCSV_EXPLORER_TIP" = "Synced tip";
-
-/* Title of the OpenCSV payment detail (explorer) sheet. */
-"OPENCSV_EXPLORER_TITLE" = "Payment details";
-
-/* Label for the anchor transaction id row. */
-"OPENCSV_EXPLORER_TXID" = "Transaction";
-
-/* Button opening the anchor transaction on a public block explorer. */
-"OPENCSV_EXPLORER_VIEW_EXTERNAL" = "View on public explorer";
-
-/* Provenance line while verification has not yet been attempted. */
-"OPENCSV_EXPLORER_WITHHELD_NO_ATTEMPT" = "Verification pending — retries when the app is opened.";
-
-/* Provenance line while verification is retryable. Embeds {{ the last failure reason }}. */
-"OPENCSV_EXPLORER_WITHHELD_FORMAT" = "Verification pending — last attempt: %@. Retries when the app is opened.";
-
-/* Balance line on the send sheet. Embeds {{ the balance }}. */
-"OPENCSV_SEND_BALANCE_FORMAT" = "Balance: %@";
-
-/* Shown when nobody in this chat has shared a payment key yet. */
-"OPENCSV_SEND_NO_RECIPIENT_KEY" = "No payment key in this chat yet. Ask them to open their wallet and share it — or share yours to get paid.";
-
-/* Send button state while the fee wallet and current chain state are checked. */
-"OPENCSV_SEND_STATE_CHECKING_WALLET" = "Checking fee wallet…";
-
-/* Send button state while the payment proof is generated on this phone. */
-"OPENCSV_SEND_STATE_PROVING" = "Generating private proof…";
-
-/* Send button state while the wallet recovery checkpoint is protected. */
-"OPENCSV_SEND_STATE_PROTECTING_RECOVERY" = "Protecting wallet recovery…";
-
-/* Send button state while the Bitcoin record is broadcast. */
-"OPENCSV_SEND_STATE_BROADCASTING" = "Broadcasting Bitcoin record…";
-
-/* Send button state after the payment has been sent. */
-"OPENCSV_SEND_STATE_SENT" = "Sent";
-
-/* Recipient line on the send sheet. Embeds {{ the recipient's name }}. */
-"OPENCSV_SEND_TO_FORMAT" = "to %@";
-
-/* Disclosure button revealing advanced chain configuration. */
-"OPENCSV_WALLET_ADVANCED" = "Show advanced settings";
-
-/* Disclosure button revealing wallet, issuer, recovery, and chain details. */
-"OPENCSV_WALLET_DETAILS" = "Wallet details";
-
-/* Disclosure button hiding wallet, issuer, recovery, and chain details. */
-"OPENCSV_WALLET_HIDE_DETAILS" = "Hide wallet details";
-
-/* Disclosure button hiding advanced chain configuration. */
-"OPENCSV_WALLET_HIDE_ADVANCED" = "Hide advanced settings";
-
-/* Section header for receiving payments (this wallet's key). */
-"OPENCSV_WALLET_RECEIVE" = "Receive";
-
-/* Heading above the OpenCSV receiving QR code. */
-"OPENCSV_WALLET_RECEIVE_USD" = "Receive USD";
-
-/* Action for hiding the OpenCSV receiving QR code. */
-"OPENCSV_WALLET_HIDE_RECEIVE" = "Hide receive code";
-
-/* Abbreviated OpenCSV receiving key. Embeds key prefix and key suffix. */
-"OPENCSV_WALLET_RECEIVE_KEY_FORMAT" = "%1$@…%2$@ · tap to copy";
-
-/* Title of the OpenCSV wallet screen. */
-"OPENCSV_WALLET_TITLE" = "Wallet";
-
-/* Section header for the assets held by the OpenCSV wallet. */
-"OPENCSV_WALLET_ASSETS" = "Assets";
-
-/* Disclosure that one USD product can contain exact issuer-specific claims. */
-"OPENCSV_WALLET_USD_DISCLOSURE" = "One wallet balance · issuer-specific claims are kept distinct";
-
-/* State shown when no reviewed USD issuer manifests are configured. */
-"OPENCSV_WALLET_NO_TRUSTED_USD_ISSUERS" = "No reviewed USD issuers configured";
-
-/* Status below the USD balance when at least one reviewed issuer is configured. */
-"OPENCSV_WALLET_USD_READY" = "Available balance";
-
-/* Wallet status for incoming OpenCSV payments that are still being verified. Embeds the count. */
-"OPENCSV_WALLET_CONFIRMING_COUNT_FORMAT" = "%@ incoming payment(s) still verifying · not included above";
-
-/* Wallet status for spendable incoming OpenCSV payments that are not yet settled. Embeds the count. */
-"OPENCSV_WALLET_UNCONFIRMED_AVAILABLE_COUNT_FORMAT" = "%@ payment(s) available before confirmation · replacement risk";
-
-/* Status below the USD balance when this build has no reviewed issuer configured. */
-"OPENCSV_WALLET_USD_NOT_AVAILABLE" = "USD is not available in this build yet";
-
-/* Status shown while the OpenCSV wallet is loading. */
-"OPENCSV_WALLET_CHECKING" = "Checking wallet…";
-
-/* Saved wallet state while the first phone-owned verification is in progress. */
-"OPENCSV_WALLET_SAVED_UPDATING" = "Showing saved wallet state · verifying latest chain…";
-
-/* Saved wallet state when the latest phone-owned verification failed. */
-"OPENCSV_WALLET_UPDATE_FAILED_SAVED" = "Update failed · showing saved wallet state";
-
-/* Fresh wallet state. Embeds the verified Bitcoin block height. */
-"OPENCSV_WALLET_VERIFIED_CURRENT_FORMAT" = "Verified just now · block %1$@";
-
-/* Cached wallet freshness. Embeds last verified time and Bitcoin block height. */
-"OPENCSV_WALLET_VERIFIED_UPDATING_FORMAT" = "Verified at %1$@ · block %2$@ · updating…";
-
-/* Cached wallet freshness after an update failure. Embeds last verified time and Bitcoin block height. */
-"OPENCSV_WALLET_VERIFIED_UPDATE_FAILED_FORMAT" = "Update failed · verified at %1$@ · block %2$@";
-
-/* Status shown when the OpenCSV wallet has not been provisioned on this device. */
-"OPENCSV_WALLET_SETUP_INCOMPLETE" = "Finish wallet setup to see your balance";
-
-/* Count of configured issuer instruments under USD. Embeds the issuer count. */
-"OPENCSV_WALLET_USD_ISSUER_COUNT_FORMAT" = "%@ reviewed issuer instrument(s)";
-
-/* Title for a manifested instrument outside the reviewed issuer configuration. */
-"OPENCSV_WALLET_UNTRUSTED_INSTRUMENT" = "Untrusted issuer claim";
-
-/* Title for a legacy asset with no committed instrument manifest. */
-"OPENCSV_WALLET_PROTOTYPE_ASSET" = "Unverified prototype asset";
-
-/* Warning label for a test-only instrument. */
-"OPENCSV_WALLET_TEST_INSTRUMENT" = "Test only · no monetary value";
-
-/* Section header for the Bitcoin reserve used only for OpenCSV protocol fees. */
-"OPENCSV_WALLET_FEE_RESERVE" = "Bitcoin fee reserve";
-
-/* Action and heading for the Bitcoin reserve used only for OpenCSV protocol fees. */
-"OPENCSV_WALLET_NETWORK_FEES" = "Network fees";
-
-/* Action for hiding the Bitcoin fee-reserve details. */
-"OPENCSV_WALLET_HIDE_NETWORK_FEES" = "Hide network fees";
-
-/* Network-fee action subtitle when the Bitcoin fee reserve is empty. */
-"OPENCSV_WALLET_FEES_EMPTY" = "Add signet sats";
-
-/* Network-fee action subtitle for unconfirmed sats. Embeds the total sats. */
-"OPENCSV_WALLET_FEES_PENDING_FORMAT" = "%1$@ sats pending";
-
-/* Network-fee action subtitle for confirmed sats. Embeds the confirmed sats. */
-"OPENCSV_WALLET_FEES_READY_FORMAT" = "%1$@ sats ready";
-
-/* Explanation of the restricted Bitcoin fee reserve. */
-"OPENCSV_WALLET_FEE_RESERVE_EXPLANATION" = "Used only to anchor OpenCSV operations. This wallet cannot send Bitcoin to arbitrary recipients.";
-
-/* Bitcoin fee reserve summary. Embeds total sats and confirmed sats. */
-"OPENCSV_WALLET_FEE_RESERVE_FORMAT" = "%1$@ sats · %2$@ confirmed";
-
-/* Button that reveals the Bitcoin fee-reserve funding address. */
-"OPENCSV_WALLET_SHOW_FUNDING_ADDRESS" = "Show funding address";
-
-/* Button that hides the Bitcoin fee-reserve funding address. */
-"OPENCSV_WALLET_HIDE_FUNDING_ADDRESS" = "Hide funding address";
-
-/* Confirmation that the Bitcoin fee-reserve address was copied. */
-"OPENCSV_WALLET_FEE_ADDRESS_COPIED" = "Fee-reserve address copied.";
-
-/* Error shown when the Bitcoin fee reserve cannot yet fund an OpenCSV operation. Embeds the minimum output value in sats. */
-"OPENCSV_WALLET_FEE_RESERVE_REQUIRED_FORMAT" = "Add at least %1$@ sats to the fee-reserve address and wait for confirmation before sending.";
-
-/* Section header for OpenCSV wallet operation history. */
-"OPENCSV_WALLET_ACTIVITY" = "Activity";
-
-/* Shown when there are no OpenCSV wallet operations yet. */
-"OPENCSV_WALLET_NO_ACTIVITY" = "No OpenCSV transactions yet.";
-
-/* Incoming wallet activity that is still being verified and is not spendable. */
-"OPENCSV_WALLET_ACTIVITY_CONFIRMING" = "Incoming payment · verifying proof and anchor";
-
-/* Incoming wallet activity that is spendable before Bitcoin confirmation, with unknown amount. */
-"OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED" = "Incoming payment · available before confirmation · replacement risk";
-
-/* Incoming wallet activity that is spendable before Bitcoin confirmation. Embeds amount and currency. */
-"OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED_FORMAT" = "+%1$@ %2$@ · available before confirmation · replacement risk";
-
-/* Incoming wallet activity that has become spendable without an available amount. */
-"OPENCSV_WALLET_ACTIVITY_AVAILABLE" = "Incoming payment · settled on Bitcoin";
-
-/* Incoming wallet activity that has become spendable. Embeds amount and currency. */
-"OPENCSV_WALLET_ACTIVITY_AVAILABLE_FORMAT" = "+%1$@ %2$@ · settled on Bitcoin";
-
-/* Incoming wallet activity that failed definitive verification. */
-"OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION" = "Incoming payment · needs attention · not spendable";
-
-/* Shown in advanced wallet details when there are no Bitcoin fee UTXOs. */
-"OPENCSV_WALLET_NO_FEE_UTXOS" = "No fee UTXOs";
-
-/* Button that raises the fee of an unconfirmed OpenCSV transaction. */
-"OPENCSV_WALLET_FEE_BUMP" = "Raise transaction fee";
-
-/* Title asking for a target Bitcoin fee rate. */
-"OPENCSV_WALLET_FEE_RATE" = "Target fee rate";
-
-/* Button opening the latest OpenCSV Bitcoin fee transaction in a public explorer. */
-"OPENCSV_WALLET_OPEN_LATEST_TRANSACTION" = "View latest transaction";
-
-/* Confirmation that an OpenCSV wallet operation was committed. */
-"OPENCSV_WALLET_OPERATION_COMMITTED" = "OpenCSV operation saved.";
-
-/* Section header for legacy MobileCoin recovery material. */
-"OPENCSV_LEGACY_MOBILECOIN_TITLE" = "Legacy MobileCoin";
-
-/* Read-only warning shown when legacy MobileCoin recovery material remains on the device. */
-"OPENCSV_LEGACY_MOBILECOIN_WARNING" = "Legacy MobileCoin recovery material is still stored safely. It is read-only and has not been deleted.";
-
-/* Button opening the protected export flow for a legacy MobileCoin recovery phrase. */
-"OPENCSV_LEGACY_MOBILECOIN_EXPORT" = "View recovery phrase";
-
-/* Placeholder for the generic Esplora read accelerator in the OpenCSV wallet. */
-"OPENCSV_WALLET_ESPLORA_PLACEHOLDER" = "Esplora read endpoint";
-
-/* Placeholder for the amount field in the OpenCSV send sheet. */
-"OPENCSV_SEND_AMOUNT_PLACEHOLDER" = "Amount (base units)";
-
-/* Placeholder for the anchor server URL field in the OpenCSV send sheet. */
-"OPENCSV_SEND_ANCHOR_SERVER_PLACEHOLDER" = "Anchor server URL (http://host:port)";
-
-/* Placeholder for the Bitcoin P2P peers field in the OpenCSV send sheet. */
-"OPENCSV_SEND_SPV_PEERS_PLACEHOLDER" = "Bitcoin peers for self-scan (host:port, comma-separated)";
-"OPENCSV_WALLET_SCAN_FROM_HEIGHT_PLACEHOLDER" = "Scan from Bitcoin height (advanced)";
-
-/* Placeholder for the Bitcoin network field in the OpenCSV send sheet. */
-"OPENCSV_SEND_NETWORK_PLACEHOLDER" = "Network (signet, mainnet, regtest)";
-
-/* Button that proves and sends an OpenCSV payment. */
-"OPENCSV_SEND_BUTTON" = "Prove & Send";
-
-/* Button that opens the OpenCSV wallet from the send sheet. */
-"OPENCSV_SEND_VIEW_WALLET" = "View Wallet";
-
-/* Generic error shown when an OpenCSV payment could not be sent. */
-"OPENCSV_SEND_ERROR_GENERIC" = "Could not send the payment.";
-
-/* Error shown when a payment is already being sent. */
-"OPENCSV_SEND_ERROR_IN_PROGRESS" = "A payment is already being sent.";
-
-/* Error shown when Signal Secure Backup must be enabled before an OpenCSV write. */
-"OPENCSV_SEND_ERROR_BACKUP_REQUIRED" = "Turn on Signal Secure Backup before sending USD. Receiving remains available.";
-
-/* Error shown when the wallet checkpoint could not be included in Signal Secure Backup. */
-"OPENCSV_SEND_ERROR_BACKUP_FAILED" = "Signal could not protect the latest wallet recovery checkpoint. Try the backup again before sending.";
-
-/* Error shown when the Bitcoin fee reserve cannot fund an OpenCSV send. Embeds the minimum output value in sats. */
-"OPENCSV_SEND_ERROR_FEE_RESERVE_FORMAT" = "The Bitcoin fee reserve needs one confirmed, unreserved output of at least %1$@ sats before sending.";
-
-/* Error shown when the amount exceeds the balance. Embeds {{ available amount }}. */
-"OPENCSV_SEND_ERROR_INSUFFICIENT_FORMAT" = "Not enough funds. Available: %@.";
-
-/* Error shown when the wallet has fewer than the two coins a transfer needs. */
-"OPENCSV_SEND_ERROR_NEED_TWO_COINS" = "This wallet needs at least two coins to send.";
-
-/* Error shown when no OpenCSV anchor server is configured. */
-"OPENCSV_SEND_ERROR_NO_SERVER" = "Set an anchor server first.";
-
-/* Error shown when the OpenCSV amount field is not a positive integer. */
-"OPENCSV_SEND_ERROR_BAD_AMOUNT" = "Enter a positive USD amount with no more than six decimal places.";
-
-/* Error shown when the OpenCSV recipient key field is empty. */
-"OPENCSV_SEND_ERROR_NO_RECIPIENT" = "Enter the recipient's owner key.";
-
-/* Confirmation that the wallet's receiving key was copied. */
-"OPENCSV_SEND_KEY_COPIED" = "Receiving key copied.";
-
-/* Confirmation that the wallet's receiving key was posted to the chat. */
-"OPENCSV_SEND_KEY_SHARED" = "Receiving key posted to the chat.";
-
-/* Refers to the local user as the source of a shared OpenCSV key. */
-"OPENCSV_SEND_ANNOUNCER_YOU" = "you";
-
-/* Error shown when the recipient key is not valid hex. */
-"OPENCSV_SEND_ERROR_BAD_RECIPIENT" = "That recipient key is not valid.";
-
-/* Error shown when USD is sufficient only by combining issuers. Embeds the total USD. */
-"OPENCSV_SEND_ERROR_ISSUER_SPLIT_FORMAT" = "You have %@ USD across multiple issuers, but this version sends from one issuer at a time. Send a smaller amount.";
-
-/* Title reviewing an issuer-specific USD payment. */
-"OPENCSV_SEND_REVIEW_TITLE" = "Review USD payment";
-
-/* USD send review naming the exact issuer. Embeds amount and issuer name. */
-"OPENCSV_SEND_REVIEW_ISSUER_FORMAT" = "Send %1$@ USD issued by %2$@? The receipt will record this exact issuer.";
-
-/* USD send review recipient count. Embeds the number of recipients. */
-"OPENCSV_SEND_REVIEW_RECIPIENT_COUNT_FORMAT" = "Recipients: %@";
-
-/* Button confirming an issuer-specific USD payment. */
-"OPENCSV_SEND_CONFIRM" = "Send";
-
-/* Button that stages another recipient for the same underlying Bitcoin transaction. */
-"OPENCSV_SEND_ADD_RECIPIENT" = "Add Recipient · Same Bitcoin Transaction";
-
-/* Title of the recipient picker for an explicitly shared OpenCSV transaction. */
-"OPENCSV_SEND_ADD_RECIPIENT_PICKER_TITLE" = "Add Recipient";
-
-/* Title asking for the USD amount for an additional recipient. */
-"OPENCSV_SEND_ADD_RECIPIENT_AMOUNT_TITLE" = "Amount for this recipient";
-
-/* Button that stages an additional recipient before final send confirmation. */
-"OPENCSV_SEND_ADD_RECIPIENT_CONFIRM" = "Add";
-
-/* Error shown when a recipient is already included in the current payment. */
-"OPENCSV_SEND_DUPLICATE_RECIPIENT" = "That recipient is already in this payment.";
-
-/* Status shown when the recipient key was prefilled. Embeds {{ who announced it }}. */
-"OPENCSV_SEND_RECIPIENT_FROM_CHAT_FORMAT" = "Using the key shared by %@.";
-
-/* Button that posts this wallet's receiving key into the chat. */
-"OPENCSV_SEND_SHARE_KEY_BUTTON" = "Share My Key in Chat";
-
-/* Shown in the OpenCSV send sheet when the wallet is empty. */
-"OPENCSV_SEND_NO_BALANCE" = "No balance";
-
-/* Explanation shown in the OpenCSV send sheet when the wallet has no assets. */
-"OPENCSV_SEND_EMPTY_STATE" = "No spendable USD yet. Signal cannot mint it; receive USD from a reviewed issuer first.";
-
-/* Placeholder for the recipient owner key field in the OpenCSV send sheet. */
-"OPENCSV_SEND_RECIPIENT_PLACEHOLDER" = "Recipient owner key (hex)";
-
-/* Status shown while the OpenCSV wallet is loading. */
-"OPENCSV_SEND_STATUS_LOADING" = "Loading wallet…";
-
-/* Status below the cached balance while the send sheet refreshes the wallet. */
-"OPENCSV_SEND_REFRESHING_SAVED_STATE" = "Showing saved balance · updating…";
-
-/* Status shown while an OpenCSV payment proof is being generated. */
-"OPENCSV_SEND_STATUS_PROVING" = "Proving & anchoring… (Bitcoin backends wait for a block)";
-
-/* Title of the OpenCSV payment send sheet. */
-"OPENCSV_SEND_TITLE" = "OpenCSV Payment";
 
 /* Header title for bank payment details screen */
 "PAYMENT_DETAILS_BANK_TITLE" = "Bank Transfer";

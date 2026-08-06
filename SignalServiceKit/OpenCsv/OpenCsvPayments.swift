@@ -2152,8 +2152,10 @@ public actor OpenCsvPayments {
         }
         return entries.contains { url in
             url.lastPathComponent == "account.sqlite"
-                || (url.lastPathComponent.hasPrefix("linked-account-")
-                    && url.pathExtension == "sqlite")
+                || (
+                    url.lastPathComponent.hasPrefix("linked-account-")
+                        && url.pathExtension == "sqlite"
+                )
         }
     }
 
