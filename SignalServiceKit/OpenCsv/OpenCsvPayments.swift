@@ -135,6 +135,11 @@ public actor OpenCsvPayments {
     /// Delivery ids currently being handed to the send pipeline, so a
     /// foreground sweep cannot re-send one that is already in flight.
     private var deliveriesInFlight = Set<String>()
+    /// Attachment downloads can converge onto the same deduplicated Signal
+    /// attachment row. Coalesce them at this actor boundary so one payment does
+    /// not repeat the expensive chain scan while its first verification is
+    /// suspended on network I/O.
+    private var verificationsInFlight = Set<Attachment.IDType>()
     /// Whether a self-scan sync has succeeded this process. `scanVerify`
     /// consults the index the last successful sync registered, so until
     /// this is true a scan decision would only throw "no scan registered".
@@ -220,6 +225,12 @@ public actor OpenCsvPayments {
     /// store nothing, so a later retry can still verify; only a definitive
     /// prover accept/reject is persisted.
     public func verifyDownloadedAttachmentIfNeeded(attachmentId: Attachment.IDType) async {
+        guard verificationsInFlight.insert(attachmentId).inserted else {
+            Logger.info("coalesced duplicate OpenCSV verification for consignment \(attachmentId)")
+            return
+        }
+        defer { verificationsInFlight.remove(attachmentId) }
+
         struct Candidate {
             let stream: AttachmentStream
             let threadUniqueId: String?
@@ -316,7 +327,13 @@ public actor OpenCsvPayments {
             let verdict = try await verifyBlobWithConfiguredChainView(blob)
             let record = OpenCsvVerdictRecord(verdict: verdict, date: Date())
             await db.awaitableWrite { tx in
-                self.store.setVerdict(record, blob: blob, attachmentId: attachmentId, tx: tx)
+                self.store.setVerdict(
+                    record,
+                    blob: blob,
+                    attachmentId: attachmentId,
+                    messageUniqueId: candidate.messageUniqueId,
+                    tx: tx,
+                )
                 do {
                     switch record.direction {
                     case .incoming where record.isVerified:
@@ -1662,11 +1679,21 @@ public actor OpenCsvPayments {
             body += "\n" + OpenCsvAttachmentDetector.addressAnnouncement(owner: owner)
         }
         return try await db.awaitableWrite { tx in
+            // Recheck inside the serial database transaction. The actor may
+            // re-enter while fetching account status above, and a concurrent
+            // recovery pass may have persisted this exact operation meanwhile.
+            if
+                let existing = self.store.pendingDeliveries(tx: tx)
+                    .first(where: { $0.operationId == operation.operationId })
+            {
+                return existing
+            }
             // Keep one encrypted replay copy for the existing attachment
             // transport and explorer. Rust remains the source of truth for
             // spends and operation state.
             let entry = try self.store.recordOutgoing(blob: blob, spends: [], tx: tx)
             let delivery = OpenCsvWalletStore.PendingDelivery(
+                id: "operation:\(operation.operationId)",
                 threadUniqueId: pending.threadUniqueId,
                 body: body,
                 replayEntry: entry,
@@ -1690,12 +1717,16 @@ public actor OpenCsvPayments {
         isSending = true
         defer { isSending = false }
         if let account = try? await ensureAccountWallet() {
-            _ = try? await maintainBatchReserves(
-                account: account,
-                participantCount: 2,
-                createIfMissing: false,
-            )
-            let operations = (try? db.read { try self.store.pendingAccountOperations(tx: $0) }) ?? []
+            // Never put fee-cell inventory maintenance in front of a durable
+            // user operation. Resuming an unobserved maintenance transaction
+            // can wait on the network; serializing that wait here leaves a
+            // freshly announced payment stuck at `planned`. Explicit wallet
+            // sync owns reserve maintenance and may retry it independently.
+            let operations = ((try? db.read { try self.store.pendingAccountOperations(tx: $0) }) ?? [])
+                .filter { $0.failureReason == nil }
+            if !operations.isEmpty {
+                Logger.info("resuming \(operations.count) durable OpenCSV operation(s)")
+            }
             let groupedBatches = Dictionary(
                 grouping: operations.compactMap { operation in
                     operation.batchLocalId.map { ($0, operation) }
@@ -1931,10 +1962,17 @@ public actor OpenCsvPayments {
     public nonisolated func setOutgoingVerdict(
         _ record: OpenCsvVerdictRecord,
         attachmentId: Attachment.IDType,
+        messageUniqueId: String?,
         tx: DBWriteTransaction,
     ) {
         OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
-            .setVerdict(record, blob: nil, attachmentId: attachmentId, tx: tx)
+            .setVerdict(
+                record,
+                blob: nil,
+                attachmentId: attachmentId,
+                messageUniqueId: messageUniqueId,
+                tx: tx,
+            )
     }
 
     /// Mark a delivery enqueued inside the message-insertion transaction.
@@ -2172,10 +2210,23 @@ public actor OpenCsvPayments {
 
     public nonisolated func isCanonicalPresentationAttachment(
         attachmentId: Attachment.IDType,
+        messageUniqueId: String?,
         tx: DBReadTransaction,
     ) -> Bool {
         OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
-            .isCanonicalPresentationAttachment(attachmentId: attachmentId, tx: tx)
+            .isCanonicalPresentationAttachment(
+                attachmentId: attachmentId,
+                messageUniqueId: messageUniqueId,
+                tx: tx,
+            )
+    }
+
+    public nonisolated func hasCanonicalPresentation(
+        consignmentId: String,
+        tx: DBReadTransaction,
+    ) -> Bool {
+        OpenCsvWalletStore(keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage)
+            .hasCanonicalPresentation(consignmentId: consignmentId, tx: tx)
     }
 
     // MARK: - Explorer (the phone-as-explorer detail sheet)

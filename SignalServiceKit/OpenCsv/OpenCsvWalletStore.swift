@@ -372,6 +372,7 @@ public struct OpenCsvWalletStore {
     private static let verifiedChainViewKey = "verifiedChainView.v1"
     private static let attachmentConsignmentIdPrefix = "attachmentConsignmentId:"
     private static let canonicalPresentationAttachmentPrefix = "canonicalPresentationAttachment:"
+    private static let canonicalPresentationMessagePrefix = "canonicalPresentationMessage:"
 
     private let keyValueStore = KeyValueStore(collection: Self.collection)
     private let keychainStorage: any KeychainStorage
@@ -772,6 +773,7 @@ public struct OpenCsvWalletStore {
         _ record: OpenCsvVerdictRecord,
         blob: Data?,
         attachmentId: Attachment.IDType,
+        messageUniqueId: String? = nil,
         tx: DBWriteTransaction,
     ) {
         let verdictKey: String
@@ -785,6 +787,12 @@ public struct OpenCsvWalletStore {
             let presentationKey = Self.canonicalPresentationAttachmentPrefix + consignmentId
             if keyValueStore.getString(presentationKey, transaction: tx) == nil {
                 keyValueStore.setString("\(attachmentId)", key: presentationKey, transaction: tx)
+            }
+            if let messageUniqueId {
+                let messageKey = Self.canonicalPresentationMessagePrefix + consignmentId
+                if keyValueStore.getString(messageKey, transaction: tx) == nil {
+                    keyValueStore.setString(messageUniqueId, key: messageKey, transaction: tx)
+                }
             }
         } else {
             // Compatibility only for prototype records produced before Rust
@@ -914,6 +922,7 @@ public struct OpenCsvWalletStore {
     /// ordinary files, but cannot create a second verified payment bubble.
     public func isCanonicalPresentationAttachment(
         attachmentId: Attachment.IDType,
+        messageUniqueId: String? = nil,
         tx: DBReadTransaction,
     ) -> Bool {
         guard
@@ -924,10 +933,35 @@ public struct OpenCsvWalletStore {
         else {
             return true
         }
+        if
+            let canonicalMessageId = keyValueStore.getString(
+                Self.canonicalPresentationMessagePrefix + consignmentId,
+                transaction: tx,
+            )
+        {
+            return messageUniqueId == canonicalMessageId
+        }
         return keyValueStore.getString(
             Self.canonicalPresentationAttachmentPrefix + consignmentId,
             transaction: tx,
         ) == "\(attachmentId)"
+    }
+
+    /// True once a Signal message has been committed for this logical
+    /// consignment. Delivery uses this as its final transaction-local guard:
+    /// a crash may leave several retry records, but it must never create a
+    /// second payment message for the same canonical protocol object.
+    public func hasCanonicalPresentation(
+        consignmentId: String,
+        tx: DBReadTransaction,
+    ) -> Bool {
+        keyValueStore.getString(
+            Self.canonicalPresentationAttachmentPrefix + consignmentId,
+            transaction: tx,
+        ) != nil || keyValueStore.getString(
+            Self.canonicalPresentationMessagePrefix + consignmentId,
+            transaction: tx,
+        ) != nil
     }
 
     public func blobForAttachment(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> Data? {
@@ -1229,7 +1263,20 @@ public struct OpenCsvWalletStore {
         }
     }
 
-    public func addPendingDelivery(_ delivery: PendingDelivery, tx: DBWriteTransaction) throws {
+    /// Insert a delivery exactly once for a Rust operation. Actor reentrancy
+    /// and process relaunch may both reconstruct the same ready consignment;
+    /// its operation id is the durable idempotency key, independent of a
+    /// transient Swift UUID.
+    public func addPendingDelivery(
+        _ delivery: PendingDelivery,
+        tx: DBWriteTransaction,
+    ) throws {
+        if
+            let operationId = delivery.operationId,
+            pendingDeliveries(tx: tx).contains(where: { $0.operationId == operationId })
+        {
+            return
+        }
         try keyValueStore.setCodable(delivery, key: Self.pendingDeliveryKey(delivery.id), transaction: tx)
         var ids = pendingDeliveryIds(tx: tx)
         if !ids.contains(delivery.id) {

@@ -1931,6 +1931,7 @@ private extension CVComponentState.Builder {
                     verdict?.isVerified == true,
                     !OpenCsvPayments.shared.isCanonicalPresentationAttachment(
                         attachmentId: referencedAttachment.attachment.id,
+                        messageUniqueId: message.uniqueId,
                         tx: transaction,
                     )
                 {

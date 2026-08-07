@@ -157,7 +157,21 @@ enum OpenCsvDelivery {
         let validatedBody = try await DependenciesBridge.shared.attachmentContentValidator
             .prepareOversizeTextIfNeeded(MessageBody(text: delivery.body, ranges: .empty))
 
-        let deliveredMessageId = try await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in
+        let deliveryCommit = try await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in
+            if
+                let consignmentId = delivery.consignmentId,
+                OpenCsvPayments.shared.hasCanonicalPresentation(
+                    consignmentId: consignmentId,
+                    tx: tx,
+                )
+            {
+                // Signal already committed the logical payment. This can
+                // happen when the app dies between message insertion and the
+                // Rust acknowledgement. Consume the retry record without
+                // inserting or enqueueing a second chat message.
+                try OpenCsvPayments.shared.clearDelivered(id: delivery.id, tx: tx)
+                return (messageId: nil as String?, inserted: false)
+            }
             guard let thread = TSThread.anyFetch(uniqueId: delivery.threadUniqueId, transaction: tx) else {
                 throw OpenCsvDeliveryError.threadMissing
             }
@@ -177,16 +191,21 @@ enum OpenCsvDelivery {
             let prepared = try unprepared.prepare(tx: tx)
             let messageId = prepared.messageForIntentDonation(tx: tx)?.uniqueId
             if let attachmentId = prepared.attachmentIdsForUpload(tx: tx).first {
-                OpenCsvPayments.shared.setOutgoingVerdict(verdict, attachmentId: attachmentId, tx: tx)
+                OpenCsvPayments.shared.setOutgoingVerdict(
+                    verdict,
+                    attachmentId: attachmentId,
+                    messageUniqueId: messageId,
+                    tx: tx,
+                )
             } else {
                 owsFailDebug("OpenCSV consignment message has no attachment to key its verdict by")
             }
             _ = ThreadUtil.enqueueMessagePromise(message: prepared, transaction: tx)
             try OpenCsvPayments.shared.clearDelivered(id: delivery.id, tx: tx)
-            return messageId
+            return (messageId: messageId, inserted: true)
         }
         await OpenCsvPayments.shared.acknowledgeDelivered(delivery)
-        if let deliveredMessageId {
+        if let deliveredMessageId = deliveryCommit.messageId {
             OpenCsvPayments.shared.notifyOutgoingPaymentDelivered(
                 threadUniqueId: delivery.threadUniqueId,
                 messageUniqueId: deliveredMessageId,
@@ -195,7 +214,11 @@ enum OpenCsvDelivery {
                 assetId: delivery.assetId,
             )
         }
-        Logger.info("delivered OpenCSV consignment \(delivery.id)")
+        if deliveryCommit.inserted {
+            Logger.info("delivered OpenCSV consignment \(delivery.id)")
+        } else {
+            Logger.info("suppressed duplicate OpenCSV delivery \(delivery.id)")
+        }
     }
 
     /// Re-enqueue every consignment that is anchored but undelivered.

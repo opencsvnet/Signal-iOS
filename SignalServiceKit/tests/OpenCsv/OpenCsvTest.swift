@@ -828,8 +828,20 @@ final class OpenCsvWalletStoreTest {
             date: Date(timeIntervalSince1970: 0),
         )
         db.write { tx in
-            store.setVerdict(record, blob: Data([1]), attachmentId: 42, tx: tx)
-            store.setVerdict(record, blob: Data([2]), attachmentId: 43, tx: tx)
+            store.setVerdict(
+                record,
+                blob: Data([1]),
+                attachmentId: 42,
+                messageUniqueId: "message-first",
+                tx: tx,
+            )
+            store.setVerdict(
+                record,
+                blob: Data([2]),
+                attachmentId: 43,
+                messageUniqueId: "message-retry",
+                tx: tx,
+            )
         }
         db.read { tx in
             #expect(store.verdict(attachmentId: 42, tx: tx) == record)
@@ -837,8 +849,25 @@ final class OpenCsvWalletStoreTest {
             #expect(store.replayBlobs(tx: tx).map(\.entry) == ["c:\(canonicalId)"])
             #expect(store.blobForAttachment(attachmentId: 42, tx: tx) == Data([2]))
             #expect(store.blobForAttachment(attachmentId: 43, tx: tx) == Data([2]))
-            #expect(store.isCanonicalPresentationAttachment(attachmentId: 42, tx: tx))
-            #expect(!store.isCanonicalPresentationAttachment(attachmentId: 43, tx: tx))
+            #expect(store.isCanonicalPresentationAttachment(
+                attachmentId: 42,
+                messageUniqueId: "message-first",
+                tx: tx,
+            ))
+            #expect(!store.isCanonicalPresentationAttachment(
+                attachmentId: 43,
+                messageUniqueId: "message-retry",
+                tx: tx,
+            ))
+            // Signal may deduplicate two byte-identical transports to one
+            // attachment row. Message identity still admits only the first.
+            #expect(!store.isCanonicalPresentationAttachment(
+                attachmentId: 42,
+                messageUniqueId: "message-retry",
+                tx: tx,
+            ))
+            #expect(store.hasCanonicalPresentation(consignmentId: canonicalId, tx: tx))
+            #expect(!store.hasCanonicalPresentation(consignmentId: "not-present", tx: tx))
         }
     }
 
@@ -980,6 +1009,45 @@ final class OpenCsvWalletStoreTest {
             let pendingOperations = try! store.pendingAccountOperations(tx: tx)
             #expect(store.pendingDeliveries(tx: tx).isEmpty)
             #expect(pendingOperations.isEmpty)
+        }
+    }
+
+    @Test
+    func accountDeliveryIsIdempotentByOperationIdentity() throws {
+        let first = OpenCsvWalletStore.PendingDelivery(
+            id: "delivery-first",
+            threadUniqueId: "thread-1",
+            body: "OpenCSV consignment",
+            replayEntry: "o:1",
+            amount: 25,
+            currency: "USD",
+            assetId: "ab",
+            operationKind: "transfer",
+            operationId: "operation-1",
+            deliveryNonce: "nonce-1",
+            consignmentId: "consignment-1",
+            createdAt: Date(timeIntervalSince1970: 0),
+        )
+        let reconstructed = OpenCsvWalletStore.PendingDelivery(
+            id: "delivery-after-relaunch",
+            threadUniqueId: "thread-1",
+            body: "OpenCSV consignment",
+            replayEntry: "o:2",
+            amount: 25,
+            currency: "USD",
+            assetId: "ab",
+            operationKind: "transfer",
+            operationId: "operation-1",
+            deliveryNonce: "nonce-1",
+            consignmentId: "consignment-1",
+            createdAt: Date(timeIntervalSince1970: 1),
+        )
+        try db.write { tx in
+            try store.addPendingDelivery(first, tx: tx)
+            try store.addPendingDelivery(reconstructed, tx: tx)
+        }
+        db.read { tx in
+            #expect(store.pendingDeliveries(tx: tx) == [first])
         }
     }
 
