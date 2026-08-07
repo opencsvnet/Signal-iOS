@@ -1927,11 +1927,12 @@ private extension CVComponentState.Builder {
                     self.genericAttachment = .init(attachment: cvAttachment)
                     return
                 }
-                if verdict?.isVerified == true,
-                   !OpenCsvPayments.shared.isCanonicalPresentationAttachment(
-                       attachmentId: referencedAttachment.attachment.id,
-                       tx: transaction,
-                   )
+                if
+                    verdict?.isVerified == true,
+                    !OpenCsvPayments.shared.isCanonicalPresentationAttachment(
+                        attachmentId: referencedAttachment.attachment.id,
+                        tx: transaction,
+                    )
                 {
                     // Preserve the retry bytes as a normal file while
                     // rendering exactly one logical payment bubble for the

@@ -248,9 +248,11 @@ public class CVComponentMessage: CVComponentBase, CVRootComponent {
         }
         // Payments can have body text too; only render a vanilla body text if a payment
         // isn't present.
-        if let bodyTextState = itemViewState.bodyTextState,
-           componentState.paymentAttachment == nil,
-           componentState.openCsvPayment == nil {
+        if
+            let bodyTextState = itemViewState.bodyTextState,
+            componentState.paymentAttachment == nil,
+            componentState.openCsvPayment == nil
+        {
             bodyText = CVComponentBodyText(itemModel: itemModel, bodyTextState: bodyTextState)
         }
         if let contactShareState = componentState.contactShare {

@@ -244,8 +244,9 @@ public class ChatListViewController: OWSViewController, HomeTabViewController {
         appReadiness.setUIIsReady()
 
 #if DEBUG && targetEnvironment(simulator)
-        if !hasHandledOpenCsvSimulatorLaunch,
-           ProcessInfo.processInfo.environment["OPENCSV_SIMULATOR_LAUNCH"] == "wallet"
+        if
+            !hasHandledOpenCsvSimulatorLaunch,
+            ProcessInfo.processInfo.environment["OPENCSV_SIMULATOR_LAUNCH"] == "wallet"
         {
             hasHandledOpenCsvSimulatorLaunch = true
             DispatchQueue.main.async { [weak self] in
