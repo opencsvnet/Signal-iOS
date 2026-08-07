@@ -144,3 +144,30 @@ set remains empty and Signal cannot present or transfer a production USD asset.
   and caused Signal to append one terminal failure after the nonspendable
   intent. Signal now preserves the exact member rejection instead of replacing
   it with the generic `batch_cancelled` label.
+- Carol then authored one explicit two-recipient batch: 5 Test USD to Bob and
+  5 Test USD to Note to Self. Operations
+  `afcaa691e4a0adb3cfd24a6f986400d0` and
+  `bc1850940e9e8f2c3af747aa60852725` share Bitcoin transaction
+  `771aefc62e38dae80b4fdeec5ebb183c5c4c53c7902b559991aa55679103c4c3`.
+  Three ordinary Bitcoin peers accepted complete writes; mempool.space and
+  Blockstream returned the same raw bytes in 271 ms and 354 ms. Forced exits
+  after proof generation and after broadcast resumed the same batch,
+  operation ids, and txid without another spend or duplicate attachment.
+- The first receive attempt uncovered two independent verifier integration
+  errors. Rust was authenticating the full batching-v2 envelope but trying to
+  prove that envelope as a legacy single-transfer statement, producing
+  `InvalidProof`; after exact-member projection, Signal still ran ownership
+  preflight through its retired legacy wallet and produced `NoOwnedOutput` for
+  the correct account-wallet recipient. The accepted repair projects only the
+  authenticated batch member in Rust, retains the full batch envelope in the
+  exported verified snapshot, and uses the same Rust account identity for
+  preflight and crediting. Stored verdict versions allow each known-bad verdict
+  to be retried once without weakening current definitive rejections.
+- At signet block 316694 the corrected in-place builds rendered Bob's exact
+  batch member as `+5 Test USD` fully verified and Carol's self member as
+  verified. Bob showed 44 Test USD and Carol 131 Test USD. A second app relaunch
+  left their account databases at 7 and 11 consignments respectively, proving
+  that attachment replay did not create another credit. The transaction was
+  settled before this verifier correction landed, so this receipt proves the
+  real shared transaction, crash recovery, and settled recipient verification;
+  the earlier 1 Test USD parent/child run remains the zero-confirmation receipt.

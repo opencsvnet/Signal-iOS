@@ -502,7 +502,7 @@ public actor OpenCsvPayments {
         guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
             throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
         }
-        let wallet = try await ensureWallet()
+        let account = try await ensureAccountWallet()
         let (peers, indexers) = db.read { tx in
             let network = self.store.network(tx: tx)
             return (
@@ -524,14 +524,14 @@ public actor OpenCsvPayments {
             if !scanSyncedThisLaunch {
                 await scanSyncIfNeeded()
             }
-            var scanned = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: blob)
+            var scanned = try OpenCsvChainView.scanVerify(account: account, consignment: blob)
             if !scanned.isVerified, Self.isChainLagReason(scanned.reason) {
                 // A payment message routinely beats the chain view by
                 // seconds: the anchor exists, the index just hasn't seen
                 // it. One fresh (resumed, cheap) sync and retry before
                 // any verdict is allowed to exist.
                 await scanSyncIfNeeded()
-                scanned = try OpenCsvChainView.scanVerify(wallet: wallet, consignment: blob)
+                scanned = try OpenCsvChainView.scanVerify(account: account, consignment: blob)
             }
             guard scanned.isVerified else {
                 if Self.isChainLagReason(scanned.reason) {
@@ -555,7 +555,7 @@ public actor OpenCsvPayments {
 
         case .crossCheck:
             let crossChecked = try OpenCsvChainView.crossCheck(
-                wallet: wallet,
+                account: account,
                 backends: indexers.map { .http(url: $0) },
                 consignment: blob,
                 requiredConfirmations: Self.requiredConfirmations,
@@ -599,7 +599,6 @@ public actor OpenCsvPayments {
             guard plan == .selfScan else {
                 throw OpenCsvPaymentsError.chainViewLagging(reason: verdict.reason ?? "?")
             }
-            let account = try await ensureAccountWallet()
             let network = db.read { tx in self.store.network(tx: tx) }
             if network == "signet" {
                 let inspection = try account.inspect(blob: blob)
@@ -664,6 +663,18 @@ public actor OpenCsvPayments {
         return reason.contains("AnchorNotFound") || reason.contains("InsufficientConfirmations")
     }
 
+    /// Retry only verdicts produced before a specific verifier correction.
+    /// Version 2 projected batching-v2 members into their proof statements;
+    /// version 3 moved chain-view ownership checks from the retired legacy
+    /// wallet to the unified account wallet. A current bad proof or genuinely
+    /// third-party output remains definitive.
+    static func isPreVerifierCorrection(_ verdict: OpenCsvVerdictRecord) -> Bool {
+        guard !verdict.isVerified else { return false }
+        let version = verdict.verificationVersion ?? 0
+        return (version < 2 && verdict.reason?.contains("InvalidProof") == true)
+            || (version < 3 && verdict.reason?.contains("NoOwnedOutput") == true)
+    }
+
     /// Nil has never been decided. A historical chain-lag rejection was not a
     /// decision at all, so it must also be retried and may be overwritten by
     /// the later verified verdict. Verified and definitive rejected records
@@ -672,6 +683,7 @@ public actor OpenCsvPayments {
         guard let verdict else { return true }
         return verdict.finality == "unconfirmed"
             || (!verdict.isVerified && isChainLagReason(verdict.reason))
+            || isPreVerifierCorrection(verdict)
     }
 
     /// Verify a consignment blob against the current anchor snapshot,

@@ -1935,10 +1935,11 @@ struct OpenCsvChainViewTest {
         #expect(!OpenCsvPayments.isChainLagReason(nil))
     }
 
-    /// Repairs the exact live failure: old builds persisted AnchorNotFound,
-    /// then skipped that attachment forever even after six confirmations.
+    /// Repairs exact live failures without turning every definitive rejection
+    /// into an unbounded replay: lagging views and verdicts produced before a
+    /// known verifier correction are retried, current bad proofs are not.
     @Test
-    func onlyMissingOrChainLagVerdictsAreRetried() {
+    func onlyMissingLagOrPreProjectionVerdictsAreRetried() throws {
         func record(status: String, reason: String?) -> OpenCsvVerdictRecord {
             OpenCsvVerdictRecord(
                 verdict: OpenCsvVerdict(
@@ -1966,8 +1967,30 @@ struct OpenCsvChainViewTest {
             record(status: "rejected", reason: "NullifierConflict"),
         ))
         #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
+            record(status: "rejected", reason: "InvalidProof"),
+        ))
+        #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
+            record(status: "rejected", reason: "NoOwnedOutput"),
+        ))
+        #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
             record(status: "verified", reason: nil),
         ))
+        let preProjectionInvalidProof = try JSONDecoder().decode(
+            OpenCsvVerdictRecord.self,
+            from: Data(
+                #"{"status":"rejected","reason":"InvalidProof","amount":0,"direction":"thirdParty","verifiedAt":0}"#.utf8,
+            ),
+        )
+        #expect(preProjectionInvalidProof.verificationVersion == nil)
+        #expect(OpenCsvPayments.shouldRetryStoredVerdict(preProjectionInvalidProof))
+        let preAccountOwnershipCheck = try JSONDecoder().decode(
+            OpenCsvVerdictRecord.self,
+            from: Data(
+                #"{"verificationVersion":2,"status":"rejected","reason":"NoOwnedOutput","amount":0,"direction":"thirdParty","verifiedAt":0}"#.utf8,
+            ),
+        )
+        #expect(preAccountOwnershipCheck.verificationVersion == 2)
+        #expect(OpenCsvPayments.shouldRetryStoredVerdict(preAccountOwnershipCheck))
         let provisional = OpenCsvVerdictRecord(
             verdict: OpenCsvVerdict(
                 status: "verified",

@@ -105,6 +105,13 @@ public enum OpenCsvBackgroundWorkPolicy {
 /// A stored verification verdict for one consignment attachment, keyed by
 /// attachment id. What the conversation cell renders.
 public struct OpenCsvVerdictRecord: Codable, Equatable {
+    static let currentVerificationVersion: UInt = 3
+
+    /// Receiver-verification semantics that produced this verdict. Missing
+    /// on historical records, which lets narrowly scoped migrations retry a
+    /// verdict made by a verifier bug without replaying all definitive
+    /// rejections forever.
+    public let verificationVersion: UInt?
     public let status: String
     public let reason: String?
     /// The amount to display: credited for `incoming`, sent for `outgoing`.
@@ -144,6 +151,7 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
     /// `thirdParty`, not a zero-value credit.
     public init(verdict: OpenCsvVerdict, date: Date) {
         let credits = verdict.credits ?? []
+        self.verificationVersion = Self.currentVerificationVersion
         self.status = verdict.status
         self.reason = verdict.reason
         self.amount = credits.reduce(0) { $0 + $1.amount }
@@ -168,6 +176,7 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         consignmentId: String? = nil,
         date: Date,
     ) {
+        self.verificationVersion = Self.currentVerificationVersion
         self.status = "verified"
         self.reason = nil
         self.amount = sentAmount
@@ -192,6 +201,7 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         consignmentId: String? = nil,
         date: Date,
     ) {
+        self.verificationVersion = Self.currentVerificationVersion
         self.status = "verified"
         self.reason = nil
         self.amount = mintedAmount

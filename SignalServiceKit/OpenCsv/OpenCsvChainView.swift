@@ -275,6 +275,35 @@ public enum OpenCsvChainView {
         return try decoder.decode(CrossCheckVerdict.self, from: Data(raw.utf8))
     }
 
+    /// Account-wallet form of `crossCheck`. Ownership remains inside Rust;
+    /// using the legacy wallet here would reject valid account outputs as
+    /// `NoOwnedOutput` before the unified account crediting path can run.
+    public static func crossCheck(
+        account: OpenCsvAccountWallet,
+        backends: [Backend],
+        consignment: Data,
+        requiredConfirmations: UInt64,
+    ) throws -> CrossCheckVerdict {
+        struct Request: Codable {
+            let backends: [Backend]
+            let consignmentBase64: String
+            let requiredConfirmations: UInt64
+        }
+        let request = Request(
+            backends: backends,
+            consignmentBase64: consignment.base64EncodedString(),
+            requiredConfirmations: requiredConfirmations,
+        )
+        let raw = try encode(request).withCString { pointer -> String in
+            guard let out = opencsv_account_cross_check(account.rawHandle, pointer) else {
+                throw OpenCsvClientError.ffi("account cross-check returned null")
+            }
+            defer { opencsv_string_free(out) }
+            return String(cString: out)
+        }
+        return try decoder.decode(CrossCheckVerdict.self, from: Data(raw.utf8))
+    }
+
     // MARK: - Exclusion (self-scan)
 
     /// One filter walk of the chain for the protocol marker output,
@@ -399,6 +428,26 @@ public enum OpenCsvChainView {
         let raw = try consignment.hexadecimalString.withCString { pointer -> String in
             guard let out = opencsv_scan_verify(wallet.rawHandle, pointer) else {
                 throw OpenCsvClientError.ffi("scan verify returned null")
+            }
+            defer { opencsv_string_free(out) }
+            return String(cString: out)
+        }
+        if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
+            throw OpenCsvClientError.ffi(failure.error)
+        }
+        return try decoder.decode(ScanVerdict.self, from: Data(raw.utf8))
+    }
+
+    /// Account-wallet form of `scanVerify`; this is the product path. The
+    /// local index remains read-only while Rust checks ownership against the
+    /// same account that will receive and persist the credit.
+    public static func scanVerify(
+        account: OpenCsvAccountWallet,
+        consignment: Data,
+    ) throws -> ScanVerdict {
+        let raw = try consignment.hexadecimalString.withCString { pointer -> String in
+            guard let out = opencsv_account_scan_verify(account.rawHandle, pointer) else {
+                throw OpenCsvClientError.ffi("account scan verify returned null")
             }
             defer { opencsv_string_free(out) }
             return String(cString: out)
