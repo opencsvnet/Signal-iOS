@@ -1858,11 +1858,9 @@ struct OpenCsvChainViewTest {
     func freshSignetWalletUsesReviewedPeersWithoutSingleIndexerDowngrade() {
         let defaults = OpenCsvPayments.effectiveSpvPeers(configured: [], network: "signet")
         #expect(defaults == [
-            "15.204.114.107:38333",
-            "206.168.190.147:38333",
-            "172.233.20.188:38333",
-            "116.202.84.94:38333",
-            "208.68.4.50:38333",
+            "176.9.8.81:38333",
+            "180.189.55.15:38333",
+            "185.209.178.165:38333",
         ])
         #expect(OpenCsvPayments.chainViewPlan(peerCount: defaults.count, indexerCount: 1) == .selfScan)
 

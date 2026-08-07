@@ -114,3 +114,33 @@ Production deployment will start with a separately reviewed USD instrument,
 issuer manifest, account database, backup namespace, and Bitcoin mainnet fee
 tree. Until that explicit production setup exists, the reviewed mainnet issuer
 set remains empty and Signal cannot present or transfer a production USD asset.
+
+## 2026-08-07 simulator acceptance journal
+
+- A fresh Bob-to-Carol send proved the one-of-two pinned observer policy in the
+  real Signal attachment path. Carol accepted the exact unconfirmed parent and
+  rendered `+1 Test USD · available before confirmation · replacement risk`;
+  neither a socket write nor an explorer summary was treated as acceptance.
+- Carol's first attempt to forward that dollar failed closed as
+  `stale_chain_state` before proving. The cause was separate from API
+  observation: the old static signet peers were reachable over TCP but no
+  longer completed the required two-peer compact-filter session.
+- The replacement defaults were resolved from the public signet DNS seed and
+  qualified with the OpenCSV readiness probe. `176.9.8.81:38333` paired with
+  both `180.189.55.15:38333` and `185.209.178.165:38333`; each pair completed
+  independent headers/filter-header synchronization at tip 316659. Nodes that
+  merely accepted TCP or omitted compact-filter service bits were rejected.
+- A simulator build made with `CODE_SIGNING_ALLOWED=NO` was not a valid
+  in-place Signal upgrade: CoreSimulator replaced its app-group containers.
+  That failed procedure is forbidden. Simulator and physical-device upgrades
+  must use the signed Xcode product, verify the expected application-group
+  entitlement, and hash the Signal/OpenCSV databases before and after install.
+  The disposable Bob/Carol state is restored from the read-only APFS snapshot
+  before acceptance resumes.
+- That snapshot exposed a confirmed-protocol-spend rollback independently of
+  the observer outage. The corrected Rust bridge rejected Bob operation
+  `a05bed708749b0559aba3a7cf27a0cf3` as `stale_chain_state` before proving,
+  cancelled its one-member batch, wrote no pending proof, signature, or txid,
+  and caused Signal to append one terminal failure after the nonspendable
+  intent. Signal now preserves the exact member rejection instead of replacing
+  it with the generic `batch_cancelled` label.

@@ -1750,13 +1750,19 @@ public actor OpenCsvPayments {
                 } catch OpenCsvPaymentsError.consignmentNotReady {
                     Logger.info("OpenCSV batch \(batchLocalId) is durable and awaiting observation")
                 } catch {
-                    let state = try? account.sendBatchStatus(batchLocalId).state
-                    if state == "cancelled" {
+                    let terminalBatch = try? account.sendBatchStatus(batchLocalId)
+                    if terminalBatch?.state == "cancelled" {
+                        let rejectionByOperation = Dictionary(
+                            uniqueKeysWithValues: terminalBatch?.operations.compactMap { operation in
+                                operation.rejectionReason.map { (operation.operationId, $0) }
+                            } ?? [],
+                        )
                         try? await db.awaitableWrite { tx in
                             for operation in pending {
                                 try self.store.markPendingAccountOperationFailed(
                                     operationId: operation.operationId,
-                                    reason: "batch_cancelled",
+                                    reason: rejectionByOperation[operation.operationId]
+                                        ?? "batch_cancelled",
                                     tx: tx,
                                 )
                             }
@@ -2343,11 +2349,13 @@ public actor OpenCsvPayments {
     // MARK: - Wallet lifecycle
 
     private static let defaultSignetPeers = [
-        "15.204.114.107:38333",
-        "206.168.190.147:38333",
-        "172.233.20.188:38333",
-        "116.202.84.94:38333",
-        "208.68.4.50:38333",
+        // Qualified against the public signet DNS seed with the OpenCSV
+        // headers+BIP158 readiness probe. Ordinary reachable signet nodes
+        // are not enough: each default must advertise compact filters and
+        // complete an independently validated header/filter-header sync.
+        "176.9.8.81:38333",
+        "180.189.55.15:38333",
+        "185.209.178.165:38333",
     ]
 
     /// Signet ships with the same reviewed phone-owned chain view used for
