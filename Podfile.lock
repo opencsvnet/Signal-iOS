@@ -58,7 +58,7 @@ DEPENDENCIES:
   - libwebp
   - lottie-ios
   - MobileCoin/CoreHTTP (from `https://github.com/mobilecoinofficial/MobileCoin-Swift`, tag `v6.0.3`)
-  - OpenCsv (from `https://github.com/opencsvnet/opencsv-rs.git`, commit `3295cd5896aa2615c992faf45a9075ad138094ca`)
+  - OpenCsv (from `https://github.com/opencsvnet/opencsv-rs.git`, commit `96da18366e2116ba9eb091db40367d061acf8c18`)
   - PureLayout
   - SDWebImage
   - SDWebImageWebPCoder
@@ -96,7 +96,7 @@ EXTERNAL SOURCES:
     :git: https://github.com/mobilecoinofficial/MobileCoin-Swift
     :tag: v6.0.3
   OpenCsv:
-    :commit: 3295cd5896aa2615c992faf45a9075ad138094ca
+    :commit: 96da18366e2116ba9eb091db40367d061acf8c18
     :git: https://github.com/opencsvnet/opencsv-rs.git
   SignalRingRTC:
     :git: https://github.com/signalapp/ringrtc
@@ -123,7 +123,7 @@ CHECKOUT OPTIONS:
     :git: https://github.com/mobilecoinofficial/MobileCoin-Swift
     :tag: v6.0.3
   OpenCsv:
-    :commit: 3295cd5896aa2615c992faf45a9075ad138094ca
+    :commit: 96da18366e2116ba9eb091db40367d061acf8c18
     :git: https://github.com/opencsvnet/opencsv-rs.git
   SignalRingRTC:
     :git: https://github.com/signalapp/ringrtc
@@ -133,11 +133,11 @@ CHECKOUT OPTIONS:
     :tag: v4.6.1-f_barrierfsync
 
 SPEC CHECKSUMS:
-  blurhash: 4b3b2b8909cf41ab59fa349788654b8387284ff4
+  blurhash: f588a9d659f4c742a325bbbbd438d1ef3c34af19
   BonMot: fb2b6a2209cb3149aca37b7131d49c051c04ae86
   CocoaLumberjack: 543c79c114dadc3b1aba95641d8738b06b05b646
   GRDB.swift: 1395cb3556df6b16ed69dfc74c3886abc75d2825
-  LibMobileCoin: 4c76066a0aa8c614099da08e38562fd7b4b2d246
+  LibMobileCoin: 8503f567fa32184a5be7bc038fbd727747dd9991
   libPhoneNumber-iOS: 1a34106b49dc6e12a7f37eb9aee7c64011509547
   LibSignalClient: a88d367aaa8702f5691bb1fcf2c9cb35f0e5fa36
   libwebp: 02b23773aedb6ff1fd38cec7a77b81414c6842a8
@@ -152,6 +152,6 @@ SPEC CHECKSUMS:
   SQLCipher: ff2f045b20d675a73a70f7329395ddd4a2580063
   SwiftProtobuf: 9e106a71456f4d3f6a3b0c8fd87ef0be085efc38
 
-PODFILE CHECKSUM: fc9f3da0a44343453d8de41facd5262706d8fd37
+PODFILE CHECKSUM: 95bf14f70e9a25578af926f579740bcd175b64d9
 
-COCOAPODS: 1.17.0
+COCOAPODS: 1.15.2

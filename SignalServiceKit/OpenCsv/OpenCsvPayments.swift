@@ -2288,8 +2288,11 @@ public actor OpenCsvPayments {
     // MARK: - Wallet lifecycle
 
     private static let defaultSignetPeers = [
-        "172.233.20.188:38333",
         "15.204.114.107:38333",
+        "206.168.190.147:38333",
+        "172.233.20.188:38333",
+        "116.202.84.94:38333",
+        "208.68.4.50:38333",
     ]
 
     /// Signet ships with the same reviewed phone-owned chain view used for
