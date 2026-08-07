@@ -436,13 +436,6 @@ class OpenCsvSendPaymentSheet: OWSViewController {
         guard let ownKey = walletOwnerKey else { return }
         let picker = OpenCsvBatchRecipientPickerViewController { [weak self] selectedThread in
             guard let self else { return }
-            guard let found = Self.recipientAnnouncement(in: selectedThread, ownKey: ownKey) else {
-                self.showError(OWSLocalizedString(
-                    "OPENCSV_SEND_NO_RECIPIENT_KEY",
-                    comment: "Shown when nobody in this chat has shared a payment key yet.",
-                ))
-                return
-            }
             guard
                 selectedThread.uniqueId != self.thread.uniqueId,
                 !self.batchDrafts.contains(where: { $0.thread.uniqueId == selectedThread.uniqueId })
@@ -453,10 +446,28 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 ))
                 return
             }
+            let recipient: String
+            let name: String
+            if let contactThread = selectedThread as? TSContactThread, contactThread.isNoteToSelf {
+                // Note to Self is the one recipient that must not depend on a
+                // key announcement from another Signal participant. The
+                // wallet's own Rust-derived owner key is the exact recipient.
+                recipient = ownKey
+                name = MessageStrings.noteToSelf
+            } else if let found = Self.recipientAnnouncement(in: selectedThread, ownKey: ownKey) {
+                recipient = found.key
+                name = found.announcer
+            } else {
+                self.showError(OWSLocalizedString(
+                    "OPENCSV_SEND_NO_RECIPIENT_KEY",
+                    comment: "Shown when nobody in this chat has shared a payment key yet.",
+                ))
+                return
+            }
             self.promptForBatchAmount(
                 thread: selectedThread,
-                recipient: found.key,
-                name: found.announcer,
+                recipient: recipient,
+                name: name,
             )
         }
         navigationController?.pushViewController(picker, animated: true)
@@ -748,7 +759,7 @@ private final class OpenCsvBatchRecipientPickerViewController: RecipientPickerCo
         )
         view.backgroundColor = .Signal.groupedBackground
         recipientPicker.allowsAddByAddress = false
-        recipientPicker.shouldHideLocalRecipient = true
+        recipientPicker.shouldHideLocalRecipient = false
         recipientPicker.groupsToShow = .noGroups
         recipientPicker.delegate = self
         addRecipientPicker()
@@ -759,7 +770,7 @@ private final class OpenCsvBatchRecipientPickerViewController: RecipientPickerCo
         selectionStyleForRecipient recipient: PickedRecipient,
         transaction: DBReadTransaction,
     ) -> UITableViewCell.SelectionStyle {
-        guard let address = recipient.address, address.isValid, !address.isLocalAddress else {
+        guard let address = recipient.address, address.isValid else {
             return .none
         }
         return .default
@@ -769,10 +780,14 @@ private final class OpenCsvBatchRecipientPickerViewController: RecipientPickerCo
         _ recipientPickerViewController: RecipientPickerViewController,
         didSelectRecipient recipient: PickedRecipient,
     ) {
-        guard let address = recipient.address, address.isValid, !address.isLocalAddress else { return }
-        let thread = SSKEnvironment.shared.databaseStorageRef.write {
-            TSContactThread.getOrCreateThread(withContactAddress: address, transaction: $0)
+        guard let address = recipient.address, address.isValid else { return }
+        let thread: TSContactThread? = SSKEnvironment.shared.databaseStorageRef.write {
+            if address.isLocalAddress {
+                return TSContactThread.getOrCreateLocalThread(transaction: $0)
+            }
+            return TSContactThread.getOrCreateThread(withContactAddress: address, transaction: $0)
         }
+        guard let thread else { return }
         guard let navigationController else {
             completion(thread)
             return
