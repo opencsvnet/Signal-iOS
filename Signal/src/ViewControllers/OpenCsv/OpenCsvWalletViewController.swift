@@ -388,7 +388,7 @@ class OpenCsvWalletViewController: OWSViewController {
         observationExplanation.font = .dynamicTypeFootnote
         observationExplanation.textColor = Theme.secondaryTextAndIconColor
         observationExplanation.numberOfLines = 0
-        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Signal queries both pinned APIs; one exact-byte result is enough to forward unconfirmed Test USD. Cryptographic and transaction checks always remain mandatory."
+        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Every check marked Require must return the exact transaction bytes under its pinned certificate profile. Fresh signet wallets require both pinned APIs. Cryptographic and transaction checks always remain mandatory."
         advancedStack.addArrangedSubview(observationExplanation)
         advancedStack.addArrangedSubview(observationStack)
         observationReceiptLabel.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -616,7 +616,7 @@ class OpenCsvWalletViewController: OWSViewController {
             $0.kind == .rawTransactionApi && $0.mode == .require
         }.count
         observationQuorumLabel.isHidden = rawRequiredCount == 0
-        observationQuorumLabel.text = "Availability quorum: \(requiredRawObserverQuorum) of \(rawRequiredCount) pinned APIs"
+        observationQuorumLabel.text = "Required pinned APIs: \(requiredRawObserverQuorum) of \(rawRequiredCount)"
         for check in checks {
             observationModeControls[check.id]?.selectedSegmentIndex = switch check.mode {
             case .off: 0

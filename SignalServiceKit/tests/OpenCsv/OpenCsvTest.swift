@@ -137,6 +137,51 @@ struct OpenCsvPinnedObserverProfileTest {
         #expect(Set(policy[1].chainFingerprintsSha256) == blockstream.chainPins)
     }
 
+    @Test
+    func requiredObserverCountTracksEveryRequireMode() {
+        let signet = OpenCsvAccountConfig(
+            network: "signet",
+            esploraUrl: "https://mempool.space/signet/api",
+            peers: [],
+            verificationPeers: [],
+            role: .primary,
+            backupVerified: false,
+        )
+        #expect(signet.requiredRawObserverQuorum == 2)
+
+        let oneRequired = OpenCsvObservationCheck.defaults(for: "signet").map { check in
+            OpenCsvObservationCheck(
+                id: check.id,
+                kind: check.kind,
+                endpoint: check.endpoint,
+                mode: check.id == "mempool_space_signet" ? .observe : check.mode,
+                pinProfile: check.pinProfile,
+                chainFingerprintsSha256: check.chainFingerprintsSha256,
+                maxAgeSeconds: check.maxAgeSeconds,
+            )
+        }
+        let overridden = OpenCsvAccountConfig(
+            network: "signet",
+            esploraUrl: "https://mempool.space/signet/api",
+            peers: [],
+            verificationPeers: [],
+            role: .primary,
+            backupVerified: false,
+            observationChecks: oneRequired,
+        )
+        #expect(overridden.requiredRawObserverQuorum == 1)
+
+        let regtest = OpenCsvAccountConfig(
+            network: "regtest",
+            esploraUrl: "http://127.0.0.1:3002",
+            peers: [],
+            verificationPeers: [],
+            role: .primary,
+            backupVerified: false,
+        )
+        #expect(regtest.requiredRawObserverQuorum == 0)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCSV_PINNED_OBSERVER_TXID"] != nil))
     func livePinnedProvidersReturnTheSameExactTransaction() async throws {
         let txid = try #require(ProcessInfo.processInfo.environment["OPENCSV_PINNED_OBSERVER_TXID"])

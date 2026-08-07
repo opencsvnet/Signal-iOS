@@ -2083,6 +2083,12 @@ public actor OpenCsvPayments {
     public func walletSummary() async throws -> WalletSummary {
         let account = try await ensureAccountWallet()
         let status = try account.status()
+        let observationPolicy = status.observationPolicy
+            ?? db.read { store.observationChecks(tx: $0) }
+        let requiredRawObserverQuorum = status.requiredRawObserverQuorum
+            ?? UInt32(clamping: observationPolicy.filter {
+                $0.kind == .rawTransactionApi && $0.mode == .require
+            }.count)
         return WalletSummary(
             owner: status.owners.first ?? "",
             balances: status.assets,
@@ -2107,9 +2113,8 @@ public actor OpenCsvPayments {
             },
             scanFromHeight: db.read { store.scanFromHeight(tx: $0) },
             network: status.network,
-            observationPolicy: status.observationPolicy
-                ?? db.read { store.observationChecks(tx: $0) },
-            requiredRawObserverQuorum: status.requiredRawObserverQuorum ?? 1,
+            observationPolicy: observationPolicy,
+            requiredRawObserverQuorum: requiredRawObserverQuorum,
             observationReceipts: status.observationReceipts ?? [],
         )
     }

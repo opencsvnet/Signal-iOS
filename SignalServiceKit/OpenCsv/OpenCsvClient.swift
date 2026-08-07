@@ -412,9 +412,9 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
     public let stopGap: UInt
     public let parallelRequests: UInt
     public let observationChecks: [OpenCsvObservationCheck]
-    /// Required exact pinned raw-transaction observations. Signal queries and
-    /// records every enabled observer, but one healthy provider is enough by
-    /// default so a single public API outage does not freeze Test USD.
+    /// Required exact pinned raw-transaction observations. This is derived as
+    /// every raw-transaction check marked `require`, so a required provider
+    /// can never be silently treated as an optional quorum member.
     public let requiredRawObserverQuorum: UInt32
     public let watchExternalDescriptor: String?
     public let watchInternalDescriptor: String?
@@ -439,7 +439,6 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         stopGap: UInt = 20,
         parallelRequests: UInt = 4,
         observationChecks: [OpenCsvObservationCheck]? = nil,
-        requiredRawObserverQuorum: UInt32 = 1,
         watchExternalDescriptor: String? = nil,
         watchInternalDescriptor: String? = nil,
         watchOwner: String? = nil,
@@ -458,8 +457,11 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         self.requiredConfirmations = requiredConfirmations
         self.stopGap = stopGap
         self.parallelRequests = parallelRequests
-        self.observationChecks = observationChecks ?? OpenCsvObservationCheck.defaults(for: network)
-        self.requiredRawObserverQuorum = requiredRawObserverQuorum
+        let resolvedObservationChecks = observationChecks ?? OpenCsvObservationCheck.defaults(for: network)
+        self.observationChecks = resolvedObservationChecks
+        self.requiredRawObserverQuorum = UInt32(clamping: resolvedObservationChecks.filter {
+            $0.kind == .rawTransactionApi && $0.mode == .require
+        }.count)
         self.watchExternalDescriptor = watchExternalDescriptor
         self.watchInternalDescriptor = watchInternalDescriptor
         self.watchOwner = watchOwner
