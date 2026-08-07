@@ -183,17 +183,26 @@ struct OpenCsvPinnedObserverProfileTest {
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["OPENCSV_PINNED_OBSERVER_TXID"] != nil))
+    @MainActor
     func livePinnedProvidersReturnTheSameExactTransaction() async throws {
         let txid = try #require(ProcessInfo.processInfo.environment["OPENCSV_PINNED_OBSERVER_TXID"])
-        let observation = try await OpenCsvPinnedObserver.observeSignetTransaction(
-            txid: txid,
-            policy: OpenCsvObservationCheck.defaults(for: "signet"),
-        )
-        #expect(observation.evidence.count == 2)
-        #expect(observation.evidence.allSatisfy { $0.result == "observed" })
-        #expect(observation.evidence.allSatisfy { !$0.certificateChainFingerprintsSha256.isEmpty })
-        #expect(Set(observation.evidence.compactMap(\.rawTransactionHex)).count == 1)
-        #expect(observation.rawTransaction.hexadecimalString == observation.evidence[0].rawTransactionHex)
+        let oldContext = CurrentAppContext()
+        await MockSSKEnvironment.activate()
+        do {
+            let observation = try await OpenCsvPinnedObserver.observeSignetTransaction(
+                txid: txid,
+                policy: OpenCsvObservationCheck.defaults(for: "signet"),
+            )
+            #expect(observation.evidence.count == 2)
+            #expect(observation.evidence.allSatisfy { $0.result == "observed" })
+            #expect(observation.evidence.allSatisfy { !$0.certificateChainFingerprintsSha256.isEmpty })
+            #expect(Set(observation.evidence.compactMap(\.rawTransactionHex)).count == 1)
+            #expect(observation.rawTransaction.hexadecimalString == observation.evidence[0].rawTransactionHex)
+        } catch {
+            await MockSSKEnvironment.deactivateAsync(oldContext: oldContext)
+            throw error
+        }
+        await MockSSKEnvironment.deactivateAsync(oldContext: oldContext)
     }
 }
 
