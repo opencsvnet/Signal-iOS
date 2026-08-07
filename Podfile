@@ -86,7 +86,7 @@ target 'SignalServiceKit' do
     # pinned to the reviewed immutable Git commit below.
     pod 'OpenCsv', path: ENV.fetch('OPENCSV_LOCAL_RUST_PATH')
   else
-    pod 'OpenCsv', git: 'https://github.com/opencsvnet/opencsv-rs.git', commit: '96da18366e2116ba9eb091db40367d061acf8c18'
+    pod 'OpenCsv', git: 'https://github.com/opencsvnet/opencsv-rs.git', commit: '8b250abb467a19e047a0100816e461a48707d535'
   end
 
   pod 'CocoaLumberjack'

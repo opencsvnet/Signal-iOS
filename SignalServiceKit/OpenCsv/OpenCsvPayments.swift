@@ -2739,7 +2739,12 @@ public actor OpenCsvPayments {
 
     /// Stage the exact Rust checkpoint in Signal's backup frame and wait for
     /// a completed manual export. Only then does Rust unfreeze writes or
-    /// acknowledge a prepared operation's exact checkpoint hash.
+    /// acknowledge the exact checkpoint that Signal actually backed up.
+    ///
+    /// Receive/finality state can legitimately advance after a proof was
+    /// prepared. In that case we back up the newest complete wallet state;
+    /// Rust atomically checks that hash while the operation remains
+    /// proof-ready, without regenerating the unchanged proof.
     private func backUpAccountCheckpoint(
         account: OpenCsvAccountWallet,
         operationId: String? = nil,
@@ -2759,8 +2764,8 @@ public actor OpenCsvPayments {
             throw OpenCsvPaymentsError.secureBackupFailed(underlying: "checkpoint has no device binding")
         }
         if let expectedCheckpointHash, expectedCheckpointHash != checkpoint.checkpointHash {
-            throw OpenCsvPaymentsError.secureBackupFailed(
-                underlying: "prepared operation checkpoint does not match exported checkpoint",
+            Logger.info(
+                "OpenCSV wallet checkpoint advanced after proof preparation; protecting the current state",
             )
         }
         let payload = try OpenCsvSecureBackupPayload(
@@ -2777,16 +2782,16 @@ public actor OpenCsvPayments {
             try await DependenciesBridge.shared.backupExportJobRunner
                 .startIfNecessary(mode: .manual).value
             _ = try account.setBackupState(verified: true, checkpointVersion: payload.version)
-            if let operationId, let expectedCheckpointHash {
+            if let operationId {
                 try account.acknowledgeBackup(
                     operationId: operationId,
-                    checkpointHash: expectedCheckpointHash,
+                    checkpointHash: checkpoint.checkpointHash,
                 )
             }
-            if let batchLocalId, let expectedCheckpointHash {
+            if let batchLocalId {
                 _ = try account.acknowledgeSendBatchBackup(
                     batchLocalId: batchLocalId,
-                    checkpointHash: expectedCheckpointHash,
+                    checkpointHash: checkpoint.checkpointHash,
                 )
             }
         } catch let error as OpenCsvPaymentsError {
