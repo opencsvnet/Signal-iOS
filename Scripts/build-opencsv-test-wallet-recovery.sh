@@ -7,18 +7,17 @@ set -euo pipefail
 signal_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 rust_root="${OPENCSV_LOCAL_RUST_PATH:-$signal_root/../opencsv-rs-signal-recovery-observers}"
 lock_backup="$(mktemp)"
-manifest_backup="$(mktemp)"
 
 cp "$signal_root/Podfile.lock" "$lock_backup"
-if [ -f "$signal_root/Pods/Manifest.lock" ]; then
-    cp "$signal_root/Pods/Manifest.lock" "$manifest_backup"
-fi
 restore_locks() {
     cp "$lock_backup" "$signal_root/Podfile.lock"
-    if [ -s "$manifest_backup" ]; then
-        cp "$manifest_backup" "$signal_root/Pods/Manifest.lock"
+    if [ -d "$signal_root/Pods" ]; then
+        # The local path install writes a path-based manifest. Restore the
+        # reviewed remote pin to both lock receipts so subsequent tests keep
+        # CocoaPods' sandbox check meaningful and exact.
+        cp "$lock_backup" "$signal_root/Pods/Manifest.lock"
     fi
-    rm -f "$lock_backup" "$manifest_backup"
+    rm -f "$lock_backup"
 }
 trap restore_locks EXIT
 
@@ -56,6 +55,9 @@ else
     pod install
 fi
 
+# The local path pod's generated XCFramework copy phase reads this exact
+# worktree path. Check the archive Xcode will consume, not CocoaPods' inert
+# source mirror under Pods/OpenCsv.
 recovery_archive="$rust_root/OpenCsv.xcframework/ios-arm64_x86_64-simulator/libopencsv_ffi.a"
 symbol_receipt="$(mktemp)"
 strings "$recovery_archive" > "$symbol_receipt"

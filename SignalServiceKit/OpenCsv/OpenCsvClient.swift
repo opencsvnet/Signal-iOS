@@ -412,6 +412,10 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
     public let stopGap: UInt
     public let parallelRequests: UInt
     public let observationChecks: [OpenCsvObservationCheck]
+    /// Required exact pinned raw-transaction observations. Signal queries and
+    /// records every enabled observer, but one healthy provider is enough by
+    /// default so a single public API outage does not freeze Test USD.
+    public let requiredRawObserverQuorum: UInt32
     public let watchExternalDescriptor: String?
     public let watchInternalDescriptor: String?
     public let watchOwner: String?
@@ -435,6 +439,7 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         stopGap: UInt = 20,
         parallelRequests: UInt = 4,
         observationChecks: [OpenCsvObservationCheck]? = nil,
+        requiredRawObserverQuorum: UInt32 = 1,
         watchExternalDescriptor: String? = nil,
         watchInternalDescriptor: String? = nil,
         watchOwner: String? = nil,
@@ -454,6 +459,7 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         self.stopGap = stopGap
         self.parallelRequests = parallelRequests
         self.observationChecks = observationChecks ?? OpenCsvObservationCheck.defaults(for: network)
+        self.requiredRawObserverQuorum = requiredRawObserverQuorum
         self.watchExternalDescriptor = watchExternalDescriptor
         self.watchInternalDescriptor = watchInternalDescriptor
         self.watchOwner = watchOwner
@@ -547,6 +553,7 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
     public let deviceBinding: DeviceBinding
     public let syncProvenance: SyncProvenance
     public let observationPolicy: [OpenCsvObservationCheck]?
+    public let requiredRawObserverQuorum: UInt32?
     public let observationReceipts: [OpenCsvObservationReceipt]?
     public let batchReserves: BatchReserves?
     public let rootFingerprint: String

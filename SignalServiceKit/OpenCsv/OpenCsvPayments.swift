@@ -207,6 +207,9 @@ public actor OpenCsvPayments {
         /// Reviewed check definitions with the user's persisted per-check
         /// Off / Observe / Require selections.
         public let observationPolicy: [OpenCsvObservationCheck]
+        /// Number of required raw API checks that must succeed. All enabled
+        /// checks still produce receipts.
+        public let requiredRawObserverQuorum: UInt32
         /// Durable Rust verdicts for recent checks, including timing, cache
         /// age, pin profile and exact-byte comparison.
         public let observationReceipts: [OpenCsvObservationReceipt]
@@ -2100,6 +2103,7 @@ public actor OpenCsvPayments {
             network: status.network,
             observationPolicy: status.observationPolicy
                 ?? db.read { store.observationChecks(tx: $0) },
+            requiredRawObserverQuorum: status.requiredRawObserverQuorum ?? 1,
             observationReceipts: status.observationReceipts ?? [],
         )
     }

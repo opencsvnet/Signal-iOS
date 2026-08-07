@@ -55,6 +55,15 @@ identity. Signal keys verdicts, replay blobs, and presentation to that identity:
 byte-distinct delivery retries retain their files but render exactly one
 verified payment bubble.
 
+For unconfirmed Test USD, Signal queries both built-in certificate-pinned raw
+transaction APIs and persists every success and failure. The default
+availability quorum is one: at least one provider must return the fresh exact
+transaction bytes under its configured chain pin. A provider outage therefore
+does not freeze the wallet, while zero matching providers, stale evidence, pin
+mismatch, or changed bytes fail closed. This only unlocks an explicitly
+unconfirmed forwardable coin; phone-owned header/BIP158/full-block/Merkle
+verification remains mandatory before the UI calls it settled.
+
 The operation journal and pending Signal delivery metadata make every crash
 boundary resumable. Cancellation ends at the first broadcast attempt. A
 signed-but-unobserved transaction is reported as durable and is never silently

@@ -34,6 +34,7 @@ class OpenCsvWalletViewController: OWSViewController {
     private let instrumentDetailsLabel = UILabel()
     private let walletPolicyLabel = UILabel()
     private let observationStack = UIStackView()
+    private let observationQuorumLabel = UILabel()
     private let observationReceiptLabel = UILabel()
     private let feeReserveExplanationLabel = UILabel()
     private let feeReserveDetailsStack = UIStackView()
@@ -387,7 +388,7 @@ class OpenCsvWalletViewController: OWSViewController {
         observationExplanation.font = .dynamicTypeFootnote
         observationExplanation.textColor = Theme.secondaryTextAndIconColor
         observationExplanation.numberOfLines = 0
-        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Require must pass before unconfirmed Test USD can be forwarded. Cryptographic and transaction checks always remain mandatory."
+        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Signal queries both pinned APIs; one exact-byte result is enough to forward unconfirmed Test USD. Cryptographic and transaction checks always remain mandatory."
         advancedStack.addArrangedSubview(observationExplanation)
         advancedStack.addArrangedSubview(observationStack)
         observationReceiptLabel.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -572,11 +573,17 @@ class OpenCsvWalletViewController: OWSViewController {
         spvPeersField.text = summary.spvPeers.joined(separator: ", ")
         scanFromHeightField.text = "\(summary.scanFromHeight)"
         networkField.text = summary.network
-        renderObservationPolicy(summary.observationPolicy)
+        renderObservationPolicy(
+            summary.observationPolicy,
+            requiredRawObserverQuorum: summary.requiredRawObserverQuorum,
+        )
         observationReceiptLabel.text = Self.renderObservationReceipts(summary.observationReceipts)
     }
 
-    private func renderObservationPolicy(_ checks: [OpenCsvObservationCheck]) {
+    private func renderObservationPolicy(
+        _ checks: [OpenCsvObservationCheck],
+        requiredRawObserverQuorum: UInt32,
+    ) {
         let incomingIds = Set(checks.map(\.id))
         if incomingIds != Set(observationModeControls.keys) {
             observationStack.arrangedSubviews.forEach { view in
@@ -584,6 +591,10 @@ class OpenCsvWalletViewController: OWSViewController {
                 view.removeFromSuperview()
             }
             observationModeControls.removeAll()
+            observationQuorumLabel.font = .dynamicTypeFootnote
+            observationQuorumLabel.textColor = Theme.secondaryTextAndIconColor
+            observationQuorumLabel.numberOfLines = 0
+            observationStack.addArrangedSubview(observationQuorumLabel)
             for check in checks {
                 let container = UIStackView()
                 container.axis = .vertical
@@ -601,6 +612,11 @@ class OpenCsvWalletViewController: OWSViewController {
                 observationStack.addArrangedSubview(container)
             }
         }
+        let rawRequiredCount = checks.filter {
+            $0.kind == .rawTransactionApi && $0.mode == .require
+        }.count
+        observationQuorumLabel.isHidden = rawRequiredCount == 0
+        observationQuorumLabel.text = "Availability quorum: \(requiredRawObserverQuorum) of \(rawRequiredCount) pinned APIs"
         for check in checks {
             observationModeControls[check.id]?.selectedSegmentIndex = switch check.mode {
             case .off: 0
