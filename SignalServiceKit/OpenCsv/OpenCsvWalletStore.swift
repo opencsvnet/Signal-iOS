@@ -1031,13 +1031,26 @@ public struct OpenCsvWalletStore {
         consignmentId: String,
         tx: DBReadTransaction,
     ) -> Bool {
-        keyValueStore.getString(
-            Self.canonicalPresentationAttachmentPrefix + consignmentId,
+        let record: OpenCsvVerdictRecord? = try? keyValueStore.getCodableValue(
+            forKey: Self.canonicalVerdictKey(consignmentId),
             transaction: tx,
-        ) != nil || keyValueStore.getString(
-            Self.canonicalPresentationMessagePrefix + consignmentId,
-            transaction: tx,
-        ) != nil
+        )
+        let presentationId = record?.paymentId ?? consignmentId
+
+        // `setVerdict` keys presentation identity by the stable payment id
+        // when Rust provides one. Looking up only the consignment id misses
+        // every such delivery after a restart and inserts the same outgoing
+        // payment message again. Check both identities for compatibility
+        // with records written before payment ids were introduced.
+        return [presentationId, consignmentId].contains { candidate in
+            keyValueStore.getString(
+                Self.canonicalPresentationAttachmentPrefix + candidate,
+                transaction: tx,
+            ) != nil || keyValueStore.getString(
+                Self.canonicalPresentationMessagePrefix + candidate,
+                transaction: tx,
+            ) != nil
+        }
     }
 
     public func blobForAttachment(attachmentId: Attachment.IDType, tx: DBReadTransaction) -> Data? {

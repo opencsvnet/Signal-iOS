@@ -926,6 +926,38 @@ final class OpenCsvWalletStoreTest {
     }
 
     @Test
+    func canonicalPresentationLookupUsesStablePaymentIdentity() throws {
+        let consignmentId = String(repeating: "ca", count: 32)
+        let paymentId = String(repeating: "03", count: 32)
+        let record = OpenCsvVerdictRecord(
+            sentAmount: 10_000_000,
+            currency: "USD",
+            assetId: "test-usd",
+            consignmentId: consignmentId,
+            paymentId: paymentId,
+            date: Date(timeIntervalSince1970: 0),
+        )
+
+        db.write { tx in
+            store.setVerdict(
+                record,
+                blob: nil,
+                attachmentId: 44,
+                messageUniqueId: "message-first",
+                tx: tx,
+            )
+        }
+
+        db.read { tx in
+            #expect(store.hasCanonicalPresentation(consignmentId: consignmentId, tx: tx))
+            #expect(!store.hasCanonicalPresentation(
+                consignmentId: String(repeating: "00", count: 32),
+                tx: tx,
+            ))
+        }
+    }
+
+    @Test
     func verifiedRbfReplacementSupersedesTheOldPaymentPresentation() throws {
         let originalId = String(repeating: "01", count: 32)
         let replacementId = String(repeating: "02", count: 32)
