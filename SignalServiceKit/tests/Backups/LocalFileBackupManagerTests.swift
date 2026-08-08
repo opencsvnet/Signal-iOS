@@ -12,6 +12,10 @@ import Testing
 
 typealias Attachment = SignalServiceKit.Attachment
 
+// These tests exercise real files in AttachmentStream's process-wide directory.
+// Keep their independent database/export fixtures from consuming one another's
+// attachment files while Swift Testing runs suites concurrently.
+@Suite(.serialized)
 struct LocalFileBackupManagerTests {
     private let localFileBackupManager: LocalFileBackupManager
     private let db = InMemoryDB()
