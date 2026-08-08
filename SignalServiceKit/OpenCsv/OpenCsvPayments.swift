@@ -1687,7 +1687,12 @@ public actor OpenCsvPayments {
                 state: operation.state,
             )
         }
-        let owner = try await ensureAccountWallet().status().owners.first
+        let account = try await ensureAccountWallet()
+        let inspection = try account.inspect(blob: blob)
+        guard inspection.consignmentId == consignmentId else {
+            throw OpenCsvClientError.decode("operation receipt and canonical consignment disagree")
+        }
+        let owner = try account.status().owners.first
         var body = OpenCsvAttachmentDetector.outgoingBody(byteCount: blob.count)
         body += "\nOpenCSV payment: \(operation.operationId)"
         if let owner {
@@ -1699,7 +1704,10 @@ public actor OpenCsvPayments {
             // recovery pass may have persisted this exact operation meanwhile.
             if
                 let existing = self.store.pendingDeliveries(tx: tx)
-                    .first(where: { $0.operationId == operation.operationId })
+                    .first(where: {
+                        $0.operationId == operation.operationId
+                            && $0.consignmentId == consignmentId
+                    })
             {
                 return existing
             }
@@ -1708,7 +1716,7 @@ public actor OpenCsvPayments {
             // spends and operation state.
             let entry = try self.store.recordOutgoing(blob: blob, spends: [], tx: tx)
             let delivery = OpenCsvWalletStore.PendingDelivery(
-                id: "operation:\(operation.operationId)",
+                id: "operation:\(operation.operationId):\(consignmentId)",
                 threadUniqueId: pending.threadUniqueId,
                 body: body,
                 replayEntry: entry,
@@ -1719,6 +1727,9 @@ public actor OpenCsvPayments {
                 operationId: operation.operationId,
                 deliveryNonce: operation.deliveryNonce,
                 consignmentId: consignmentId,
+                paymentId: inspection.paymentId,
+                supersededConsignmentIds: receipt.supersededConsignmentIds,
+                replacesTxid: receipt.replaces,
                 createdAt: pending.createdAt,
             )
             try self.store.addPendingDelivery(delivery, tx: tx)
@@ -2078,6 +2089,8 @@ public actor OpenCsvPayments {
                 currency: delivery.currency,
                 assetId: delivery.assetId,
                 consignmentId: delivery.consignmentId,
+                paymentId: delivery.paymentId,
+                supersededConsignmentIds: delivery.supersededConsignmentIds,
                 date: Date(),
             )
         }
@@ -2086,6 +2099,8 @@ public actor OpenCsvPayments {
             currency: delivery.currency,
             assetId: delivery.assetId,
             consignmentId: delivery.consignmentId,
+            paymentId: delivery.paymentId,
+            supersededConsignmentIds: delivery.supersededConsignmentIds,
             date: Date(),
         )
     }

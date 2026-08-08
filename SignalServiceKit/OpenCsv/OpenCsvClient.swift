@@ -263,6 +263,12 @@ public struct OpenCsvVerdict: Codable, Equatable {
     /// keys verdict and rendered-cell state by this value, never by an
     /// attachment id or delivery-attempt nonce.
     public let consignmentId: String?
+    /// Stable identity over the proof-protected payment fields, excluding
+    /// only the replaceable Bitcoin anchor txid.
+    public let paymentId: String?
+    /// Canonical consignments for the same payment that this verified
+    /// replacement supersedes.
+    public let supersededConsignmentIds: [String]?
     /// Which chain view decided this verdict ("self-scan", "cross-check",
     /// "single-snapshot"). Set by the receive pipeline, never by the FFI;
     /// nil on verdicts that predate the distinction.
@@ -277,6 +283,8 @@ public struct OpenCsvVerdict: Codable, Equatable {
         coins: [OpenCsvCoin]?,
         anchor: Anchor?,
         consignmentId: String? = nil,
+        paymentId: String? = nil,
+        supersededConsignmentIds: [String]? = nil,
         finality: String? = nil,
         spendable: Bool? = nil,
         risk: String? = nil,
@@ -288,6 +296,8 @@ public struct OpenCsvVerdict: Codable, Equatable {
         self.coins = coins
         self.anchor = anchor
         self.consignmentId = consignmentId
+        self.paymentId = paymentId
+        self.supersededConsignmentIds = supersededConsignmentIds
         self.finality = finality
         self.spendable = spendable
         self.risk = risk
@@ -620,6 +630,7 @@ public struct OpenCsvAccountOperation: Codable, Equatable {
         public let deliveryReady: Bool?
         public let consignmentDelivered: Bool?
         public let replaces: String?
+        public let supersededConsignmentIds: [String]?
         public let feeIncrementSats: UInt64?
         public let replacementChangeSats: UInt64?
     }
@@ -706,6 +717,7 @@ public struct OpenCsvTestDeviceRebindResponse: Equatable {
 
 public struct OpenCsvConsignmentInspection: Codable, Equatable {
     public let consignmentId: String
+    public let paymentId: String
     public let anchorTxid: String
     public let anchorHeight: UInt64
     public let anchorPosition: UInt32

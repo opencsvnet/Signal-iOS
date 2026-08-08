@@ -1089,7 +1089,8 @@ class OpenCsvWalletViewController: OWSViewController {
             preferredStyle: .alert,
         )
         alert.addTextField { field in
-            field.placeholder = "5 sat/vB"
+            field.text = "5"
+            field.placeholder = "sat/vB"
             field.keyboardType = .numberPad
         }
         alert.addAction(UIAlertAction(title: CommonStrings.cancelButton, style: .cancel))

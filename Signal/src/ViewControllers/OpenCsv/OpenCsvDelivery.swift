@@ -160,15 +160,17 @@ enum OpenCsvDelivery {
         let deliveryCommit = try await SSKEnvironment.shared.databaseStorageRef.awaitableWrite { tx in
             if
                 let consignmentId = delivery.consignmentId,
+                delivery.replacesTxid == nil,
                 OpenCsvPayments.shared.hasCanonicalPresentation(
                     consignmentId: consignmentId,
                     tx: tx,
                 )
             {
-                // Signal already committed the logical payment. This can
-                // happen when the app dies between message insertion and the
-                // Rust acknowledgement. Consume the retry record without
-                // inserting or enqueueing a second chat message.
+                // Signal already committed this exact non-replacement
+                // payment. A replacement must carry its new proof-bearing
+                // attachment even though the durable operation is the same;
+                // its rotated Rust nonce and enqueuedAt guard make that path
+                // independently idempotent.
                 try OpenCsvPayments.shared.clearDelivered(id: delivery.id, tx: tx)
                 return (messageId: nil as String?, inserted: false)
             }

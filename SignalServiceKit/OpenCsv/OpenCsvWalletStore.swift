@@ -128,6 +128,10 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
     /// byte-distinct attachments encoding the same consignment share this
     /// identity and therefore one logical verdict/payment cell.
     public let consignmentId: String?
+    /// Stable logical payment identity. Unlike `consignmentId`, this is
+    /// unchanged by a protocol-safe Bitcoin fee replacement.
+    public let paymentId: String?
+    public let supersededConsignmentIds: [String]?
     public let finality: String?
     public let spendable: Bool?
     public let anchorTxid: String?
@@ -161,6 +165,8 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.verifiedAt = date
         self.chainView = verdict.chainView
         self.consignmentId = verdict.consignmentId
+        self.paymentId = verdict.paymentId
+        self.supersededConsignmentIds = verdict.supersededConsignmentIds
         self.finality = verdict.finality
         self.spendable = verdict.spendable
         self.anchorTxid = verdict.anchorTxid
@@ -174,6 +180,8 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         currency: String?,
         assetId: String?,
         consignmentId: String? = nil,
+        paymentId: String? = nil,
+        supersededConsignmentIds: [String]? = nil,
         date: Date,
     ) {
         self.verificationVersion = Self.currentVerificationVersion
@@ -186,6 +194,8 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.verifiedAt = date
         self.chainView = nil
         self.consignmentId = consignmentId
+        self.paymentId = paymentId
+        self.supersededConsignmentIds = supersededConsignmentIds
         self.finality = "settled"
         self.spendable = true
         self.anchorTxid = nil
@@ -199,6 +209,8 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         currency: String?,
         assetId: String?,
         consignmentId: String? = nil,
+        paymentId: String? = nil,
+        supersededConsignmentIds: [String]? = nil,
         date: Date,
     ) {
         self.verificationVersion = Self.currentVerificationVersion
@@ -211,6 +223,8 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.verifiedAt = date
         self.chainView = nil
         self.consignmentId = consignmentId
+        self.paymentId = paymentId
+        self.supersededConsignmentIds = supersededConsignmentIds
         self.finality = "settled"
         self.spendable = true
         self.anchorTxid = nil
@@ -794,14 +808,61 @@ public struct OpenCsvWalletStore {
                 key: Self.attachmentConsignmentIdPrefix + "\(attachmentId)",
                 transaction: tx,
             )
-            let presentationKey = Self.canonicalPresentationAttachmentPrefix + consignmentId
-            if keyValueStore.getString(presentationKey, transaction: tx) == nil {
+            let presentationId = record.paymentId ?? consignmentId
+            let presentationKey = Self.canonicalPresentationAttachmentPrefix + presentationId
+            let supersedesPrior = record.isVerified
+                && record.supersededConsignmentIds?.isEmpty == false
+            if
+                supersedesPrior
+                || keyValueStore.getString(presentationKey, transaction: tx) == nil
+            {
                 keyValueStore.setString("\(attachmentId)", key: presentationKey, transaction: tx)
             }
             if let messageUniqueId {
-                let messageKey = Self.canonicalPresentationMessagePrefix + consignmentId
-                if keyValueStore.getString(messageKey, transaction: tx) == nil {
+                let messageKey = Self.canonicalPresentationMessagePrefix + presentationId
+                if
+                    supersedesPrior
+                    || keyValueStore.getString(messageKey, transaction: tx) == nil
+                {
                     keyValueStore.setString(messageUniqueId, key: messageKey, transaction: tx)
+                }
+            }
+            if supersedesPrior {
+                let supersededIds = Set(record.supersededConsignmentIds ?? [])
+                for supersededId in supersededIds {
+                    keyValueStore.setString(
+                        "\(attachmentId)",
+                        key: Self.canonicalPresentationAttachmentPrefix + supersededId,
+                        transaction: tx,
+                    )
+                    if let messageUniqueId {
+                        keyValueStore.setString(
+                            messageUniqueId,
+                            key: Self.canonicalPresentationMessagePrefix + supersededId,
+                            transaction: tx,
+                        )
+                    }
+                }
+                var activities = incomingActivities(tx: tx)
+                activities.removeAll { activity in
+                    guard
+                        let activityConsignmentId = keyValueStore.getString(
+                            Self.attachmentConsignmentIdPrefix + "\(activity.attachmentId)",
+                            transaction: tx,
+                        )
+                    else {
+                        return false
+                    }
+                    return supersededIds.contains(activityConsignmentId)
+                }
+                do {
+                    try keyValueStore.setCodable(
+                        activities,
+                        key: Self.incomingActivitiesKey,
+                        transaction: tx,
+                    )
+                } catch {
+                    owsFailDebug("could not supersede OpenCSV incoming activity: \(error)")
                 }
             }
         } else {
@@ -943,16 +1004,21 @@ public struct OpenCsvWalletStore {
         else {
             return true
         }
+        let record: OpenCsvVerdictRecord? = try? keyValueStore.getCodableValue(
+            forKey: Self.canonicalVerdictKey(consignmentId),
+            transaction: tx,
+        )
+        let presentationId = record?.paymentId ?? consignmentId
         if
             let canonicalMessageId = keyValueStore.getString(
-                Self.canonicalPresentationMessagePrefix + consignmentId,
+                Self.canonicalPresentationMessagePrefix + presentationId,
                 transaction: tx,
             )
         {
             return messageUniqueId == canonicalMessageId
         }
         return keyValueStore.getString(
-            Self.canonicalPresentationAttachmentPrefix + consignmentId,
+            Self.canonicalPresentationAttachmentPrefix + presentationId,
             transaction: tx,
         ) == "\(attachmentId)"
     }
@@ -1075,6 +1141,12 @@ public struct OpenCsvWalletStore {
         public let deliveryNonce: String?
         /// Canonical Rust identity, independent of attachment transport bytes.
         public let consignmentId: String?
+        /// Proof-protected logical payment identity, stable across RBF.
+        public let paymentId: String?
+        public let supersededConsignmentIds: [String]?
+        /// Previous Bitcoin txid when this attachment replaces a consignment
+        /// already sent for the same durable operation.
+        public let replacesTxid: String?
         public let createdAt: Date
         /// Delivery attempts so far; at `maxDeliveryAttempts` automatic
         /// retries stop.
@@ -1099,6 +1171,9 @@ public struct OpenCsvWalletStore {
             operationId: String? = nil,
             deliveryNonce: String? = nil,
             consignmentId: String? = nil,
+            paymentId: String? = nil,
+            supersededConsignmentIds: [String]? = nil,
+            replacesTxid: String? = nil,
             createdAt: Date,
             attempts: Int = 0,
             enqueuedAt: Date? = nil,
@@ -1114,6 +1189,9 @@ public struct OpenCsvWalletStore {
             self.operationId = operationId
             self.deliveryNonce = deliveryNonce
             self.consignmentId = consignmentId
+            self.paymentId = paymentId
+            self.supersededConsignmentIds = supersededConsignmentIds
+            self.replacesTxid = replacesTxid
             self.createdAt = createdAt
             self.attempts = attempts
             self.enqueuedAt = enqueuedAt
@@ -1273,17 +1351,17 @@ public struct OpenCsvWalletStore {
         }
     }
 
-    /// Insert a delivery exactly once for a Rust operation. Actor reentrancy
-    /// and process relaunch may both reconstruct the same ready consignment;
-    /// its operation id is the durable idempotency key, independent of a
-    /// transient Swift UUID.
+    /// Insert an exact consignment delivery once. Actor reentrancy and process
+    /// relaunch may reconstruct the same ready object, while RBF intentionally
+    /// creates a different consignment for the same operation.
     public func addPendingDelivery(
         _ delivery: PendingDelivery,
         tx: DBWriteTransaction,
     ) throws {
         if
-            let operationId = delivery.operationId,
-            pendingDeliveries(tx: tx).contains(where: { $0.operationId == operationId })
+            let operationId = delivery.operationId, pendingDeliveries(tx: tx).contains(where: {
+                $0.operationId == operationId && $0.consignmentId == delivery.consignmentId
+            })
         {
             return
         }

@@ -925,6 +925,83 @@ final class OpenCsvWalletStoreTest {
         }
     }
 
+    @Test
+    func verifiedRbfReplacementSupersedesTheOldPaymentPresentation() throws {
+        let originalId = String(repeating: "01", count: 32)
+        let replacementId = String(repeating: "02", count: 32)
+        let paymentId = String(repeating: "03", count: 32)
+        let original = OpenCsvVerdictRecord(
+            verdict: OpenCsvVerdict(
+                status: "verified",
+                reason: nil,
+                credits: [OpenCsvCredit(assetId: "ab", currency: "USD", amount: 1)],
+                coins: nil,
+                anchor: nil,
+                consignmentId: originalId,
+                finality: "unconfirmed",
+                spendable: true,
+            ),
+            date: Date(timeIntervalSince1970: 0),
+        )
+        let replacement = OpenCsvVerdictRecord(
+            verdict: OpenCsvVerdict(
+                status: "verified",
+                reason: nil,
+                credits: [OpenCsvCredit(assetId: "ab", currency: "USD", amount: 1)],
+                coins: nil,
+                anchor: nil,
+                consignmentId: replacementId,
+                paymentId: paymentId,
+                supersededConsignmentIds: [originalId],
+                finality: "unconfirmed",
+                spendable: true,
+            ),
+            date: Date(timeIntervalSince1970: 1),
+        )
+        try db.write { tx in
+            store.setVerdict(
+                original,
+                blob: Data([1]),
+                attachmentId: 50,
+                messageUniqueId: "message-original",
+                tx: tx,
+            )
+            try store.upsertIncomingActivity(
+                attachmentId: 50,
+                threadUniqueId: "thread",
+                messageUniqueId: "message-original",
+                state: .availableUnconfirmed,
+                amount: 1,
+                currency: "USD",
+                tx: tx,
+            )
+            store.setVerdict(
+                replacement,
+                blob: Data([2]),
+                attachmentId: 51,
+                messageUniqueId: "message-replacement",
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            #expect(!store.isCanonicalPresentationAttachment(
+                attachmentId: 50,
+                messageUniqueId: "message-original",
+                tx: tx,
+            ))
+            #expect(store.isCanonicalPresentationAttachment(
+                attachmentId: 51,
+                messageUniqueId: "message-replacement",
+                tx: tx,
+            ))
+            #expect(store.incomingActivities(tx: tx).isEmpty)
+            #expect(store.replayBlobs(tx: tx).map(\.entry) == [
+                "c:\(originalId)",
+                "c:\(replacementId)",
+            ])
+        }
+    }
+
     /// B3: sending 5 of 100 must render "5 sent", not the 95 change that
     /// the self-ingest credits back to us.
     @Test
@@ -1067,7 +1144,7 @@ final class OpenCsvWalletStoreTest {
     }
 
     @Test
-    func accountDeliveryIsIdempotentByOperationIdentity() throws {
+    func accountDeliveryIsIdempotentByExactConsignmentAndKeepsRbfReplacement() throws {
         let first = OpenCsvWalletStore.PendingDelivery(
             id: "delivery-first",
             threadUniqueId: "thread-1",
@@ -1096,12 +1173,28 @@ final class OpenCsvWalletStoreTest {
             consignmentId: "consignment-1",
             createdAt: Date(timeIntervalSince1970: 1),
         )
+        let replacement = OpenCsvWalletStore.PendingDelivery(
+            id: "delivery-replacement",
+            threadUniqueId: "thread-1",
+            body: "OpenCSV replacement consignment",
+            replayEntry: "o:3",
+            amount: 25,
+            currency: "USD",
+            assetId: "ab",
+            operationKind: "transfer",
+            operationId: "operation-1",
+            deliveryNonce: "nonce-2",
+            consignmentId: "consignment-2",
+            replacesTxid: "original-txid",
+            createdAt: Date(timeIntervalSince1970: 2),
+        )
         try db.write { tx in
             try store.addPendingDelivery(first, tx: tx)
             try store.addPendingDelivery(reconstructed, tx: tx)
+            try store.addPendingDelivery(replacement, tx: tx)
         }
         db.read { tx in
-            #expect(store.pendingDeliveries(tx: tx) == [first])
+            #expect(store.pendingDeliveries(tx: tx) == [first, replacement])
         }
     }
 
