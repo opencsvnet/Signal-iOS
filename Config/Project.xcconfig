@@ -8,5 +8,11 @@ GCC_TREAT_WARNINGS_AS_ERRORS = YES
 MTL_TREAT_WARNINGS_AS_ERRORS = YES
 OTHER_SWIFT_FLAGS = $(inherited) -warnings-as-errors
 
+// The upstream product name remains the default. OpenCSV's TestFlight archive
+// overrides this value without renaming targets or executables.
+OPENCSV_APP_DISPLAY_NAME = Signal
+OPENCSV_APP_MARKETING_VERSION = 8.23
+OPENCSV_APP_BUILD_NUMBER = 0
+
 // User-specific overrides
 #include? "User.xcconfig"
