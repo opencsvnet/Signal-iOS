@@ -50,6 +50,23 @@ exist before the first upload.
 4. Record the source commit, archive version/build, upload receipt, and tester
    group in the OpenCSV issue journal.
 
+## Public beta
+
+External testing is a separate gate from uploading:
+
+1. Create an internal testing group.
+2. Create the external `OpenCSV Public Beta` group.
+3. Complete the beta description, feedback address, and review-contact fields
+   from `OPENCSV_TESTFLIGHT_METADATA.md`.
+4. Add the processed build and submit it to TestFlight App Review.
+5. After approval, create an open public invitation with an initial limit of
+   500 testers.
+6. Replace the pending state at `https://opencsv.net/beta/` with the exact
+   public invitation URL.
+
+Never publish a guessed invitation URL or describe a processing/reviewing build
+as available.
+
 ## Known limitation
 
 Signal's production service cannot send Apple Push Notification service events
