@@ -506,6 +506,18 @@ public actor OpenCsvPayments {
             throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
         }
         let account = try await ensureAccountWallet()
+        let inspection = try account.inspect(blob: blob)
+        if let rejectionReason = Self.receiverAssetRejectionReason(inspection) {
+            var verdict = OpenCsvVerdict(
+                status: "rejected",
+                reason: rejectionReason,
+                credits: nil,
+                coins: nil,
+                anchor: nil,
+            )
+            verdict.chainView = "local-reviewed-asset-policy"
+            return verdict
+        }
         let (peers, indexers) = db.read { tx in
             let network = self.store.network(tx: tx)
             return (
@@ -664,6 +676,24 @@ public actor OpenCsvPayments {
     static func isChainLagReason(_ reason: String?) -> Bool {
         guard let reason else { return false }
         return reason.contains("AnchorNotFound") || reason.contains("InsufficientConfirmations")
+    }
+
+    /// Asset admission is a local, deterministic product-policy decision.
+    /// Run it before any chain scan so an archived v1 attachment cannot sit
+    /// forever in a retry loop merely because its old signet anchor vanished.
+    /// The attachment remains in Signal history but is never credited or
+    /// relabeled as Test USD v2.
+    static func receiverAssetRejectionReason(
+        _ inspection: OpenCsvConsignmentInspection,
+    ) -> String? {
+        guard
+            inspection.allAssetsReviewed,
+            inspection.unreviewedAssetIds.isEmpty,
+            inspection.rejectionReason == nil
+        else {
+            return "asset_not_reviewed"
+        }
+        return nil
     }
 
     /// Retry only verdicts produced before a specific verifier correction.

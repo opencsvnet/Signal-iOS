@@ -733,6 +733,13 @@ public struct OpenCsvConsignmentInspection: Codable, Equatable {
     public let anchorTxid: String
     public let anchorHeight: UInt64
     public let anchorPosition: UInt32
+    /// Exact public asset identities carried by the recipient openings.
+    public let assetIds: [String]
+    /// Rust derives this from Signal's immutable reviewed-issuer registry.
+    public let allAssetsReviewed: Bool
+    public let unreviewedAssetIds: [String]
+    /// Stable policy result; currently `asset_not_reviewed` when present.
+    public let rejectionReason: String?
 }
 
 /// A process-local handle to the durable Rust-owned account wallet. Callers

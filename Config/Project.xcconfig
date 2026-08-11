@@ -13,6 +13,7 @@ OTHER_SWIFT_FLAGS = $(inherited) -warnings-as-errors
 OPENCSV_APP_DISPLAY_NAME = Signal
 OPENCSV_APP_MARKETING_VERSION = 8.23
 OPENCSV_APP_BUILD_NUMBER = 0
+OPENCSV_SOURCE_COMMIT = development
 
 // User-specific overrides
 #include? "User.xcconfig"

@@ -109,6 +109,8 @@
 	<string>$(SIGNAL_BUNDLEID_PREFIX)</string>
 	<key>OWSMerchantID</key>
 	<string>$(SIGNAL_MERCHANTID)</string>
+	<key>OpenCSVSourceCommit</key>
+	<string>$(OPENCSV_SOURCE_COMMIT)</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<key>UIBackgroundModes</key>

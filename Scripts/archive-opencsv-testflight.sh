@@ -21,6 +21,22 @@ export DEVELOPER_DIR="$xcode_path/Contents/Developer"
 
 cd "$repo_root"
 
+source_commit="$(git rev-parse --verify HEAD)"
+if [[ ! "$source_commit" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Could not resolve an exact 40-character source commit" >&2
+    exit 1
+fi
+
+# A signed source receipt is meaningful only when the archived source equals
+# HEAD. CocoaPods is generated build state and is excluded deliberately; all
+# other tracked, staged, or untracked source drift fails closed.
+if ! git diff --quiet -- . ':(exclude)Pods' \
+    || ! git diff --cached --quiet -- . ':(exclude)Pods' \
+    || [[ -n "$(git ls-files --others --exclude-standard -- . ':(exclude)Pods')" ]]; then
+    echo "Refusing to archive a dirty source checkout (generated Pods excluded)" >&2
+    exit 1
+fi
+
 xcodebuild archive \
     -workspace Signal.xcworkspace \
     -scheme Signal \
@@ -35,7 +51,8 @@ xcodebuild archive \
     ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES= \
     OPENCSV_APP_DISPLAY_NAME="OpenCSV Demo" \
     OPENCSV_APP_MARKETING_VERSION="$marketing_version" \
-    OPENCSV_APP_BUILD_NUMBER="$build_number"
+    OPENCSV_APP_BUILD_NUMBER="$build_number" \
+    OPENCSV_SOURCE_COMMIT="$source_commit"
 
 app_path="$archive_path/Products/Applications/Signal.app"
 if [[ ! -d "$app_path" ]]; then
@@ -47,12 +64,15 @@ actual_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app
 actual_display_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app_path/Info.plist")"
 actual_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_path/Info.plist")"
 actual_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Info.plist")"
+actual_source_commit="$(/usr/libexec/PlistBuddy -c 'Print :OpenCSVSourceCommit' "$app_path/Info.plist")"
 
 test "$actual_bundle_id" = "$bundle_prefix.signal"
 test "$actual_display_name" = "OpenCSV Demo"
 test "$actual_version" = "$marketing_version"
 test "$actual_build" = "$build_number"
+test "$actual_source_commit" = "$source_commit"
 
 echo "Archive ready: $archive_path"
 echo "Bundle: $actual_bundle_id"
 echo "Version: $actual_version ($actual_build)"
+echo "Source commit: $actual_source_commit"

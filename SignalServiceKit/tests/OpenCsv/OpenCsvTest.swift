@@ -2129,6 +2129,51 @@ struct OpenCsvChainViewTest {
         #expect(!OpenCsvPayments.isChainLagReason(nil))
     }
 
+    /// Archived or unknown instruments are a final local product-policy
+    /// result, not a network retry. This keeps v1 attachments visible in
+    /// message history without ever crediting or relabeling them as v2.
+    @Test
+    func receiverRejectsUnreviewedAssetsBeforeChainWork() {
+        let reviewed = OpenCsvConsignmentInspection(
+            consignmentId: "reviewed-consignment",
+            paymentId: "reviewed-payment",
+            anchorTxid: String(repeating: "11", count: 32),
+            anchorHeight: 0,
+            anchorPosition: 0,
+            assetIds: ["reviewed"],
+            allAssetsReviewed: true,
+            unreviewedAssetIds: [],
+            rejectionReason: nil,
+        )
+        #expect(OpenCsvPayments.receiverAssetRejectionReason(reviewed) == nil)
+
+        let archived = OpenCsvConsignmentInspection(
+            consignmentId: "archived-consignment",
+            paymentId: "archived-payment",
+            anchorTxid: String(repeating: "22", count: 32),
+            anchorHeight: 0,
+            anchorPosition: 0,
+            assetIds: ["archived-v1"],
+            allAssetsReviewed: false,
+            unreviewedAssetIds: ["archived-v1"],
+            rejectionReason: "asset_not_reviewed",
+        )
+        #expect(OpenCsvPayments.receiverAssetRejectionReason(archived) == "asset_not_reviewed")
+
+        let contradictory = OpenCsvConsignmentInspection(
+            consignmentId: "contradictory-consignment",
+            paymentId: "contradictory-payment",
+            anchorTxid: String(repeating: "33", count: 32),
+            anchorHeight: 0,
+            anchorPosition: 0,
+            assetIds: ["unknown"],
+            allAssetsReviewed: true,
+            unreviewedAssetIds: ["unknown"],
+            rejectionReason: nil,
+        )
+        #expect(OpenCsvPayments.receiverAssetRejectionReason(contradictory) == "asset_not_reviewed")
+    }
+
     /// Repairs exact live failures without turning every definitive rejection
     /// into an unbounded replay: lagging views and verdicts produced before a
     /// known verifier correction are retried, current bad proofs are not.

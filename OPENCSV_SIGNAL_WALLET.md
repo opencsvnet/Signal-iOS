@@ -74,13 +74,13 @@ byte-distinct delivery retries retain their files but render exactly one
 verified payment bubble.
 
 For unconfirmed Test USD, Signal queries both built-in certificate-pinned raw
-transaction APIs and persists every success and failure. The default
-availability quorum is one: at least one provider must return the fresh exact
-transaction bytes under its configured chain pin. A provider outage therefore
-does not freeze the wallet, while zero matching providers, stale evidence, pin
-mismatch, or changed bytes fail closed. This only unlocks an explicitly
-unconfirmed forwardable coin; phone-owned header/BIP158/full-block/Merkle
-verification remains mandatory before the UI calls it settled.
+transaction APIs and persists every success and failure. Every raw observer
+configured as `require` must return the fresh exact transaction bytes under its
+configured chain pin; the signet defaults therefore require both providers.
+An outage, stale evidence, pin mismatch, or changed bytes fails closed for
+zero-confirmation forwarding. This only unlocks an explicitly unconfirmed
+forwardable coin; phone-owned header/BIP158/full-block/Merkle verification
+remains mandatory before the UI calls it settled.
 
 The operation journal and pending Signal delivery metadata make every crash
 boundary resumable. Cancellation ends at the first broadcast attempt. A
@@ -112,6 +112,12 @@ the linked iPhone 16e must be an in-place signed upgrade that preserves its
 Signal account and message database. Wiping/relinking the phone, mainnet
 broadcast, release, and upstream submission require separate owner approval.
 
+The TestFlight archive gate derives the exact 40-character Git commit from
+`HEAD`, rejects tracked, staged, or untracked source drift outside generated
+Pods, embeds that commit as `OpenCSVSourceCommit` in the signed application
+plist, and reads it back from the completed archive. A build number or local
+archive filename alone is not accepted as a source receipt.
+
 An account database is permanently bound to its Bitcoin network. Advanced
 settings reject network changes after account creation instead of repurposing
 descriptors, checkpoints, or the sibling `.cbf` cache. Regtest chain resets
@@ -132,6 +138,30 @@ Production deployment will start with a separately reviewed USD instrument,
 issuer manifest, account database, backup namespace, and Bitcoin mainnet fee
 tree. Until that explicit production setup exists, the reviewed mainnet issuer
 set remains empty and Signal cannot present or transfer a production USD asset.
+
+### 2026-08-11 archived-attachment admission decision
+
+Fresh v2 installations can still display ordinary Signal messages carrying
+archived v1 consignment attachments. Before this change, Signal started chain
+discovery before deciding whether the attachment's asset belonged to the exact
+v2 reviewed-issuer registry. A missing historical signet anchor therefore
+looked like retryable network lag and could leave the message at “verifying”
+forever.
+
+Rust now returns the canonical recipient asset identities and the exact
+reviewed-issuer admission result from consignment inspection. Signal evaluates
+that deterministic result before any explorer or compact-filter work. An
+unknown or removed instrument is retained in message history and rendered as
+`asset_not_reviewed`; it is never credited, made spendable, or relabeled as
+Test USD v2. Contradictory inspection fields fail closed with the same result.
+Only admitted v2 consignments proceed to retryable observer and chain checks.
+
+Two broader fixes were considered and rejected. Treating every missing anchor
+as terminal would misclassify genuine observer or chain lag. Deleting old
+attachment state or rewriting its timestamps would hide history without
+establishing protocol evidence. The focused Signal suite covers reviewed,
+archived, and contradictory inspection results; Rust separately covers a
+mixed reviewed/unreviewed consignment against the exact registry predicate.
 
 ## 2026-08-07 simulator acceptance journal
 
