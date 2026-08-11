@@ -429,10 +429,20 @@ class OpenCsvWalletViewController: OWSViewController {
                 // because its refresh failed. The placeholder is only for a
                 // wallet that could not be opened at all.
                 if self.balanceLabel.text == "—" {
-                    self.balanceStatusLabel.text = OWSLocalizedString(
-                        "OPENCSV_WALLET_SETUP_INCOMPLETE",
-                        comment: "Status shown when the OpenCSV wallet has not been provisioned on this device.",
-                    )
+                    if
+                        case OpenCsvClientError.ffi(let message) = error,
+                        message.contains("testnet_reset_required")
+                    {
+                        self.balanceStatusLabel.text = OWSLocalizedString(
+                            "OPENCSV_WALLET_TESTNET_RESET_REQUIRED",
+                            comment: "Status shown when archived Test USD v1 state cannot be opened as v2.",
+                        )
+                    } else {
+                        self.balanceStatusLabel.text = OWSLocalizedString(
+                            "OPENCSV_WALLET_SETUP_INCOMPLETE",
+                            comment: "Status shown when the OpenCSV wallet has not been provisioned on this device.",
+                        )
+                    }
                     self.operationHistoryLabel.text = OWSLocalizedString(
                         "OPENCSV_WALLET_NO_ACTIVITY",
                         comment: "Shown when there are no OpenCSV wallet operations yet.",
@@ -527,6 +537,7 @@ class OpenCsvWalletViewController: OWSViewController {
             }.joined(separator: "\n")
         batchReserveLabel.text = Self.renderBatchReserves(summary.batchReserves)
         walletPolicyLabel.text = [
+            "Deployment: \(summary.deploymentId)",
             "Bitcoin spending: OpenCSV fees only",
             "Backup: \(summary.backupVerified ? "verified" : "required")",
             "Device: \(summary.accountRole.rawValue), \(summary.deviceBindingStatus)",
@@ -756,7 +767,7 @@ class OpenCsvWalletViewController: OWSViewController {
     ) -> String {
         let records = Dictionary(uniqueKeysWithValues: instruments.map { ($0.assetId, $0) })
         let trustedUsd = instruments.filter {
-            $0.profile == "trusted_usd_v1"
+            $0.profile == "trusted_test_usd_v2"
                 && $0.trustState == "trusted_configuration"
                 && $0.manifest?.terms.unitCode == "USD"
                 && $0.manifest?.terms.decimals == 6
@@ -896,7 +907,7 @@ class OpenCsvWalletViewController: OWSViewController {
     ) -> UsdSummary {
         let trustedIds = Set(instruments.compactMap { instrument -> String? in
             guard
-                instrument.profile == "trusted_usd_v1",
+                instrument.profile == "trusted_test_usd_v2",
                 instrument.trustState == "trusted_configuration",
                 instrument.manifest?.terms.unitCode == "USD",
                 instrument.manifest?.terms.decimals == 6

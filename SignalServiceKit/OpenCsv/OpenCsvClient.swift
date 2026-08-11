@@ -103,9 +103,15 @@ public struct OpenCsvUsdIssuerPolicy: Codable, Equatable {
 /// authorize minting. Mainnet remains empty until an issuer relationship and
 /// manifest have received a separate production review.
 public enum OpenCsvReviewedUsdIssuers {
-    /// Exact asset identity of Signal's permanent, no-value signet product.
-    /// This is presentation and spend-policy identity, not a ticker match.
-    public static let signetTestUsdAssetId = "1d58a8145eedac17efe66371293eb472a4c68554141cc14380360e6eb720b507"
+    /// Application deployment identity. Bitcoin Signet is unchanged; this
+    /// value prevents v1 wallet or backup state from being interpreted as v2.
+    public static let testUsdDeploymentId = "opencsv-test-usd-v2"
+    public static let testUsdCheckpointVersion: UInt32 = 4
+
+    /// Exact asset identity of Signal's no-value v2 signet product, copied
+    /// from the headless issuer's backed-up canonical manifest. It is never
+    /// derived from the `USD` display code.
+    public static let signetTestUsdAssetId = "8a88b56e42450f5761b521063df3fa16806add5c434584441d3b626556115d62"
 
     /// Earliest height relevant to the reviewed instrument set in this
     /// build. The signet preview registry was activated after this public
@@ -123,18 +129,18 @@ public enum OpenCsvReviewedUsdIssuers {
                 manifest: OpenCsvInstrumentManifest(
                     terms: OpenCsvInstrumentTerms(
                         network: "signet",
-                        displayName: "OpenCSV USD Preview",
+                        displayName: "OpenCSV Test USD v2",
                         unitCode: "USD",
                         decimals: 6,
-                        issuerName: "OpenCSV Preview Issuer",
-                        termsUri: "https://opencsv.net/usd-preview/terms-v1",
-                        redemptionSummary: "Test-only units with no monetary value; not redeemable for dollars or USDT.",
+                        issuerName: "OpenCSV Test Issuer v2",
+                        termsUri: "https://opencsv.net/usd-preview/terms-v2",
+                        redemptionSummary: "Test-only units with no monetary or redemption value.",
                         testOnly: true,
                     ),
                     genesis: .init(
-                        issuerPk: [226, 105, 214, 37, 119, 106, 218, 34, 250, 56, 114, 13, 17, 174, 51, 115, 254, 25, 253, 22, 249, 142, 75, 9, 95, 4, 45, 16, 59, 88, 197, 23],
+                        issuerPk: [85, 229, 121, 32, 170, 211, 54, 96, 232, 129, 85, 8, 229, 135, 245, 106, 205, 109, 65, 111, 140, 192, 44, 73, 157, 193, 138, 68, 41, 242, 37, 109],
                         currencyCode: Array("USD".utf8),
-                        termsHash: [94, 85, 229, 66, 220, 52, 56, 13, 53, 48, 201, 83, 61, 40, 101, 90, 67, 49, 125, 115, 35, 212, 140, 90, 208, 161, 74, 111, 128, 30, 71, 100],
+                        termsHash: [196, 2, 2, 117, 244, 225, 86, 119, 89, 142, 110, 1, 241, 176, 125, 41, 167, 216, 254, 8, 166, 4, 250, 16, 16, 111, 104, 11, 179, 115, 18, 115],
                         nonce: 1,
                     ),
                 ),
@@ -174,7 +180,7 @@ public enum OpenCsvProductPresentation {
             network == "signet",
             instruments.contains(where: {
                 $0.assetId == OpenCsvReviewedUsdIssuers.signetTestUsdAssetId
-                    && $0.profile == "trusted_usd_v1"
+                    && $0.profile == "trusted_test_usd_v2"
                     && $0.trustState == "trusted_configuration"
                     && $0.manifest.map { reviewedTestManifests.contains($0) } == true
             })
@@ -409,6 +415,7 @@ public struct OpenCsvObservationEvidence: Codable, Equatable, Sendable {
 /// intentionally absent.
 public struct OpenCsvAccountConfig: Codable, Equatable {
     public let version: UInt32
+    public let deploymentId: String
     public let network: String
     public let esploraUrl: String
     public let peers: [String]
@@ -435,7 +442,8 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
     public let usdIssuers: [OpenCsvUsdIssuerPolicy]
 
     public init(
-        version: UInt32 = 1,
+        version: UInt32 = 2,
+        deploymentId: String? = nil,
         network: String,
         esploraUrl: String,
         peers: [String],
@@ -455,6 +463,9 @@ public struct OpenCsvAccountConfig: Codable, Equatable {
         usdIssuers: [OpenCsvUsdIssuerPolicy] = [],
     ) {
         self.version = version
+        self.deploymentId = deploymentId ?? (
+            network == "mainnet" ? "opencsv-mainnet" : OpenCsvReviewedUsdIssuers.testUsdDeploymentId
+        )
         self.network = network
         self.esploraUrl = esploraUrl
         self.peers = peers
@@ -550,6 +561,7 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
     }
 
     public let version: UInt32
+    public let deploymentId: String
     public let role: OpenCsvAccountRole
     public let network: String
     public let owners: [String]

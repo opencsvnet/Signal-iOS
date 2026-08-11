@@ -204,6 +204,9 @@ public actor OpenCsvPayments {
         public let scanFromHeight: UInt64
         /// Bitcoin network for the chain views ("signet" default).
         public let network: String
+        /// Application deployment namespace; distinct from the Bitcoin
+        /// network and shown so archived v1 state cannot look current.
+        public let deploymentId: String
         /// Reviewed check definitions with the user's persisted per-check
         /// Off / Observe / Require selections.
         public let observationPolicy: [OpenCsvObservationCheck]
@@ -1429,7 +1432,7 @@ public actor OpenCsvPayments {
         requestedAssetId: String?,
     ) throws -> OpenCsvUsdSendSelection {
         let trusted = instruments.filter {
-            $0.profile == "trusted_usd_v1"
+            $0.profile == "trusted_test_usd_v2"
                 && $0.trustState == "trusted_configuration"
                 && $0.manifest?.terms.unitCode == "USD"
                 && $0.manifest?.terms.decimals == 6
@@ -2140,6 +2143,7 @@ public actor OpenCsvPayments {
             },
             scanFromHeight: db.read { store.scanFromHeight(tx: $0) },
             network: status.network,
+            deploymentId: status.deploymentId,
             observationPolicy: observationPolicy,
             requiredRawObserverQuorum: requiredRawObserverQuorum,
             observationReceipts: status.observationReceipts ?? [],
@@ -2226,7 +2230,7 @@ public actor OpenCsvPayments {
     /// silently repurposed by a settings edit.
     private static func hasPersistedAccountDatabase() -> Bool {
         let directory = OWSFileSystem.appSharedDataDirectoryURL()
-            .appendingPathComponent("opencsv", isDirectory: true)
+            .appendingPathComponent("opencsv-test-usd-v2", isDirectory: true)
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
                 at: directory,
@@ -2236,9 +2240,9 @@ public actor OpenCsvPayments {
             return false
         }
         return entries.contains { url in
-            url.lastPathComponent == "account.sqlite"
+            url.lastPathComponent == "account-v2.sqlite"
                 || (
-                    url.lastPathComponent.hasPrefix("linked-account-")
+                    url.lastPathComponent.hasPrefix("linked-account-v2-")
                         && url.pathExtension == "sqlite"
                 )
         }
@@ -2457,8 +2461,8 @@ public actor OpenCsvPayments {
         let databasePath = directory
             .appendingPathComponent(
                 isPrimary
-                    ? "account.sqlite"
-                    : "linked-account-\(settings.linked?.owner ?? "unprovisioned").sqlite",
+                    ? "account-v2.sqlite"
+                    : "linked-account-v2-\(settings.linked?.owner ?? "unprovisioned").sqlite",
             )
             .path
         func openAccount(expectedCommitment: String?) throws -> OpenCsvAccountWallet {
@@ -2521,7 +2525,10 @@ public actor OpenCsvPayments {
             }
         }
         if !secureBackupIsEnabled() {
-            _ = try account.setBackupState(verified: false, checkpointVersion: 1)
+            _ = try account.setBackupState(
+                verified: false,
+                checkpointVersion: OpenCsvReviewedUsdIssuers.testUsdCheckpointVersion,
+            )
         }
         if isPrimary {
             let status = try account.status()
@@ -2796,7 +2803,10 @@ public actor OpenCsvPayments {
         expectedCheckpointHash: String? = nil,
     ) async throws {
         guard secureBackupIsEnabled() else {
-            _ = try? account.setBackupState(verified: false, checkpointVersion: 1)
+            _ = try? account.setBackupState(
+                verified: false,
+                checkpointVersion: OpenCsvReviewedUsdIssuers.testUsdCheckpointVersion,
+            )
             throw OpenCsvPaymentsError.secureBackupRequired
         }
         guard let material = try store.accountMaterial() else {

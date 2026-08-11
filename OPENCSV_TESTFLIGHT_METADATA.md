@@ -23,11 +23,16 @@ the form to Apple.
 
 ## Beta app description
 
-OpenCSV Demo is a public research beta for sending signet-only Test USD in an
+OpenCSV Demo is preparing a public research beta for sending signet-only Test USD v2 in an
 independently built Signal fork. OpenCSV uses client-side proofs while ordinary
 Bitcoin signet transactions provide ordering. Test USD has no monetary or
 redemption value. This build is not produced, endorsed, or supported by Signal
 Messenger, LLC.
+
+The earlier archived binary demonstrates Test USD v1 and must not be offered
+or described as v2. A new external build requires the merged v2 Rust revision,
+fresh Signal wallet/database/backup namespaces, an exact reviewed v2 issuer
+manifest, and new live acceptance receipts before Apple beta review.
 
 ## What to test
 

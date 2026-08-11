@@ -245,7 +245,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
 
     private func render(_ summary: OpenCsvPayments.WalletSummary, isUpdating: Bool) {
         let trustedUsd = summary.instruments.filter {
-            $0.profile == "trusted_usd_v1"
+            $0.profile == "trusted_test_usd_v2"
                 && $0.trustState == "trusted_configuration"
                 && $0.manifest?.terms.unitCode == "USD"
                 && $0.manifest?.terms.decimals == 6

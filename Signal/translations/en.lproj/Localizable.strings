@@ -6945,6 +6945,7 @@
 
 /* Status shown when the OpenCSV wallet has not been provisioned on this device. */
 "OPENCSV_WALLET_SETUP_INCOMPLETE" = "Finish wallet setup to see your balance";
+"OPENCSV_WALLET_TESTNET_RESET_REQUIRED" = "Archived Test USD v1 state cannot open as v2. Start a fresh Test USD v2 wallet.";
 
 /* Warning label for a test-only instrument. */
 "OPENCSV_WALLET_TEST_INSTRUMENT" = "Test only · no monetary value";

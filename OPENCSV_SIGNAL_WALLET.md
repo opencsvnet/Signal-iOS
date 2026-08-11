@@ -1,5 +1,23 @@
 # Signal-native OpenCSV wallet
 
+## Test USD v2 reset (2026-08-11)
+
+Bitcoin Signet is unchanged, but this branch deliberately starts a fresh
+OpenCSV application deployment. Account config generation 2 and deployment id
+`opencsv-test-usd-v2` are passed to Rust; Signal uses
+`OpenCsvPayments.testUsd.v2` KeyValueStore/Keychain state and the
+`opencsv-test-usd-v2/account-v2.sqlite` database. V1 wallet roots, addresses,
+balances, checkpoints, backups, and reviewed issuer entries are not migrated.
+Rust rejects old state with `testnet_reset_required`, which the wallet renders
+as a fresh-wallet instruction rather than crashing.
+
+The old issuer allowlist is removed. The v2 registry pins exact backed-up
+headless manifest asset
+`8a88b56e42450f5761b521063df3fa16806add5c434584441d3b626556115d62`;
+Signal holds no issuer secret and still cannot mint. Existing Bob/Carol
+transactions and media are archived v1 evidence; a new v2 live run is required
+before TestFlight or release claims.
+
 This fork replaces Signal's payment behavior with an OpenCSV asset wallet and
 a Bitcoin fee reserve owned by Rust. Signal transports consignments as normal
 encrypted attachments. There is no OpenCSV anchor server and Swift exposes no
@@ -100,7 +118,7 @@ descriptors, checkpoints, or the sibling `.cbf` cache. Regtest chain resets
 and signet/mainnet testing therefore use clean isolated installations; the app
 never deletes or silently reuses a cache from another chain.
 
-### Test USD network boundary
+### Archived v1 Test USD network boundary
 
 The user-facing product reviewed into the current Signal build is **Test USD**.
 Wire data continues to use `USD`; Signal derives the Test USD label only from

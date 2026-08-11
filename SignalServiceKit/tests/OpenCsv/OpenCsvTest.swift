@@ -266,7 +266,7 @@ struct OpenCsvSendAssetSelectionTest {
         assetId: String,
         issuer: String,
         priority: UInt32,
-        profile: String = "trusted_usd_v1",
+        profile: String = "trusted_test_usd_v2",
         trustState: String = "trusted_configuration",
     ) -> OpenCsvInstrumentRecord {
         OpenCsvInstrumentRecord(
@@ -667,9 +667,9 @@ final class OpenCsvWalletStoreTest {
         let root = Data(repeating: 7, count: 32)
         try store.installRestoredAccountRoot(root)
         let payload = try OpenCsvSecureBackupPayload(
-            version: 1,
+            version: 4,
             accountRoot: root,
-            checkpointJson: #"{"checkpoint":{"version":1}}"#,
+            checkpointJson: #"{"checkpoint":{"version":4,"deployment_id":"opencsv-test-usd-v2"}}"#,
             checkpointHash: String(repeating: "a", count: 64),
             deviceBindingCommitment: String(repeating: "b", count: 64),
         )
@@ -702,9 +702,9 @@ final class OpenCsvWalletStoreTest {
     func secureBackupPayloadCarriesRootButNoDeviceBinding() throws {
         let root = Data(repeating: 7, count: 32)
         let payload = try OpenCsvSecureBackupPayload(
-            version: 1,
+            version: 4,
             accountRoot: root,
-            checkpointJson: #"{"checkpoint":{"version":1}}"#,
+            checkpointJson: #"{"checkpoint":{"version":4,"deployment_id":"opencsv-test-usd-v2"}}"#,
             checkpointHash: "checkpoint-hash",
             deviceBindingCommitment: "public-binding-commitment",
         )
@@ -716,6 +716,19 @@ final class OpenCsvWalletStoreTest {
         }
         #expect(restored == payload)
         #expect(restored?.accountRoot == root)
+    }
+
+    @Test
+    func v1SecureBackupCannotBeReinterpretedAsV2() {
+        #expect(throws: OpenCsvAccountMaterialError.invalidLength) {
+            _ = try OpenCsvSecureBackupPayload(
+                version: 1,
+                accountRoot: Data(repeating: 7, count: 32),
+                checkpointJson: #"{"checkpoint":{"version":1}}"#,
+                checkpointHash: "archived-v1",
+                deviceBindingCommitment: "archived-v1",
+            )
+        }
     }
 
     @Test
@@ -1481,15 +1494,18 @@ final class OpenCsvWalletStoreTest {
 
 struct OpenCsvReviewedUsdIssuersTest {
     @Test
-    func signetPinsTheExactTestOnlyPreviewManifest() throws {
+    func signetPinsTheExactBackedUpV2Manifest() throws {
         let policies = OpenCsvReviewedUsdIssuers.policies(for: "signet")
         #expect(policies.count == 1)
         let policy = try #require(policies.first)
+        #expect(OpenCsvReviewedUsdIssuers.signetTestUsdAssetId == "8a88b56e42450f5761b521063df3fa16806add5c434584441d3b626556115d62")
         #expect(policy.priority == 0)
         #expect(policy.manifest.terms.network == "signet")
         #expect(policy.manifest.terms.unitCode == "USD")
         #expect(policy.manifest.terms.decimals == 6)
         #expect(policy.manifest.terms.testOnly)
+        #expect(policy.manifest.terms.displayName == "OpenCSV Test USD v2")
+        #expect(policy.manifest.terms.termsUri == "https://opencsv.net/usd-preview/terms-v2")
         #expect(policy.manifest.genesis.currencyCode == Array("USD".utf8))
         #expect(policy.manifest.genesis.issuerPk.count == 32)
         #expect(policy.manifest.genesis.termsHash.count == 32)
@@ -1499,6 +1515,30 @@ struct OpenCsvReviewedUsdIssuersTest {
     func productionNetworksDoNotTrustThePreviewIssuer() {
         #expect(OpenCsvReviewedUsdIssuers.policies(for: "mainnet").isEmpty)
         #expect(OpenCsvReviewedUsdIssuers.policies(for: "regtest").isEmpty)
+    }
+
+    @Test
+    func accountConfigDefaultsToTheCleanV2Deployment() {
+        let signet = OpenCsvAccountConfig(
+            network: "signet",
+            esploraUrl: "https://mempool.space/signet/api",
+            peers: [],
+            verificationPeers: [],
+            role: .primary,
+            backupVerified: false,
+        )
+        #expect(signet.version == 2)
+        #expect(signet.deploymentId == "opencsv-test-usd-v2")
+
+        let mainnet = OpenCsvAccountConfig(
+            network: "mainnet",
+            esploraUrl: "https://mempool.space/api",
+            peers: [],
+            verificationPeers: [],
+            role: .primary,
+            backupVerified: false,
+        )
+        #expect(mainnet.deploymentId == "opencsv-mainnet")
     }
 
     @Test
@@ -1521,7 +1561,7 @@ struct OpenCsvReviewedUsdIssuersTest {
         let instrument = OpenCsvInstrumentRecord(
             assetId: assetId,
             trustState: "trusted_configuration",
-            profile: "trusted_usd_v1",
+            profile: "trusted_test_usd_v2",
             issuerPriority: policy.priority,
             manifest: policy.manifest,
         )
@@ -1537,7 +1577,7 @@ struct OpenCsvReviewedUsdIssuersTest {
         let lookalike = OpenCsvInstrumentRecord(
             assetId: assetId,
             trustState: "trusted_configuration",
-            profile: "trusted_usd_v1",
+            profile: "trusted_test_usd_v2",
             issuerPriority: policy.priority,
             manifest: OpenCsvInstrumentManifest(
                 terms: OpenCsvInstrumentTerms(
@@ -1586,6 +1626,35 @@ struct OpenCsvClientFfiTest {
         // Reopening the same secrets yields the same owner key.
         let reopened = try OpenCsvWallet(secretsJson: try wallet.secretsJson())
         #expect(reopened.owners == wallet.owners)
+    }
+
+    @Test
+    func reviewedV2ManifestMatchesRustAssetIdentity() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("opencsv-v2-manifest-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let account = try OpenCsvAccountWallet(
+            config: OpenCsvAccountConfig(
+                network: "signet",
+                esploraUrl: "https://mempool.space/signet/api",
+                peers: [],
+                verificationPeers: [],
+                role: .primary,
+                backupVerified: false,
+                usdIssuers: OpenCsvReviewedUsdIssuers.policies(for: "signet"),
+            ),
+            accountRoot: Data(repeating: 41, count: 32),
+            deviceBinding: Data(repeating: 42, count: 32),
+            databasePath: directory.appendingPathComponent("account-v2.sqlite").path,
+        )
+        let status = try account.status()
+        #expect(status.deploymentId == "opencsv-test-usd-v2")
+        let instrument = try #require(status.instruments.first)
+        #expect(instrument.assetId == OpenCsvReviewedUsdIssuers.signetTestUsdAssetId)
+        #expect(instrument.profile == "trusted_test_usd_v2")
+        #expect(instrument.trustState == "trusted_configuration")
     }
 
     @Test
@@ -1638,7 +1707,7 @@ struct OpenCsvClientFfiTest {
             #expect(status.feeReserve.totalSats == 0)
             #expect(status.depositAddress.hasPrefix("bcrt1"))
             let checkpoint = try wallet.checkpoint()
-            #expect(checkpoint.checkpoint.version == 3)
+            #expect(checkpoint.checkpoint.version == OpenCsvReviewedUsdIssuers.testUsdCheckpointVersion)
             #expect(checkpoint.checkpoint.deviceBindingCommitment == status.deviceBinding.commitment)
         }
 
@@ -1702,7 +1771,7 @@ struct OpenCsvClientFfiTest {
             )
             Issue.record("a durable account database must never change Bitcoin networks")
         } catch let OpenCsvClientError.ffi(message) {
-            #expect(message.contains("database is for regtest, not mainnet"))
+            #expect(message.contains("database deployment opencsv-test-usd-v2 cannot open as opencsv-mainnet"))
         } catch {
             Issue.record("unexpected network-reuse error: \(error)")
         }

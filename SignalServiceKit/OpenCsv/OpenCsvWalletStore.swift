@@ -272,7 +272,10 @@ public struct OpenCsvSecureBackupPayload: Codable, Equatable {
         checkpointHash: String,
         deviceBindingCommitment: String,
     ) throws {
-        guard accountRoot.count == 32 else {
+        guard
+            version == OpenCsvReviewedUsdIssuers.testUsdCheckpointVersion,
+            accountRoot.count == 32
+        else {
             throw OpenCsvAccountMaterialError.invalidLength
         }
         self.version = version
@@ -367,33 +370,36 @@ public struct OpenCsvLinkedWatchAccount: Codable, Equatable {
 /// consignments, `o:<ordinal>` for our own outgoing consignments (ingested
 /// to credit change outputs).
 public struct OpenCsvWalletStore {
-    private static let collection = "OpenCsvPayments"
-    private static let keychainService = "OpenCsvPayments"
-    private static let primaryAccountMaterialKey = "primaryAccountMaterial.v1"
-    private static let restoredAccountRootKey = "restoredAccountRoot.v1"
+    /// V2 never opens v1 KeyValueStore or Keychain state. The old namespace
+    /// remains untouched for archival/export tooling and cannot be mistaken
+    /// for a migrated wallet.
+    private static let collection = "OpenCsvPayments.testUsd.v2"
+    private static let keychainService = "OpenCsvPayments.testUsd.v2"
+    private static let primaryAccountMaterialKey = "primaryAccountMaterial.v2"
+    private static let restoredAccountRootKey = "restoredAccountRoot.v2"
 #if DEBUG && OPENCSV_TEST_WALLET_RECOVERY
-    private static let pendingTestDeviceRebindKey = "pendingTestDeviceRebind.v1"
+    private static let pendingTestDeviceRebindKey = "pendingTestDeviceRebind.v2"
 #endif
-    private static let keychainKey = "walletSecrets"
+    private static let keychainKey = "walletSecrets.v2"
 
     private static let anchorServerUrlKey = "anchorServerUrl"
-    private static let esploraUrlKey = "esploraUrl.v1"
-    private static let linkedWatchAccountKey = "linkedWatchAccount.v1"
+    private static let esploraUrlKey = "esploraUrl.v2"
+    private static let linkedWatchAccountKey = "linkedWatchAccount.v2"
     private static let pendingDeliveriesKey = "pendingDeliveries"
-    private static let pendingAccountOperationsKey = "pendingAccountOperations.v1"
-    private static let incomingActivitiesKey = "incomingActivities.v1"
+    private static let pendingAccountOperationsKey = "pendingAccountOperations.v2"
+    private static let incomingActivitiesKey = "incomingActivities.v2"
     private static let inFlightSendsKey = "inFlightSends"
     private static let indexerUrlsKey = "indexerUrls"
     private static let spvPeersKey = "spvPeers"
     private static let scanFromHeightKey = "scanFromHeight"
     private static let networkKey = "network"
-    private static let observationModesKey = "observationModes.v1"
+    private static let observationModesKey = "observationModes.v2"
     private static let replayOrderKey = "replayOrder"
     private static let spentCoinIdsKey = "spentCoinIds"
     private static let lastSnapshotKey = "lastSnapshot"
     private static let outgoingOrdinalKey = "outgoingOrdinal"
-    private static let secureBackupPayloadKey = "secureBackupPayload.v1"
-    private static let verifiedChainViewKey = "verifiedChainView.v1"
+    private static let secureBackupPayloadKey = "secureBackupPayload.v2"
+    private static let verifiedChainViewKey = "verifiedChainView.v2"
     private static let attachmentConsignmentIdPrefix = "attachmentConsignmentId:"
     private static let canonicalPresentationAttachmentPrefix = "canonicalPresentationAttachment:"
     private static let canonicalPresentationMessagePrefix = "canonicalPresentationMessage:"

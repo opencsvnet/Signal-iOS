@@ -663,7 +663,7 @@ public class BackupArchiveAccountDataArchiver: BackupArchiveProtoStreamWriter {
             let openCsvWallet = accountData.openCsvWallet
             do {
                 guard
-                    openCsvWallet.version == 1,
+                    openCsvWallet.version == OpenCsvReviewedUsdIssuers.testUsdCheckpointVersion,
                     !openCsvWallet.checkpointJson.isEmpty,
                     !openCsvWallet.checkpointHash.isEmpty,
                     !openCsvWallet.deviceBindingCommitment.isEmpty
