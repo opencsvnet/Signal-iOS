@@ -68,6 +68,10 @@ public enum OpenCsvPaymentsError: Error {
     /// (AnchorNotFound / InsufficientConfirmations). Nothing is stored;
     /// the sweep retries once the chain view advances.
     case chainViewLagging(reason: String)
+    /// Mandatory phone-owned chain evidence is temporarily unavailable or
+    /// still catching up. The exact durable send remains queued and must be
+    /// retried; this is never a terminal payment failure.
+    case chainVerificationUnavailable
     /// Bitcoin descriptors, checkpoints, and compact-filter caches are all
     /// chain-specific. Changing the network of an existing account would
     /// either strand it behind Rust's network guard or mix test histories.
@@ -1314,6 +1318,7 @@ public actor OpenCsvPayments {
         let operationId = pending.operationId
         var operation = try account.operationStatus(operationId)
         if operation.state == "planned" || operation.state == "fee_reserved" {
+            try await requireChainVerificationForProof()
             await progress?(.generatingProof)
             let prepared = try account.proveOperation(operationId)
             return try await signPreparedOperation(
@@ -1381,6 +1386,7 @@ public actor OpenCsvPayments {
             return [try await finishQueuedSolo(account: account, pending: only, progress: progress)]
         }
         if batch.state == "frozen" {
+            try await requireChainVerificationForProof()
             await progress?(.generatingProof)
             switch try account.proveSendBatch(batchLocalId) {
             case .solo(let operationId):
@@ -1430,6 +1436,20 @@ public actor OpenCsvPayments {
             deliveries.append(try await persistDeliveryIfReady(operation: operation, pending: metadata))
         }
         return deliveries
+    }
+
+    /// Cached balances keep the send UI instant, but proof generation cannot
+    /// race the independently verified nullifier scan. A failed sync leaves
+    /// the Rust operation and fee reservation untouched for the next
+    /// foreground/BGProcessing retry.
+    private func requireChainVerificationForProof() async throws {
+        if scanSyncedThisLaunch {
+            return
+        }
+        guard await scanSyncIfNeeded() else {
+            Logger.info("OpenCSV proof remains queued while chain verification catches up")
+            throw OpenCsvPaymentsError.chainVerificationUnavailable
+        }
     }
 
     /// Compatibility call for tests and non-interactive clients that still
@@ -1842,6 +1862,7 @@ public actor OpenCsvPayments {
                         // The exact intent and chat metadata were durable
                         // before this point, so app termination merely causes
                         // the same operation id to re-enter here.
+                        try await requireChainVerificationForProof()
                         _ = try account.proveOperation(pending.operationId)
                         operation = try account.operationStatus(pending.operationId)
                     }
