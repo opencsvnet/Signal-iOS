@@ -560,10 +560,12 @@ class OpenCsvWalletViewController: OWSViewController {
         let incomingNewestFirst = summary.incomingActivities.reversed()
         let hasRejectedIncoming = incomingNewestFirst.contains { $0.state == .needsAttention }
         let currentIncomingLimit = hasRejectedIncoming ? 7 : 8
-        var incomingActivity = Array(incomingNewestFirst.lazy
-            .filter { $0.state != .needsAttention }
-            .prefix(currentIncomingLimit)
-            .map { Self.renderIncomingActivity($0, productName: productName) })
+        var incomingActivity = Array(
+            incomingNewestFirst.lazy
+                .filter { $0.state != .needsAttention }
+                .prefix(currentIncomingLimit)
+                .map { Self.renderIncomingActivity($0, productName: productName) },
+        )
         if hasRejectedIncoming {
             incomingActivity.append(OWSLocalizedString(
                 "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION",
