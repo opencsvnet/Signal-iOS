@@ -2152,6 +2152,31 @@ struct OpenCsvChainViewTest {
         #expect(!OpenCsvPayments.isChainLagReason(nil))
     }
 
+    /// A live send found the confirmed spend scan at N while Rust's
+    /// independently verified funding view had just advanced to N+1. Only
+    /// the stable freshness reason may invalidate the cached launch receipt;
+    /// definitive protocol and database failures remain final.
+    @Test
+    func fundingTipRaceIsTheOnlyProofGateRetry() {
+        #expect(OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffi("chain_verification_unavailable"),
+        ))
+        #expect(OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffi(
+                "chain_verification_unavailable: confirmed spend scan tip 10 is behind funding tip 11",
+            ),
+        ))
+        #expect(!OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffi("stale_chain_state: nullifier conflict"),
+        ))
+        #expect(!OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffi("database_error: chain_verification_unavailable in detail"),
+        ))
+        #expect(!OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvPaymentsError.chainVerificationUnavailable,
+        ))
+    }
+
     /// Archived or unknown instruments are a final local product-policy
     /// result, not a network retry. This keeps v1 attachments visible in
     /// message history without ever crediting or relabeling them as v2.

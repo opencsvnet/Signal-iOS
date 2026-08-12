@@ -1384,9 +1384,11 @@ public actor OpenCsvPayments {
         let operationId = pending.operationId
         var operation = try account.operationStatus(operationId)
         if operation.state == "planned" || operation.state == "fee_reserved" {
-            try await requireChainVerificationForProof()
             await progress?(.generatingProof)
-            let prepared = try account.proveOperation(operationId)
+            let prepared = try await proveOperationWithCurrentChain(
+                account: account,
+                operationId: operationId,
+            )
             return try await signPreparedOperation(
                 account: account,
                 operationId: prepared.operationId,
@@ -1452,9 +1454,11 @@ public actor OpenCsvPayments {
             return [try await finishQueuedSolo(account: account, pending: only, progress: progress)]
         }
         if batch.state == "frozen" {
-            try await requireChainVerificationForProof()
             await progress?(.generatingProof)
-            switch try account.proveSendBatch(batchLocalId) {
+            switch try await proveBatchWithCurrentChain(
+                account: account,
+                batchLocalId: batchLocalId,
+            ) {
             case .solo(let operationId):
                 guard let only = pending.first(where: { $0.operationId == operationId }) else {
                     throw OpenCsvClientError.ffi("solo OpenCSV operation lost Signal metadata")
@@ -1516,6 +1520,59 @@ public actor OpenCsvPayments {
             Logger.info("OpenCSV proof remains queued while chain verification catches up")
             throw OpenCsvPaymentsError.chainVerificationUnavailable
         }
+    }
+
+    /// Rust independently verifies the selected fee input immediately before
+    /// proving. Its funding view can advance by one block after the phone's
+    /// scan completed but before this call begins. That is a freshness race,
+    /// not a terminal operation result: invalidate the cached launch receipt,
+    /// advance the phone-owned scan, and retry the same durable operation id.
+    /// The retry count is bounded so unavailable peers never become a busy
+    /// loop, while a block arriving during the first refresh still converges.
+    private func proveOperationWithCurrentChain(
+        account: OpenCsvAccountWallet,
+        operationId: String,
+    ) async throws -> OpenCsvPreparedOperation {
+        for retry in 0...2 {
+            try await requireChainVerificationForProof()
+            do {
+                return try account.proveOperation(operationId)
+            } catch {
+                guard Self.isChainVerificationUnavailable(error), retry < 2 else {
+                    throw error
+                }
+                scanSyncedThisLaunch = false
+                Logger.info("funding view advanced; refreshing phone-owned scan before proof retry")
+            }
+        }
+        throw OpenCsvPaymentsError.chainVerificationUnavailable
+    }
+
+    private func proveBatchWithCurrentChain(
+        account: OpenCsvAccountWallet,
+        batchLocalId: String,
+    ) async throws -> OpenCsvSendBatchProofResult {
+        for retry in 0...2 {
+            try await requireChainVerificationForProof()
+            do {
+                return try account.proveSendBatch(batchLocalId)
+            } catch {
+                guard Self.isChainVerificationUnavailable(error), retry < 2 else {
+                    throw error
+                }
+                scanSyncedThisLaunch = false
+                Logger.info("funding view advanced; refreshing phone-owned scan before batch proof retry")
+            }
+        }
+        throw OpenCsvPaymentsError.chainVerificationUnavailable
+    }
+
+    /// Match only Rust's stable reason prefix. Human-readable detail is not
+    /// an API and must never turn a definitive protocol rejection retryable.
+    static func isChainVerificationUnavailable(_ error: Error) -> Bool {
+        guard case OpenCsvClientError.ffi(let message) = error else { return false }
+        return message == "chain_verification_unavailable"
+            || message.hasPrefix("chain_verification_unavailable:")
     }
 
     /// Compatibility call for tests and non-interactive clients that still
@@ -1928,8 +1985,10 @@ public actor OpenCsvPayments {
                         // The exact intent and chat metadata were durable
                         // before this point, so app termination merely causes
                         // the same operation id to re-enter here.
-                        try await requireChainVerificationForProof()
-                        _ = try account.proveOperation(pending.operationId)
+                        _ = try await proveOperationWithCurrentChain(
+                            account: account,
+                            operationId: pending.operationId,
+                        )
                         operation = try account.operationStatus(pending.operationId)
                     }
                     if
