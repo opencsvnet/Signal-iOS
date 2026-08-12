@@ -553,8 +553,22 @@ class OpenCsvWalletViewController: OWSViewController {
         feeBumpCandidates = summary.operations.filter {
             ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
         }
-        let incomingActivity = summary.incomingActivities.suffix(8).reversed().map {
-            Self.renderIncomingActivity($0, productName: productName)
+        // Definitively rejected attachments keep their exact per-message
+        // evidence, but the consumer wallet should not let a long archived
+        // history crowd current dollar activity off screen. Show current
+        // activity first and condense all nonspendable rejections to one row.
+        let incomingNewestFirst = summary.incomingActivities.reversed()
+        let hasRejectedIncoming = incomingNewestFirst.contains { $0.state == .needsAttention }
+        let currentIncomingLimit = hasRejectedIncoming ? 7 : 8
+        var incomingActivity = Array(incomingNewestFirst.lazy
+            .filter { $0.state != .needsAttention }
+            .prefix(currentIncomingLimit)
+            .map { Self.renderIncomingActivity($0, productName: productName) })
+        if hasRejectedIncoming {
+            incomingActivity.append(OWSLocalizedString(
+                "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION",
+                comment: "Incoming wallet activity that failed definitive verification.",
+            ))
         }
         let outgoingActivity = summary.operations.suffix(8).reversed().map {
             let txid = $0.txid.map { String($0.prefix(10)) } ?? "unsigned"
