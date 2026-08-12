@@ -1658,6 +1658,29 @@ struct OpenCsvClientFfiTest {
     }
 
     @Test
+    func accountInspectionPreservesStableInvalidConsignmentReason() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("opencsv-invalid-inspection-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = try OpenCsvAccountWallet(
+            config: accountConfig(),
+            accountRoot: Data(repeating: 43, count: 32),
+            deviceBinding: Data(repeating: 44, count: 32),
+            databasePath: directory.appendingPathComponent("account.sqlite").path,
+        )
+
+        do {
+            _ = try account.inspect(blob: Data([0, 1, 2]))
+            Issue.record("a malformed consignment must not produce an inspection")
+        } catch let OpenCsvClientError.ffi(message) {
+            #expect(message.hasPrefix("invalid_consignment:"))
+        } catch {
+            Issue.record("unexpected malformed-consignment error: \(error)")
+        }
+    }
+
+    @Test
     func rejectsGarbageInputs() {
         #expect(throws: OpenCsvClientError.self) {
             _ = try OpenCsvWallet(secretsJson: "not json")
@@ -2174,6 +2197,22 @@ struct OpenCsvChainViewTest {
         #expect(OpenCsvPayments.receiverAssetRejectionReason(contradictory) == "asset_not_reviewed")
     }
 
+    @Test
+    func malformedConsignmentsAreTerminalButInfrastructureFailuresRetry() {
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvClientError.ffi("invalid_consignment: non-canonical digest"),
+        ) == "invalid_consignment")
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvClientError.ffi("invalid_consignment"),
+        ) == "invalid_consignment")
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvClientError.ffi("chain_verification_unavailable: peers offline"),
+        ) == nil)
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvClientError.ffi("database_error: invalid_consignment appears only in detail"),
+        ) == nil)
+    }
+
     /// Repairs exact live failures without turning every definitive rejection
     /// into an unbounded replay: lagging views and verdicts produced before a
     /// known verifier correction are retried, current bad proofs are not.
@@ -2210,6 +2249,9 @@ struct OpenCsvChainViewTest {
         ))
         #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
             record(status: "rejected", reason: "NoOwnedOutput"),
+        ))
+        #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
+            record(status: "rejected", reason: "invalid_consignment"),
         ))
         #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
             record(status: "verified", reason: nil),

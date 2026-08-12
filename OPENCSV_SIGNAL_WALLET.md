@@ -241,3 +241,10 @@ foreground or BGProcessing pass. Rust independently enforces the same
 distinction: transient peer/scan outages preserve the exact unsigned operation
 and fee reservation, while a verified spend, rollback, byte mismatch, proof
 failure, or policy violation remains terminal and can never reach signing.
+
+The same simulator audit found archived pre-v2 attachments repeatedly failing
+strict canonical decoding while the UI kept calling them “verifying.” Signal
+now preserves Rust's stable `invalid_consignment` reason across the FFI and
+stores one terminal, nonspendable “needs attention” verdict for that immutable
+payload. Peer, observer, and chain-view failures remain retryable. No legacy
+blob is deleted or reinterpreted, and current Test USD v2 credit is unchanged.

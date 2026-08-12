@@ -1320,9 +1320,11 @@ public final class OpenCsvAccountWallet {
         let raw = String(cString: pointer)
         struct FfiFailure: Codable {
             let error: String
+            let reason: String?
         }
         if let failure = try? JSONDecoder().decode(FfiFailure.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            let message = failure.reason.map { "\($0): \(failure.error)" } ?? failure.error
+            throw OpenCsvClientError.ffi(message)
         }
         return raw
     }
@@ -1550,9 +1552,13 @@ public final class OpenCsvWallet {
         }
         defer { opencsv_string_free(pointer) }
         let raw = String(cString: pointer)
-        struct FfiFailure: Codable { let error: String }
+        struct FfiFailure: Codable {
+            let error: String
+            let reason: String?
+        }
         if let failure = try? JSONDecoder().decode(FfiFailure.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            let message = failure.reason.map { "\($0): \(failure.error)" } ?? failure.error
+            throw OpenCsvClientError.ffi(message)
         }
         return raw
     }

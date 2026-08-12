@@ -433,6 +433,55 @@ public actor OpenCsvPayments {
                         tx: tx,
                     )
                 }
+            } else if let rejectionReason = Self.terminalIncomingRejectionReason(error) {
+                var verdict = OpenCsvVerdict(
+                    status: "rejected",
+                    reason: rejectionReason,
+                    credits: nil,
+                    coins: nil,
+                    anchor: nil,
+                )
+                verdict.chainView = "local-consignment-decoder"
+                let record = OpenCsvVerdictRecord(verdict: verdict, date: Date())
+                await db.awaitableWrite { tx in
+                    self.store.setVerdict(
+                        record,
+                        blob: blob,
+                        attachmentId: attachmentId,
+                        messageUniqueId: candidate.messageUniqueId,
+                        tx: tx,
+                    )
+                    do {
+                        try self.store.upsertIncomingActivity(
+                            attachmentId: attachmentId,
+                            threadUniqueId: candidate.threadUniqueId,
+                            messageUniqueId: candidate.messageUniqueId,
+                            state: .needsAttention,
+                            detail: rejectionReason,
+                            tx: tx,
+                        )
+                    } catch {
+                        owsFailDebug("could not persist malformed OpenCSV activity: \(error)")
+                    }
+                    self.touchOwners(attachmentId: attachmentId, tx: tx)
+                }
+                lastWithheldReason[attachmentId] = nil
+                if priorActivityState != .needsAttention {
+                    notifyPaymentStatus(
+                        threadUniqueId: candidate.threadUniqueId,
+                        messageUniqueId: candidate.messageUniqueId,
+                        body: OWSLocalizedString(
+                            "OPENCSV_NOTIFICATION_NEEDS_ATTENTION",
+                            comment: "Notification that an OpenCSV payment could not be accepted.",
+                        ),
+                        wantsSound: false,
+                    )
+                }
+                Logger.info(
+                    "consignment \(attachmentId): rejected (\(rejectionReason))"
+                        + " via local-consignment-decoder",
+                )
+                return
             } else if lostUnconfirmedParent {
                 try? await db.awaitableWrite { tx in
                     try self.store.upsertIncomingActivity(
@@ -698,6 +747,23 @@ public actor OpenCsvPayments {
             return "asset_not_reviewed"
         }
         return nil
+    }
+
+    /// A canonical decoder failure is immutable input evidence, not chain or
+    /// observer lag. Persist it once so archived pre-v2 payloads do not stay
+    /// in an infinite "verifying" loop. Match the stable Rust reason prefix,
+    /// never arbitrary human-readable detail.
+    static func terminalIncomingRejectionReason(_ error: Error) -> String? {
+        guard
+            let clientError = error as? OpenCsvClientError,
+            case .ffi(let message) = clientError
+        else {
+            return nil
+        }
+        guard message == "invalid_consignment" || message.hasPrefix("invalid_consignment:") else {
+            return nil
+        }
+        return "invalid_consignment"
     }
 
     /// Retry only verdicts produced before a specific verifier correction.
