@@ -6841,11 +6841,20 @@
 /* Incoming wallet activity spendable before Bitcoin confirmation. Embeds amount and currency. */
 "OPENCSV_WALLET_ACTIVITY_AVAILABLE_UNCONFIRMED_FORMAT" = "+%1$@ %2$@ · available before confirmation · replacement risk";
 
+/* Incoming wallet activity paused until required network checks agree. */
+"OPENCSV_WALLET_ACTIVITY_AWAITING_OBSERVERS" = "Incoming payment · waiting for network verification";
+
+/* Incoming wallet activity paused until required network checks agree. Embeds amount and currency. */
+"OPENCSV_WALLET_ACTIVITY_AWAITING_OBSERVERS_FORMAT" = "+%1$@ %2$@ · waiting for network verification";
+
 /* Incoming wallet activity that is visible but not spendable. */
 "OPENCSV_WALLET_ACTIVITY_CONFIRMING" = "Incoming payment · verifying proof and anchor";
 
 /* Incoming wallet activity that failed definitive verification. */
 "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION" = "Incoming payment · needs attention · not spendable";
+
+/* Wallet status for known incoming OpenCSV payments paused until required network checks agree. Embeds the count. */
+"OPENCSV_WALLET_AWAITING_OBSERVERS_COUNT_FORMAT" = "%@ payment(s) waiting for network verification";
 
 /* Cached wallet freshness after refresh failed. Embeds the cache time. */
 "OPENCSV_WALLET_CACHED_UPDATE_FAILED_FORMAT" = "Cached %1$@ · Update failed";

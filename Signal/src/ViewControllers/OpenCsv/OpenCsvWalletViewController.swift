@@ -491,6 +491,9 @@ class OpenCsvWalletViewController: OWSViewController {
                 comment: "Status below the USD balance when this build has no reviewed issuer configured.",
             )
         let confirmingCount = summary.incomingActivities.lazy.filter { $0.state == .confirming }.count
+        let awaitingObserverCount = summary.incomingActivities.lazy
+            .filter { $0.state == .awaitingObservers }
+            .count
         let unconfirmedAvailableCount = summary.incomingActivities.lazy
             .filter { $0.state == .availableUnconfirmed }
             .count
@@ -511,6 +514,15 @@ class OpenCsvWalletViewController: OWSViewController {
                     comment: "Wallet status for incoming OpenCSV payments still being verified. Embeds the count.",
                 ),
                 "\(confirmingCount)",
+            ))
+        }
+        if awaitingObserverCount > 0 {
+            statusLines.append(String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_AWAITING_OBSERVERS_COUNT_FORMAT",
+                    comment: "Wallet status for known incoming OpenCSV payments paused until required network checks agree. Embeds the count.",
+                ),
+                "\(awaitingObserverCount)",
             ))
         }
         statusLines.append(Self.freshnessLine(summary: summary, refreshState: refreshState))
@@ -883,6 +895,21 @@ class OpenCsvWalletViewController: OWSViewController {
             return OWSLocalizedString(
                 "OPENCSV_WALLET_ACTIVITY_CONFIRMING",
                 comment: "Incoming wallet activity that is visible but not spendable.",
+            )
+        case .awaitingObservers:
+            guard let amount = activity.amount else {
+                return OWSLocalizedString(
+                    "OPENCSV_WALLET_ACTIVITY_AWAITING_OBSERVERS",
+                    comment: "Incoming wallet activity paused until required network checks agree.",
+                )
+            }
+            return String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_ACTIVITY_AWAITING_OBSERVERS_FORMAT",
+                    comment: "Incoming wallet activity paused until required network checks agree. Embeds amount and currency.",
+                ),
+                OpenCsvUsdAmount.format(amount),
+                activity.currency == "USD" ? productName : (activity.currency ?? ""),
             )
         case .availableUnconfirmed:
             guard let amount = activity.amount else {

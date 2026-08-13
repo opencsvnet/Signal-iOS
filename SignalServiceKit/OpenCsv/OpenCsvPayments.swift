@@ -420,7 +420,9 @@ public actor OpenCsvPayments {
             )
         } catch {
             lastWithheldReason[attachmentId] = "\(error)"
-            let lostUnconfirmedParent = priorActivityState == .availableUnconfirmed
+            let wasUnconfirmedCredit = priorActivityState == .availableUnconfirmed
+                || priorActivityState == .awaitingObservers
+            let lostUnconfirmedParent = wasUnconfirmedCredit
                 && "\(error)".contains("unconfirmed anchor")
             if
                 let paymentError = error as? OpenCsvPaymentsError,
@@ -431,7 +433,7 @@ public actor OpenCsvPayments {
                         attachmentId: attachmentId,
                         threadUniqueId: candidate.threadUniqueId,
                         messageUniqueId: candidate.messageUniqueId,
-                        state: .confirming,
+                        state: wasUnconfirmedCredit ? .awaitingObservers : .confirming,
                         detail: "awaiting verified chain settlement",
                         tx: tx,
                     )
@@ -505,6 +507,22 @@ public actor OpenCsvPayments {
                     ),
                     wantsSound: false,
                 )
+            } else if wasUnconfirmedCredit {
+                // Required observer evidence is intentionally live, not a
+                // one-time admission token. If a provider is unavailable or
+                // no longer agrees, Rust freezes descendant coin selection.
+                // Mirror that policy in Signal without erasing the already
+                // verified amount or claiming a definitive rejection.
+                try? await db.awaitableWrite { tx in
+                    try self.store.upsertIncomingActivity(
+                        attachmentId: attachmentId,
+                        threadUniqueId: candidate.threadUniqueId,
+                        messageUniqueId: candidate.messageUniqueId,
+                        state: .awaitingObservers,
+                        detail: "waiting for required network verification",
+                        tx: tx,
+                    )
+                }
             }
             Logger.warn("consignment \(attachmentId) not verifiable yet: \(error)")
         }

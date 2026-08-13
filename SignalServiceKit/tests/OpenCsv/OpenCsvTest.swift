@@ -34,6 +34,12 @@ struct OpenCsvBackgroundWorkPolicyTest {
             hasInFlightSend: false,
         ) == .immediate)
         #expect(OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: [.awaitingObservers],
+            hasPendingDelivery: false,
+            hasPendingOperation: false,
+            hasInFlightSend: false,
+        ) == .immediate)
+        #expect(OpenCsvBackgroundWorkPolicy.urgency(
             activityStates: [],
             hasPendingDelivery: true,
             hasPendingOperation: false,
@@ -846,6 +852,28 @@ final class OpenCsvWalletStoreTest {
             #expect(activity?.threadUniqueId == "thread-1")
             #expect(activity?.messageUniqueId == "message-1")
             #expect(activity?.firstSeenAt == firstSeen)
+        }
+
+        // A temporary loss of required observer agreement freezes spending
+        // but retains the already verified amount for honest presentation.
+        try db.write { tx in
+            try store.upsertIncomingActivity(
+                attachmentId: 42,
+                threadUniqueId: nil,
+                messageUniqueId: nil,
+                state: .awaitingObservers,
+                detail: "waiting for required network verification",
+                now: Date(timeIntervalSince1970: 25),
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            let activity = store.incomingActivities(tx: tx).first
+            #expect(activity?.state == .awaitingObservers)
+            #expect(activity?.state.isSpendable == false)
+            #expect(activity?.state.isSettled == false)
+            #expect(activity?.amount == 25_000_000)
+            #expect(activity?.currency == "USD")
         }
 
         // Confirmation promotes the same spendable value to settled.
