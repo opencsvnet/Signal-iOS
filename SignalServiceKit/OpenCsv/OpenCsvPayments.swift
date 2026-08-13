@@ -178,7 +178,10 @@ public actor OpenCsvPayments {
     }
 
     /// What the settings/send UI needs to render.
-    public struct WalletSummary {
+    public struct WalletSummary: Codable, Equatable {
+        /// When this exact read-only presentation was persisted. It is not a
+        /// chain-verification time and never participates in spend policy.
+        public let cachedAt: Date
         /// The wallet's receiving key (share with senders and external issuers).
         public let owner: String
         public let balances: [OpenCsvCredit]
@@ -2295,7 +2298,8 @@ public actor OpenCsvPayments {
             ?? UInt32(clamping: observationPolicy.filter {
                 $0.kind == .rawTransactionApi && $0.mode == .require
             }.count)
-        return WalletSummary(
+        let summary = WalletSummary(
+            cachedAt: Date(),
             owner: status.owners.first ?? "",
             balances: status.assets,
             incomingActivities: db.read { self.store.incomingActivities(tx: $0) },
@@ -2324,6 +2328,33 @@ public actor OpenCsvPayments {
             requiredRawObserverQuorum: requiredRawObserverQuorum,
             observationReceipts: status.observationReceipts ?? [],
         )
+        do {
+            let encoded = try JSONEncoder().encode(summary)
+            await db.awaitableWrite { tx in
+                self.store.setWalletPresentationSnapshotData(encoded, tx: tx)
+            }
+        } catch {
+            Logger.warn("could not persist OpenCSV wallet presentation snapshot: \(error)")
+        }
+        return summary
+    }
+
+    /// Read-only presentation cached outside this actor. A blocking wallet
+    /// sync therefore cannot hide a previously known balance or activity.
+    /// All writes still reopen Rust-owned state and re-run mandatory policy.
+    public nonisolated func cachedWalletSummary() -> WalletSummary? {
+        let store = OpenCsvWalletStore(
+            keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+        )
+        return DependenciesBridge.shared.db.read { tx in
+            guard let data = store.walletPresentationSnapshotData(tx: tx) else { return nil }
+            do {
+                return try JSONDecoder().decode(WalletSummary.self, from: data)
+            } catch {
+                Logger.warn("ignoring invalid OpenCSV wallet presentation snapshot: \(error)")
+                return nil
+            }
+        }
     }
 
     public func setEsploraUrl(_ urlString: String?) async {

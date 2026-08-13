@@ -576,6 +576,15 @@ final class OpenCsvWalletStoreTest {
     }
 
     @Test
+    func walletPresentationSnapshotBytesSurviveRelaunch() throws {
+        let snapshot = Data(#"{"cached_at":1786579200,"balance":135}"#.utf8)
+        db.write { tx in store.setWalletPresentationSnapshotData(snapshot, tx: tx) }
+        db.read { tx in
+            #expect(store.walletPresentationSnapshotData(tx: tx) == snapshot)
+        }
+    }
+
+    @Test
     func linkedProvisioningCarriesOnlyValidatedPublicMaterial() throws {
         let watch = OpenCsvLinkedWatchAccount(
             externalDescriptor: "wpkh([fingerprint/84h/1h/0h]xpub-external/0/*)",

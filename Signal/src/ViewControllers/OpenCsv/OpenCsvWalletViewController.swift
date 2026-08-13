@@ -407,12 +407,21 @@ class OpenCsvWalletViewController: OWSViewController {
     }
 
     private func refresh() {
+        let persistedSummary = OpenCsvPayments.shared.cachedWalletSummary()
+        if let persistedSummary {
+            // This synchronous database read is deliberately outside the
+            // wallet actor, so even a stalled accelerator cannot replace a
+            // known balance with "Checking wallet…".
+            render(persistedSummary, refreshState: .updating)
+        }
         Task {
             do {
-                // Rendering the persisted account first keeps the wallet
-                // useful while its two independent network views refresh.
-                let cached = try await OpenCsvPayments.shared.walletSummary()
-                self.render(cached, refreshState: .updating)
+                if persistedSummary == nil {
+                    // First launch has no presentation snapshot yet. Status
+                    // is local and persisted immediately before network work.
+                    let initial = try await OpenCsvPayments.shared.walletSummary()
+                    self.render(initial, refreshState: .updating)
+                }
 
                 async let accountSync = try? await OpenCsvPayments.shared.syncAccount()
                 async let scanSync = OpenCsvPayments.shared.scanSyncIfNeeded()
@@ -702,19 +711,13 @@ class OpenCsvWalletViewController: OWSViewController {
         summary: OpenCsvPayments.WalletSummary,
         refreshState: RefreshState,
     ) -> String {
+        let presentationCacheTime = DateFormatter.localizedString(
+            from: summary.cachedAt,
+            dateStyle: .none,
+            timeStyle: .short,
+        )
         guard let receipt = summary.verifiedChainView else {
-            guard let cachedAt = summary.syncProvenance.lastSyncDate else {
-                if refreshState == .failed {
-                    return OWSLocalizedString(
-                        "OPENCSV_WALLET_CACHED_TIME_UNKNOWN_FAILED",
-                        comment: "Wallet freshness when cached data has no timestamp and refresh failed.",
-                    )
-                }
-                return OWSLocalizedString(
-                    "OPENCSV_WALLET_CACHED_TIME_UNKNOWN_UPDATING",
-                    comment: "Wallet freshness when cached data has no timestamp and refresh is active.",
-                )
-            }
+            let cachedAt = summary.syncProvenance.lastSyncDate ?? summary.cachedAt
             let cacheTime = DateFormatter.localizedString(
                 from: cachedAt,
                 dateStyle: .none,
@@ -746,14 +749,13 @@ class OpenCsvWalletViewController: OWSViewController {
                 "\(receipt.tipHeight)",
             )
         }
-        let time = DateFormatter.localizedString(from: receipt.observedAt, dateStyle: .none, timeStyle: .short)
         if refreshState == .updating {
             return String.nonPluralLocalizedStringWithFormat(
                 OWSLocalizedString(
                     "OPENCSV_WALLET_VERIFIED_UPDATING_FORMAT",
                     comment: "Cached wallet freshness while refreshing. Embeds cache time and verified Bitcoin height.",
                 ),
-                time,
+                presentationCacheTime,
                 "\(receipt.tipHeight)",
             )
         }
@@ -762,7 +764,7 @@ class OpenCsvWalletViewController: OWSViewController {
                 "OPENCSV_WALLET_VERIFIED_UPDATE_FAILED_FORMAT",
                 comment: "Cached wallet freshness after refresh failed. Embeds cache time and verified Bitcoin height.",
             ),
-            time,
+            presentationCacheTime,
             "\(receipt.tipHeight)",
         )
     }

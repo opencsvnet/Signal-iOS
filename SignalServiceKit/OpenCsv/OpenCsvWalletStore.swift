@@ -400,6 +400,7 @@ public struct OpenCsvWalletStore {
     private static let outgoingOrdinalKey = "outgoingOrdinal"
     private static let secureBackupPayloadKey = "secureBackupPayload.v2"
     private static let verifiedChainViewKey = "verifiedChainView.v2"
+    private static let walletPresentationSnapshotKey = "walletPresentationSnapshot.v2"
     private static let attachmentConsignmentIdPrefix = "attachmentConsignmentId:"
     private static let canonicalPresentationAttachmentPrefix = "canonicalPresentationAttachment:"
     private static let canonicalPresentationMessagePrefix = "canonicalPresentationMessage:"
@@ -609,6 +610,17 @@ public struct OpenCsvWalletStore {
 
     public func setSecureBackupPayload(_ payload: OpenCsvSecureBackupPayload, tx: DBWriteTransaction) throws {
         try keyValueStore.setCodable(payload, key: Self.secureBackupPayloadKey, transaction: tx)
+    }
+
+    /// Last successfully decoded wallet status for presentation only. This
+    /// never authorizes a send or substitutes for Rust-owned wallet state;
+    /// it lets the UI remain readable while network synchronization runs.
+    public func walletPresentationSnapshotData(tx: DBReadTransaction) -> Data? {
+        keyValueStore.getData(Self.walletPresentationSnapshotKey, transaction: tx)
+    }
+
+    public func setWalletPresentationSnapshotData(_ data: Data, tx: DBWriteTransaction) {
+        keyValueStore.setData(data, key: Self.walletPresentationSnapshotKey, transaction: tx)
     }
 
     public func linkedWatchAccount(tx: DBReadTransaction) throws -> OpenCsvLinkedWatchAccount? {

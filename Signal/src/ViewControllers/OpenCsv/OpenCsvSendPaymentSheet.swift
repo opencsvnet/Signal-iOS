@@ -227,11 +227,17 @@ class OpenCsvSendPaymentSheet: OWSViewController {
 
     private func refresh() {
         let threadUniqueId = thread.uniqueId
+        let persistedSummary = OpenCsvPayments.shared.cachedWalletSummary()
+        if let persistedSummary {
+            render(persistedSummary, isUpdating: true)
+        }
         Task {
             do {
-                // Show the durable wallet immediately. Verification and fee
-                // refresh continue after the send form is usable.
-                self.render(try await OpenCsvPayments.shared.walletSummary(), isUpdating: true)
+                if persistedSummary == nil {
+                    // First launch has no presentation snapshot yet. Local
+                    // status is persisted before network work begins.
+                    self.render(try await OpenCsvPayments.shared.walletSummary(), isUpdating: true)
+                }
                 await OpenCsvPayments.shared.retryPendingVerifications(threadUniqueId: threadUniqueId)
                 async let accountSync = try? await OpenCsvPayments.shared.syncAccount()
                 async let scanSync = OpenCsvPayments.shared.scanSyncIfNeeded()
@@ -416,7 +422,11 @@ class OpenCsvSendPaymentSheet: OWSViewController {
     @objc
     private func didTapShareKey() {
         Task {
-            guard let owner = try? await OpenCsvPayments.shared.walletSummary().owner else { return }
+            var owner = OpenCsvPayments.shared.cachedWalletSummary()?.owner
+            if owner == nil {
+                owner = try? await OpenCsvPayments.shared.walletSummary().owner
+            }
+            guard let owner else { return }
             ThreadUtil.enqueueMessage(
                 body: MessageBody(
                     text: OpenCsvAttachmentDetector.addressAnnouncement(owner: owner),
