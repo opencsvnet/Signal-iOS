@@ -2149,6 +2149,18 @@ struct OpenCsvChainViewTest {
         #expect(OpenCsvPayments.effectiveSpvPeers(configured: [], network: "mainnet").isEmpty)
     }
 
+    /// Required pinned APIs gate zero-confirmation forwarding, not settlement
+    /// after the phone-owned verified scan proves the exact anchor in a block.
+    @Test
+    func verifiedScanRechecksBroadcastUnobservedOperations() {
+        #expect(OpenCsvPayments.shouldRefreshOperationSpv(state: "broadcast_unobserved"))
+        #expect(OpenCsvPayments.shouldRefreshOperationSpv(state: "mempool"))
+        #expect(OpenCsvPayments.shouldRefreshOperationSpv(state: "confirmed"))
+        #expect(OpenCsvPayments.shouldRefreshOperationSpv(state: "consignment_delivered"))
+        #expect(!OpenCsvPayments.shouldRefreshOperationSpv(state: "signed_persisted"))
+        #expect(!OpenCsvPayments.shouldRefreshOperationSpv(state: "cancelled"))
+    }
+
     /// A lagging chain view must never produce a final verdict — found
     /// live when a payment message beat the scan index by seconds and was
     /// permanently rejected with AnchorNotFound.

@@ -726,6 +726,15 @@ public actor OpenCsvPayments {
         return .singleSnapshot
     }
 
+    /// A required raw-transaction observer gates zero-confirmation delivery,
+    /// but it must not strand an operation after the phone-owned CBF scan has
+    /// independently verified the exact transaction in a block. The Rust SPV
+    /// boundary still checks the consignment, headers, PoW, filter match,
+    /// full block, Merkle inclusion, and OpenCSV record before settlement.
+    static func shouldRefreshOperationSpv(state: String) -> Bool {
+        ["broadcast_unobserved", "mempool", "confirmed", "consignment_delivered"].contains(state)
+    }
+
     /// Scan rejections that mean "the chain view hasn't caught up", not
     /// "this payment is bad": never final, always retryable. Pure so the
     /// classification is testable.
@@ -1076,7 +1085,7 @@ public actor OpenCsvPayments {
     private func refreshOperationSettlementFromVerifiedScan() async {
         guard scanSyncedThisLaunch, let account = try? await ensureAccountWallet() else { return }
         guard let operations = try? account.operationSummaries() else { return }
-        for operation in operations where ["mempool", "confirmed", "consignment_delivered"].contains(operation.state) {
+        for operation in operations where Self.shouldRefreshOperationSpv(state: operation.state) {
             do {
                 _ = try account.refreshOperationSpv(operation.operationId)
             } catch {
