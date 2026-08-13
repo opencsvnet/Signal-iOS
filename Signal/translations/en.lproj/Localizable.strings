@@ -6847,12 +6847,6 @@
 /* Incoming wallet activity that failed definitive verification. */
 "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION" = "Incoming payment · needs attention · not spendable";
 
-/* Wallet freshness when cached data has no timestamp and refresh failed. */
-"OPENCSV_WALLET_CACHED_TIME_UNKNOWN_FAILED" = "Cached · Update failed · cache time unavailable";
-
-/* Wallet freshness when cached data has no timestamp and refresh is active. */
-"OPENCSV_WALLET_CACHED_TIME_UNKNOWN_UPDATING" = "Cached · Updating… · cache time unavailable";
-
 /* Cached wallet freshness after refresh failed. Embeds the cache time. */
 "OPENCSV_WALLET_CACHED_UPDATE_FAILED_FORMAT" = "Cached %1$@ · Update failed";
 
