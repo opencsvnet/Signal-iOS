@@ -1082,7 +1082,7 @@ public actor OpenCsvPayments {
         await recoverInterruptedSends()
     }
 
-    private func refreshOperationSettlementFromVerifiedScan() async {
+    public func refreshOperationSettlementFromVerifiedScan() async {
         guard scanSyncedThisLaunch, let account = try? await ensureAccountWallet() else { return }
         guard let operations = try? account.operationSummaries() else { return }
         for operation in operations where Self.shouldRefreshOperationSpv(state: operation.state) {

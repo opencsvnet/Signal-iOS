@@ -427,6 +427,14 @@ class OpenCsvWalletViewController: OWSViewController {
                 async let scanSync = OpenCsvPayments.shared.scanSyncIfNeeded()
                 let (accountReport, scanSucceeded) = await (accountSync, scanSync)
 
+                if scanSucceeded {
+                    // A required raw observer gates zero-confirmation
+                    // forwarding, but a phone-verified block can settle an
+                    // operation immediately. Do that before rendering the
+                    // refreshed wallet instead of waiting for BGProcessing.
+                    await OpenCsvPayments.shared.refreshOperationSettlementFromVerifiedScan()
+                }
+
                 let updated = try await OpenCsvPayments.shared.walletSummary()
                 // The fee accelerator succeeding does not make the chain
                 // view authoritative. Freshness is "current" only after the
