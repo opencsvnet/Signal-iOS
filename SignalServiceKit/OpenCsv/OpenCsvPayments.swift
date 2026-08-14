@@ -120,6 +120,33 @@ public actor OpenCsvPayments {
     /// is generous and still cheap to reject.
     public static let maxConsignmentBytes = 1024 * 1024
 
+    enum IncomingConsignmentAdmission: Equatable {
+        case inspect
+        case rejectSize
+    }
+
+    /// Apply the same cheap pre-download size decision in every receive
+    /// entry point. Missing metadata still uses Signal's normal automatic
+    /// download policy and is bounded again after decryption.
+    static func incomingConsignmentAdmission(
+        advertisedByteCount: UInt64?,
+    ) -> IncomingConsignmentAdmission {
+        guard let advertisedByteCount else { return .inspect }
+        return advertisedByteCount > 0 && advertisedByteCount <= UInt64(maxConsignmentBytes)
+            ? .inspect
+            : .rejectSize
+    }
+
+    /// Attachment-shaped payment traffic is not a user gesture and must not
+    /// bypass Signal's normal download, call, or message-request policy.
+    static let automaticConsignmentDownloadPriority: AttachmentDownloadPriority = .default
+
+    static func shouldNotifyTerminalIncomingRejection(
+        priorActivityState: OpenCsvIncomingActivityState?,
+    ) -> Bool {
+        priorActivityState != .needsAttention
+    }
+
     /// Rust's minimum value for the first, context-binding funding input.
     /// Keep this pinned by tests until the account status schema exposes the
     /// policy value directly.
@@ -298,9 +325,9 @@ public actor OpenCsvPayments {
         guard let candidate else { return }
 
         guard
-            let advertisedBytes = Int(exactly: candidate.stream.unencryptedByteCount),
-            advertisedBytes > 0,
-            advertisedBytes <= Self.maxConsignmentBytes
+            Self.incomingConsignmentAdmission(
+                advertisedByteCount: UInt64(candidate.stream.unencryptedByteCount),
+            ) == .inspect
         else {
             await rejectIncomingAttachment(
                 attachmentId: attachmentId,
@@ -443,7 +470,12 @@ public actor OpenCsvPayments {
                     ),
                     wantsSound: true,
                 )
-            } else if !record.isVerified, priorActivityState != .needsAttention {
+            } else if
+                !record.isVerified,
+                Self.shouldNotifyTerminalIncomingRejection(
+                    priorActivityState: priorActivityState,
+                )
+            {
                 notifyPaymentStatus(
                     threadUniqueId: candidate.threadUniqueId,
                     messageUniqueId: candidate.messageUniqueId,
@@ -512,7 +544,11 @@ public actor OpenCsvPayments {
                     self.touchOwners(attachmentId: attachmentId, tx: tx)
                 }
                 lastWithheldReason[attachmentId] = nil
-                if priorActivityState != .needsAttention {
+                if
+                    Self.shouldNotifyTerminalIncomingRejection(
+                        priorActivityState: priorActivityState,
+                    )
+                {
                     notifyPaymentStatus(
                         threadUniqueId: candidate.threadUniqueId,
                         messageUniqueId: candidate.messageUniqueId,
@@ -890,7 +926,11 @@ public actor OpenCsvPayments {
             self.touchOwners(attachmentId: attachmentId, tx: tx)
         }
         lastWithheldReason[attachmentId] = nil
-        if priorActivityState != .needsAttention {
+        if
+            Self.shouldNotifyTerminalIncomingRejection(
+                priorActivityState: priorActivityState,
+            )
+        {
             notifyPaymentStatus(
                 threadUniqueId: threadUniqueId,
                 messageUniqueId: messageUniqueId,
@@ -1265,8 +1305,9 @@ public actor OpenCsvPayments {
                             continue
                         }
                         if
-                            let byteCount = referenced.unencryptedByteCount(),
-                            byteCount == 0 || byteCount > UInt64(Self.maxConsignmentBytes)
+                            Self.incomingConsignmentAdmission(
+                                advertisedByteCount: referenced.unencryptedByteCount(),
+                            ) == .rejectSize
                         {
                             let incoming = message as? TSIncomingMessage
                             sweep.rejected.append(RejectedAttachment(
@@ -1295,7 +1336,7 @@ public actor OpenCsvPayments {
                         // Receiving a filename is not a user gesture. Respect
                         // Signal's normal download, call, and message-request
                         // policy instead of bypassing it for wallet traffic.
-                        priority: .default,
+                        priority: Self.automaticConsignmentDownloadPriority,
                         useThumbnails: false,
                         tx: tx,
                     )
@@ -2219,6 +2260,7 @@ public actor OpenCsvPayments {
                     } else if operation.state == "consignment_delivered" {
                         try await finishDeliveryAcknowledgement(
                             operationId: pending.operationId,
+                            deliveryNonce: operation.deliveryNonce,
                             removeOperationMetadata: true,
                         )
                     } else if operation.receipt?.consignmentDelivered == true {
@@ -2406,6 +2448,7 @@ public actor OpenCsvPayments {
             let acknowledged = try account.markDelivered(operationId: operationId, deliveryNonce: nonce)
             try await finishDeliveryAcknowledgement(
                 operationId: operationId,
+                deliveryNonce: nonce,
                 removeOperationMetadata: acknowledged.state == "consignment_delivered",
             )
         } catch {
@@ -2424,6 +2467,7 @@ public actor OpenCsvPayments {
                 )
                 try await finishDeliveryAcknowledgement(
                     operationId: delivery.operationId!,
+                    deliveryNonce: delivery.deliveryNonce!,
                     removeOperationMetadata: acknowledged.state == "consignment_delivered",
                 )
             } catch {
@@ -2434,14 +2478,15 @@ public actor OpenCsvPayments {
 
     private func finishDeliveryAcknowledgement(
         operationId: String,
+        deliveryNonce: String,
         removeOperationMetadata: Bool,
     ) async throws {
         try await db.awaitableWrite { tx in
-            for delivery in self.store.pendingDeliveries(tx: tx)
-                where delivery.operationId == operationId
-            {
-                try self.store.removePendingDelivery(id: delivery.id, tx: tx)
-            }
+            try self.store.removeAcknowledgedPendingDelivery(
+                operationId: operationId,
+                deliveryNonce: deliveryNonce,
+                tx: tx,
+            )
             if removeOperationMetadata {
                 try self.store.removePendingAccountOperation(operationId: operationId, tx: tx)
             }

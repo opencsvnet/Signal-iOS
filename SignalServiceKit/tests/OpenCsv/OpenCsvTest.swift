@@ -616,6 +616,27 @@ struct OpenCsvAttachmentDetectorTest {
     }
 
     @Test
+    func attachmentAdmissionIsBoundedAndUsesNormalDownloadPriority() {
+        #expect(OpenCsvPayments.incomingConsignmentAdmission(advertisedByteCount: nil) == .inspect)
+        #expect(OpenCsvPayments.incomingConsignmentAdmission(advertisedByteCount: 1) == .inspect)
+        #expect(OpenCsvPayments.incomingConsignmentAdmission(
+            advertisedByteCount: UInt64(OpenCsvPayments.maxConsignmentBytes),
+        ) == .inspect)
+        #expect(OpenCsvPayments.incomingConsignmentAdmission(advertisedByteCount: 0) == .rejectSize)
+        #expect(OpenCsvPayments.incomingConsignmentAdmission(
+            advertisedByteCount: UInt64(OpenCsvPayments.maxConsignmentBytes + 1),
+        ) == .rejectSize)
+        #expect(OpenCsvPayments.automaticConsignmentDownloadPriority == .default)
+        #expect(OpenCsvPayments.shouldNotifyTerminalIncomingRejection(priorActivityState: nil))
+        #expect(OpenCsvPayments.shouldNotifyTerminalIncomingRejection(
+            priorActivityState: .confirming,
+        ))
+        #expect(!OpenCsvPayments.shouldNotifyTerminalIncomingRejection(
+            priorActivityState: .needsAttention,
+        ))
+    }
+
+    @Test
     func addressAnnouncementRoundTrip() {
         let key = String(repeating: "ab", count: 32)
         let announcement = OpenCsvAttachmentDetector.addressAnnouncement(owner: key)
@@ -1132,6 +1153,7 @@ final class OpenCsvWalletStoreTest {
                 coins: nil,
                 anchor: nil,
                 consignmentId: originalId,
+                paymentId: paymentId,
                 finality: "unconfirmed",
                 spendable: true,
             ),
@@ -1196,6 +1218,44 @@ final class OpenCsvWalletStoreTest {
             #expect(superseded?.spendable == false)
             #expect(!OpenCsvPayments.shouldRetryStoredVerdict(superseded))
             #expect(store.replayBlobs(tx: tx).map(\.entry) == ["c:\(replacementId)"])
+        }
+        let restoredOriginal = OpenCsvVerdictRecord(
+            verdict: OpenCsvVerdict(
+                status: "verified",
+                reason: nil,
+                credits: [OpenCsvCredit(assetId: "ab", currency: "USD", amount: 1)],
+                coins: nil,
+                anchor: nil,
+                consignmentId: originalId,
+                paymentId: paymentId,
+                finality: "settled",
+                spendable: true,
+            ),
+            date: Date(timeIntervalSince1970: 2),
+        )
+        db.write { tx in
+            store.setVerdict(
+                restoredOriginal,
+                blob: Data([3]),
+                attachmentId: 52,
+                messageUniqueId: "message-restored-original",
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            #expect(!store.isCanonicalPresentationAttachment(
+                attachmentId: 51,
+                messageUniqueId: "message-replacement",
+                tx: tx,
+            ))
+            #expect(store.isCanonicalPresentationAttachment(
+                attachmentId: 52,
+                messageUniqueId: "message-restored-original",
+                tx: tx,
+            ))
+            #expect(store.verdict(attachmentId: 51, tx: tx)?.reason == "superseded_consignment")
+            #expect(store.verdict(attachmentId: 52, tx: tx)?.finality == "settled")
+            #expect(store.replayBlobs(tx: tx).map(\.entry) == ["c:\(originalId)"])
         }
     }
 
@@ -1408,6 +1468,59 @@ final class OpenCsvWalletStoreTest {
                 consignmentId: "consignment-3",
                 in: deliveries,
             ) == nil)
+        }
+    }
+
+    @Test
+    func staleDeliveryAcknowledgementCannotSweepRbfReplacement() throws {
+        let stale = OpenCsvWalletStore.PendingDelivery(
+            id: "delivery-stale",
+            threadUniqueId: "thread-1",
+            body: "OpenCSV original consignment",
+            replayEntry: "o:stale",
+            amount: 25,
+            currency: "USD",
+            assetId: "ab",
+            operationKind: "transfer",
+            operationId: "operation-ack-race",
+            deliveryNonce: "nonce-stale",
+            consignmentId: "consignment-stale",
+            createdAt: Date(timeIntervalSince1970: 0),
+        )
+        let replacement = OpenCsvWalletStore.PendingDelivery(
+            id: "delivery-current",
+            threadUniqueId: "thread-1",
+            body: "OpenCSV replacement consignment",
+            replayEntry: "o:current",
+            amount: 25,
+            currency: "USD",
+            assetId: "ab",
+            operationKind: "transfer",
+            operationId: "operation-ack-race",
+            deliveryNonce: "nonce-current",
+            consignmentId: "consignment-current",
+            createdAt: Date(timeIntervalSince1970: 1),
+        )
+        try db.write { tx in
+            try store.addPendingDelivery(stale, tx: tx)
+            try store.addPendingDelivery(replacement, tx: tx)
+        }
+        try db.write { tx in
+            let removedUnknown = try store.removeAcknowledgedPendingDelivery(
+                operationId: "operation-ack-race",
+                deliveryNonce: "nonce-unknown",
+                tx: tx,
+            )
+            #expect(!removedUnknown)
+            let removedStale = try store.removeAcknowledgedPendingDelivery(
+                operationId: "operation-ack-race",
+                deliveryNonce: "nonce-stale",
+                tx: tx,
+            )
+            #expect(removedStale)
+        }
+        db.read { tx in
+            #expect(store.pendingDeliveries(tx: tx) == [replacement])
         }
     }
 
