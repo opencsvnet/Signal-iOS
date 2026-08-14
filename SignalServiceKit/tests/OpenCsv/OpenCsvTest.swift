@@ -509,6 +509,16 @@ struct OpenCsvAttachmentDetectorTest {
             mimeType: nil,
             bodyText: nil,
         ))
+        #expect(OpenCsvAttachmentDetector.isConsignment(
+            sourceFilename: "test-usd-v2-carol-50-50.opencsv",
+            mimeType: "application/octet-stream",
+            bodyText: nil,
+        ))
+        #expect(OpenCsvAttachmentDetector.isConsignment(
+            sourceFilename: "PAYMENT.OPENCsv",
+            mimeType: nil,
+            bodyText: nil,
+        ))
         #expect(!OpenCsvAttachmentDetector.isConsignment(
             sourceFilename: "vacation.jpg",
             mimeType: "image/jpeg",
