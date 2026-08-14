@@ -571,12 +571,12 @@ struct OpenCsvAttachmentDetectorTest {
             mimeType: nil,
             bodyText: nil,
         ))
-        #expect(OpenCsvAttachmentDetector.isConsignment(
+        #expect(!OpenCsvAttachmentDetector.isConsignment(
             sourceFilename: "test-usd-v2-carol-50-50.opencsv",
             mimeType: "application/octet-stream",
             bodyText: nil,
         ))
-        #expect(OpenCsvAttachmentDetector.isConsignment(
+        #expect(!OpenCsvAttachmentDetector.isConsignment(
             sourceFilename: "PAYMENT.OPENCsv",
             mimeType: nil,
             bodyText: nil,
@@ -2410,6 +2410,11 @@ struct OpenCsvChainViewTest {
         #expect(OpenCsvPayments.terminalIncomingRejectionReason(
             OpenCsvClientError.ffi("invalid_consignment"),
         ) == "invalid_consignment")
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvPaymentsError.consignmentSizeRejected(
+                bytes: OpenCsvPayments.maxConsignmentBytes + 1,
+            ),
+        ) == "consignment_size_rejected")
         #expect(OpenCsvPayments.terminalIncomingRejectionReason(
             OpenCsvClientError.ffi("chain_verification_unavailable: peers offline"),
         ) == nil)

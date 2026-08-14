@@ -297,11 +297,52 @@ public actor OpenCsvPayments {
         }
         guard let candidate else { return }
 
+        guard
+            let advertisedBytes = Int(exactly: candidate.stream.unencryptedByteCount),
+            advertisedBytes > 0,
+            advertisedBytes <= Self.maxConsignmentBytes
+        else {
+            await rejectIncomingAttachment(
+                attachmentId: attachmentId,
+                threadUniqueId: candidate.threadUniqueId,
+                messageUniqueId: candidate.messageUniqueId,
+                reason: "consignment_size_rejected",
+            )
+            return
+        }
+
         let blob: Data
         do {
             blob = try candidate.stream.decryptedRawData()
         } catch {
             Logger.warn("could not read consignment attachment: \(error)")
+            return
+        }
+
+        let inspection: OpenCsvConsignmentInspection
+        do {
+            inspection = try await inspectIncomingConsignment(blob)
+        } catch {
+            if let rejectionReason = Self.terminalIncomingRejectionReason(error) {
+                await rejectIncomingAttachment(
+                    attachmentId: attachmentId,
+                    threadUniqueId: candidate.threadUniqueId,
+                    messageUniqueId: candidate.messageUniqueId,
+                    reason: rejectionReason,
+                )
+            } else {
+                lastWithheldReason[attachmentId] = "\(error)"
+                Logger.warn("could not inspect consignment \(attachmentId): \(error)")
+            }
+            return
+        }
+        if let rejectionReason = Self.receiverAssetRejectionReason(inspection) {
+            await rejectIncomingAttachment(
+                attachmentId: attachmentId,
+                threadUniqueId: candidate.threadUniqueId,
+                messageUniqueId: candidate.messageUniqueId,
+                reason: rejectionReason,
+            )
             return
         }
 
@@ -337,7 +378,7 @@ public actor OpenCsvPayments {
         }
 
         do {
-            let verdict = try await verifyBlobWithConfiguredChainView(blob)
+            let verdict = try await verifyBlobWithConfiguredChainView(blob, inspection: inspection)
             let record = OpenCsvVerdictRecord(verdict: verdict, date: Date())
             await db.awaitableWrite { tx in
                 self.store.setVerdict(
@@ -576,11 +617,15 @@ public actor OpenCsvPayments {
     /// configured, so even the crediting snapshot's server is not simply
     /// believed.
     public func verifyBlobWithConfiguredChainView(_ blob: Data) async throws -> OpenCsvVerdict {
-        guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
-            throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
-        }
+        let inspection = try await inspectIncomingConsignment(blob)
+        return try await verifyBlobWithConfiguredChainView(blob, inspection: inspection)
+    }
+
+    private func verifyBlobWithConfiguredChainView(
+        _ blob: Data,
+        inspection: OpenCsvConsignmentInspection,
+    ) async throws -> OpenCsvVerdict {
         let account = try await ensureAccountWallet()
-        let inspection = try account.inspect(blob: blob)
         if let rejectionReason = Self.receiverAssetRejectionReason(inspection) {
             var verdict = OpenCsvVerdict(
                 status: "rejected",
@@ -784,6 +829,12 @@ public actor OpenCsvPayments {
     /// in an infinite "verifying" loop. Match the stable Rust reason prefix,
     /// never arbitrary human-readable detail.
     static func terminalIncomingRejectionReason(_ error: Error) -> String? {
+        if
+            let paymentError = error as? OpenCsvPaymentsError,
+            case .consignmentSizeRejected = paymentError
+        {
+            return "consignment_size_rejected"
+        }
         guard
             let clientError = error as? OpenCsvClientError,
             case .ffi(let message) = clientError
@@ -794,6 +845,70 @@ public actor OpenCsvPayments {
             return nil
         }
         return "invalid_consignment"
+    }
+
+    private func rejectIncomingAttachment(
+        attachmentId: Attachment.IDType,
+        threadUniqueId: String?,
+        messageUniqueId: String?,
+        reason: String,
+    ) async {
+        let priorActivityState = db.read { tx in
+            self.store.incomingActivities(tx: tx)
+                .first { $0.attachmentId == attachmentId }?
+                .state
+        }
+        var verdict = OpenCsvVerdict(
+            status: "rejected",
+            reason: reason,
+            credits: nil,
+            coins: nil,
+            anchor: nil,
+        )
+        verdict.chainView = "local-consignment-admission"
+        let record = OpenCsvVerdictRecord(verdict: verdict, date: Date())
+        await db.awaitableWrite { tx in
+            self.store.setVerdict(
+                record,
+                blob: nil,
+                attachmentId: attachmentId,
+                messageUniqueId: messageUniqueId,
+                tx: tx,
+            )
+            do {
+                try self.store.upsertIncomingActivity(
+                    attachmentId: attachmentId,
+                    threadUniqueId: threadUniqueId,
+                    messageUniqueId: messageUniqueId,
+                    state: .needsAttention,
+                    detail: reason,
+                    tx: tx,
+                )
+            } catch {
+                owsFailDebug("could not persist rejected OpenCSV activity: \(error)")
+            }
+            self.touchOwners(attachmentId: attachmentId, tx: tx)
+        }
+        lastWithheldReason[attachmentId] = nil
+        if priorActivityState != .needsAttention {
+            notifyPaymentStatus(
+                threadUniqueId: threadUniqueId,
+                messageUniqueId: messageUniqueId,
+                body: OWSLocalizedString(
+                    "OPENCSV_NOTIFICATION_NEEDS_ATTENTION",
+                    comment: "Notification that an OpenCSV payment could not be accepted.",
+                ),
+                wantsSound: false,
+            )
+        }
+    }
+
+    private func inspectIncomingConsignment(_ blob: Data) async throws -> OpenCsvConsignmentInspection {
+        guard !blob.isEmpty, blob.count <= Self.maxConsignmentBytes else {
+            throw OpenCsvPaymentsError.consignmentSizeRejected(bytes: blob.count)
+        }
+        let account = try await ensureAccountWallet()
+        return try account.inspect(blob: blob)
     }
 
     /// Retry only verdicts produced before a specific verifier correction.
@@ -1115,9 +1230,15 @@ public actor OpenCsvPayments {
     }
 
     public func retryPendingVerifications(threadUniqueId: String) async {
+        struct RejectedAttachment {
+            let attachmentId: Attachment.IDType
+            let threadUniqueId: String?
+            let messageUniqueId: String?
+        }
         struct Sweep {
             var verifiable = [Attachment.IDType]()
             var messagesNeedingDownload = [TSMessage]()
+            var rejected = [RejectedAttachment]()
         }
         let sweep: Sweep = db.read { tx in
             var sweep = Sweep()
@@ -1143,6 +1264,18 @@ public actor OpenCsvPayments {
                         else {
                             continue
                         }
+                        if
+                            let byteCount = referenced.unencryptedByteCount(),
+                            byteCount == 0 || byteCount > UInt64(Self.maxConsignmentBytes)
+                        {
+                            let incoming = message as? TSIncomingMessage
+                            sweep.rejected.append(RejectedAttachment(
+                                attachmentId: referenced.attachment.id,
+                                threadUniqueId: incoming?.uniqueThreadId,
+                                messageUniqueId: incoming?.uniqueId,
+                            ))
+                            continue
+                        }
                         if referenced.attachment.asStream() != nil {
                             sweep.verifiable.append(referenced.attachment.id)
                         } else {
@@ -1159,12 +1292,23 @@ public actor OpenCsvPayments {
                 for message in sweep.messagesNeedingDownload {
                     downloadManager.enqueueDownloadOfAttachmentsForMessage(
                         message,
-                        priority: .userInitiated,
+                        // Receiving a filename is not a user gesture. Respect
+                        // Signal's normal download, call, and message-request
+                        // policy instead of bypassing it for wallet traffic.
+                        priority: .default,
                         useThumbnails: false,
                         tx: tx,
                     )
                 }
             }
+        }
+        for rejected in sweep.rejected {
+            await rejectIncomingAttachment(
+                attachmentId: rejected.attachmentId,
+                threadUniqueId: rejected.threadUniqueId,
+                messageUniqueId: rejected.messageUniqueId,
+                reason: "consignment_size_rejected",
+            )
         }
         for attachmentId in sweep.verifiable {
             await verifyDownloadedAttachmentIfNeeded(attachmentId: attachmentId)
