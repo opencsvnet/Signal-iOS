@@ -1327,6 +1327,22 @@ final class OpenCsvWalletStoreTest {
         }
         db.read { tx in
             #expect(store.pendingDeliveries(tx: tx) == [first, replacement])
+            let deliveries = store.pendingDeliveries(tx: tx)
+            #expect(OpenCsvPayments.pendingDelivery(
+                operationId: "operation-1",
+                consignmentId: "consignment-1",
+                in: deliveries,
+            ) == first)
+            #expect(OpenCsvPayments.pendingDelivery(
+                operationId: "operation-1",
+                consignmentId: "consignment-2",
+                in: deliveries,
+            ) == replacement)
+            #expect(OpenCsvPayments.pendingDelivery(
+                operationId: "operation-1",
+                consignmentId: "consignment-3",
+                in: deliveries,
+            ) == nil)
         }
     }
 

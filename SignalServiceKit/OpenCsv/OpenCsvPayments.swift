@@ -1874,13 +1874,6 @@ public actor OpenCsvPayments {
         operation: OpenCsvAccountOperation,
         pending: OpenCsvWalletStore.PendingAccountOperation,
     ) async throws -> OpenCsvWalletStore.PendingDelivery {
-        if
-            let existing = db.read(block: { tx in
-                self.store.pendingDeliveries(tx: tx).first { $0.operationId == operation.operationId }
-            })
-        {
-            return existing
-        }
         guard
             let receipt = operation.receipt,
             receipt.deliveryReady == true,
@@ -1892,6 +1885,17 @@ public actor OpenCsvPayments {
                 operationId: operation.operationId,
                 state: operation.state,
             )
+        }
+        if
+            let existing = db.read(block: { tx in
+                Self.pendingDelivery(
+                    operationId: operation.operationId,
+                    consignmentId: consignmentId,
+                    in: self.store.pendingDeliveries(tx: tx),
+                )
+            })
+        {
+            return existing
         }
         let account = try await ensureAccountWallet()
         let inspection = try account.inspect(blob: blob)
@@ -1909,11 +1913,11 @@ public actor OpenCsvPayments {
             // re-enter while fetching account status above, and a concurrent
             // recovery pass may have persisted this exact operation meanwhile.
             if
-                let existing = self.store.pendingDeliveries(tx: tx)
-                    .first(where: {
-                        $0.operationId == operation.operationId
-                            && $0.consignmentId == consignmentId
-                    })
+                let existing = Self.pendingDelivery(
+                    operationId: operation.operationId,
+                    consignmentId: consignmentId,
+                    in: self.store.pendingDeliveries(tx: tx),
+                )
             {
                 return existing
             }
@@ -1940,6 +1944,19 @@ public actor OpenCsvPayments {
             )
             try self.store.addPendingDelivery(delivery, tx: tx)
             return delivery
+        }
+    }
+
+    /// A protocol-safe fee replacement keeps the logical operation id but
+    /// rotates its txid-bound canonical consignment. Deduplicate only the
+    /// exact pair so crash recovery can enqueue the replacement attachment.
+    nonisolated static func pendingDelivery(
+        operationId: String,
+        consignmentId: String,
+        in deliveries: [OpenCsvWalletStore.PendingDelivery],
+    ) -> OpenCsvWalletStore.PendingDelivery? {
+        deliveries.first {
+            $0.operationId == operationId && $0.consignmentId == consignmentId
         }
     }
 

@@ -1170,6 +1170,10 @@ class OpenCsvWalletViewController: OWSViewController {
                     operationId: operation.operationId,
                     targetSatPerVb: target,
                 )
+                // The replacement has new txid-bound consignment bytes even
+                // though its logical operation is unchanged. Start the same
+                // idempotent attachment path used after an ordinary send.
+                OpenCsvDelivery.processPending()
             }
         })
         present(alert, animated: true)
