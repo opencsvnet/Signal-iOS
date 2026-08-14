@@ -755,6 +755,9 @@ private final class OpenCsvBatchRecipientPickerViewController: RecipientPickerCo
     RecipientPickerDelegate, UsernameLinkScanDelegate
 {
     private let completion: (TSThread) -> Void
+#if DEBUG && targetEnvironment(simulator)
+    private var hasHandledSimulatorNoteToSelf = false
+#endif
 
     init(completion: @escaping (TSThread) -> Void) {
         self.completion = completion
@@ -767,12 +770,33 @@ private final class OpenCsvBatchRecipientPickerViewController: RecipientPickerCo
             "OPENCSV_SEND_ADD_RECIPIENT_PICKER_TITLE",
             comment: "Title of the recipient picker for a shared Bitcoin transaction.",
         )
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            title: MessageStrings.noteToSelf,
+            style: .plain,
+            target: self,
+            action: #selector(didTapNoteToSelf),
+        )
         view.backgroundColor = .Signal.groupedBackground
         recipientPicker.allowsAddByAddress = false
         recipientPicker.shouldHideLocalRecipient = false
         recipientPicker.groupsToShow = .noGroups
         recipientPicker.delegate = self
         addRecipientPicker()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+#if DEBUG && targetEnvironment(simulator)
+        if
+            !hasHandledSimulatorNoteToSelf,
+            ProcessInfo.processInfo.environment["OPENCSV_SIMULATOR_BATCH_RECIPIENT"] == "note_to_self"
+        {
+            hasHandledSimulatorNoteToSelf = true
+            DispatchQueue.main.async { [weak self] in
+                self?.didTapNoteToSelf()
+            }
+        }
+#endif
     }
 
     func recipientPicker(
@@ -798,6 +822,19 @@ private final class OpenCsvBatchRecipientPickerViewController: RecipientPickerCo
             return TSContactThread.getOrCreateThread(withContactAddress: address, transaction: $0)
         }
         guard let thread else { return }
+        completeSelection(with: thread)
+    }
+
+    @objc
+    private func didTapNoteToSelf() {
+        let thread: TSContactThread? = SSKEnvironment.shared.databaseStorageRef.write {
+            TSContactThread.getOrCreateLocalThread(transaction: $0)
+        }
+        guard let thread else { return }
+        completeSelection(with: thread)
+    }
+
+    private func completeSelection(with thread: TSContactThread) {
         guard let navigationController else {
             completion(thread)
             return
