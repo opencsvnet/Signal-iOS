@@ -580,7 +580,7 @@ class OpenCsvWalletViewController: OWSViewController {
         )
 #endif
         feeBumpCandidates = summary.operations.filter {
-            ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
+            OpenCsvFeeBumpPolicy.shouldOffer(operation: $0, feeReserve: summary.feeReserve)
         }
         // Definitively rejected attachments keep their exact per-message
         // evidence, but the consumer wallet should not let a long archived

@@ -116,6 +116,68 @@ struct OpenCsvBatchReservePolicyTest {
     }
 }
 
+struct OpenCsvFeeBumpPolicyTest {
+    private let txid = String(repeating: "ab", count: 32)
+
+    private func operation(state: String, txid: String?) -> OpenCsvAccountOperationSummary {
+        OpenCsvAccountOperationSummary(
+            operationId: "operation",
+            kind: "transfer",
+            state: state,
+            txid: txid,
+        )
+    }
+
+    private func reserve(
+        confirmed: UInt64,
+        pending: UInt64,
+        includesCandidate: Bool = true,
+    ) -> OpenCsvAccountStatus.FeeReserve {
+        OpenCsvAccountStatus.FeeReserve(
+            confirmedSats: confirmed,
+            trustedPendingSats: pending,
+            untrustedPendingSats: 0,
+            immatureSats: 0,
+            totalSats: confirmed + pending,
+            utxos: includesCandidate ? [
+                .init(
+                    txid: txid,
+                    vout: 2,
+                    valueSats: confirmed + pending,
+                    keychain: "internal",
+                    derivationIndex: 1,
+                    reserved: false,
+                ),
+            ] : [],
+        )
+    }
+
+    @Test
+    func offersRbfOnlyWhileTheCandidateChangeIsPending() {
+        let mempool = operation(state: "mempool", txid: txid)
+        #expect(OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: mempool,
+            feeReserve: reserve(confirmed: 0, pending: 8_316),
+        ))
+        #expect(!OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: mempool,
+            feeReserve: reserve(confirmed: 8_316, pending: 0),
+        ))
+        #expect(!OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: mempool,
+            feeReserve: reserve(confirmed: 0, pending: 8_316, includesCandidate: false),
+        ))
+        #expect(!OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: operation(state: "confirmed", txid: txid),
+            feeReserve: reserve(confirmed: 0, pending: 8_316),
+        ))
+        #expect(!OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: operation(state: "mempool", txid: nil),
+            feeReserve: reserve(confirmed: 0, pending: 8_316),
+        ))
+    }
+}
+
 struct OpenCsvSyncProvenanceTest {
     @Test
     func parsesStableRustTimestampAndTipStrings() {

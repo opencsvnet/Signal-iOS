@@ -707,6 +707,29 @@ enum OpenCsvBatchReservePolicy {
     }
 }
 
+public enum OpenCsvFeeBumpPolicy {
+    /// An OpenCSV operation remains at `mempool` until the phone-owned scan
+    /// reaches the protocol settlement depth. Bitcoin RBF ends earlier: once
+    /// the wallet's change output is confirmed, ordinary peers will not
+    /// accept a replacement. Keep the cached UI conservative by offering the
+    /// action only while the candidate's own change is still present and the
+    /// wallet reports pending value. Rust remains the final authority when
+    /// wallets contain a mixture of confirmed and pending outputs.
+    public static func shouldOffer(
+        operation: OpenCsvAccountOperationSummary,
+        feeReserve: OpenCsvAccountStatus.FeeReserve,
+    ) -> Bool {
+        guard
+            ["broadcast_unobserved", "broadcast", "mempool"].contains(operation.state),
+            let txid = operation.txid,
+            feeReserve.utxos.contains(where: { $0.txid == txid })
+        else {
+            return false
+        }
+        return feeReserve.trustedPendingSats > 0 || feeReserve.untrustedPendingSats > 0
+    }
+}
+
 /// Public, non-secret operation metadata exported in the compact account
 /// checkpoint. The wallet UI uses this list to offer RBF only for
 /// transactions that Rust itself created.
