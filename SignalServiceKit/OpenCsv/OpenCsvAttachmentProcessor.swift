@@ -8,8 +8,9 @@ import UIKit
 
 /// Recognises OpenCSV consignment attachments, matching the conventions of
 /// the `opencsv` CLI's Signal transport (`opencsv-signal`): a file named
-/// `opencsv-consignment.bin`, or an opaque binary attachment whose message
-/// body starts with the `OpenCSV consignment` marker.
+/// `opencsv-consignment.bin`, a file carrying the `.opencsv` export suffix,
+/// or an opaque binary attachment whose message body starts with the
+/// `OpenCSV consignment` marker.
 public enum OpenCsvAttachmentDetector {
     public static let consignmentFilename = "opencsv-consignment.bin"
     public static let bodyMarkerPrefix = "OpenCSV consignment"
@@ -52,7 +53,8 @@ public enum OpenCsvAttachmentDetector {
     /// Prefer the `referenced:tx:` overload; this primitive exists for the
     /// render path, which already holds the body, and for tests.
     public static func isConsignment(sourceFilename: String?, mimeType: String?, bodyText: String?) -> Bool {
-        if sourceFilename?.lowercased() == consignmentFilename {
+        let normalizedFilename = sourceFilename?.lowercased()
+        if normalizedFilename == consignmentFilename || normalizedFilename?.hasSuffix(".opencsv") == true {
             return true
         }
         guard bodyText?.hasPrefix(bodyMarkerPrefix) == true else {

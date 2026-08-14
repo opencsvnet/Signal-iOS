@@ -219,3 +219,32 @@ mixed reviewed/unreviewed consignment against the exact registry predicate.
   settled before this verifier correction landed, so this receipt proves the
   real shared transaction, crash recovery, and settled recipient verification;
   the earlier 1 Test USD parent/child run remains the zero-confirmation receipt.
+
+## 2026-08-12 cached-state send and chain-verification retry boundary
+
+The fresh Test USD v2 Carol-to-Bob attempt proved that cached wallet rendering
+and durable chat intent work, but also exposed a sequencing defect. Signal
+made the send form usable while the compact-filter scan continued in parallel;
+background proving could therefore race that mandatory scan. Operation
+`dbfeed5be1f83f94e662947bdb07137d` and solo batch
+`15316e14d8aa5746adc906f220947a84` survived an app termination at
+`fee_reserved`, but the previous Rust policy converted temporary chain-view
+unavailability into terminal `stale_chain_state`. It wrote no proof, signed
+transaction, txid, broadcast, or asset spend. The failed chat intent remains
+visible and is excluded from acceptance media.
+
+Signal now requires a successful phone-owned compact-filter sync immediately
+before starting a queued solo or frozen multi-recipient proof. Cached balances
+still render without blocking and the pending chat entry remains durable while
+the scan catches up. If sync fails, the operation is left queued for the next
+foreground or BGProcessing pass. Rust independently enforces the same
+distinction: transient peer/scan outages preserve the exact unsigned operation
+and fee reservation, while a verified spend, rollback, byte mismatch, proof
+failure, or policy violation remains terminal and can never reach signing.
+
+The same simulator audit found archived pre-v2 attachments repeatedly failing
+strict canonical decoding while the UI kept calling them “verifying.” Signal
+now preserves Rust's stable `invalid_consignment` reason across the FFI and
+stores one terminal, nonspendable “needs attention” verdict for that immutable
+payload. Peer, observer, and chain-view failures remain retryable. No legacy
+blob is deleted or reinterpreted, and current Test USD v2 credit is unchanged.

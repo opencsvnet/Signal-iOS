@@ -23,13 +23,17 @@ public enum OpenCsvPaymentDirection: String, Codable {
 }
 
 /// Wallet activity for an incoming consignment. Transport/download remains
-/// `.confirming` and nonspendable. `.availableUnconfirmed` has passed the
+/// `.confirming` and nonspendable. `.awaitingObservers` preserves the amount
+/// of a previously verified unconfirmed payment while required network
+/// observations are temporarily unavailable; it is not spendable.
+/// `.availableUnconfirmed` has passed the
 /// complete proof, ownership, binding and settled-history checks and is in
 /// Rust coin selection with an exact mempool-parent dependency. `.settled`
 /// has met confirmation policy. The older `.available` spelling remains
 /// decodable as settled activity for existing installs.
 public enum OpenCsvIncomingActivityState: String, Codable {
     case confirming
+    case awaitingObservers
     case availableUnconfirmed
     case available
     case settled
@@ -39,7 +43,7 @@ public enum OpenCsvIncomingActivityState: String, Codable {
         switch self {
         case .availableUnconfirmed, .available, .settled:
             return true
-        case .confirming, .needsAttention:
+        case .confirming, .awaitingObservers, .needsAttention:
             return false
         }
     }
@@ -92,6 +96,7 @@ public enum OpenCsvBackgroundWorkPolicy {
         if
             hasPendingDelivery || hasPendingOperation || hasInFlightSend
             || activityStates.contains(.confirming)
+            || activityStates.contains(.awaitingObservers)
         {
             return .immediate
         }
@@ -400,6 +405,7 @@ public struct OpenCsvWalletStore {
     private static let outgoingOrdinalKey = "outgoingOrdinal"
     private static let secureBackupPayloadKey = "secureBackupPayload.v2"
     private static let verifiedChainViewKey = "verifiedChainView.v2"
+    private static let walletPresentationSnapshotKey = "walletPresentationSnapshot.v2"
     private static let attachmentConsignmentIdPrefix = "attachmentConsignmentId:"
     private static let canonicalPresentationAttachmentPrefix = "canonicalPresentationAttachment:"
     private static let canonicalPresentationMessagePrefix = "canonicalPresentationMessage:"
@@ -609,6 +615,17 @@ public struct OpenCsvWalletStore {
 
     public func setSecureBackupPayload(_ payload: OpenCsvSecureBackupPayload, tx: DBWriteTransaction) throws {
         try keyValueStore.setCodable(payload, key: Self.secureBackupPayloadKey, transaction: tx)
+    }
+
+    /// Last successfully decoded wallet status for presentation only. This
+    /// never authorizes a send or substitutes for Rust-owned wallet state;
+    /// it lets the UI remain readable while network synchronization runs.
+    public func walletPresentationSnapshotData(tx: DBReadTransaction) -> Data? {
+        keyValueStore.getData(Self.walletPresentationSnapshotKey, transaction: tx)
+    }
+
+    public func setWalletPresentationSnapshotData(_ data: Data, tx: DBWriteTransaction) {
+        keyValueStore.setData(data, key: Self.walletPresentationSnapshotKey, transaction: tx)
     }
 
     public func linkedWatchAccount(tx: DBReadTransaction) throws -> OpenCsvLinkedWatchAccount? {
@@ -954,7 +971,7 @@ public struct OpenCsvWalletStore {
         // Amounts are ledger facts, not hints from an unverified envelope.
         // Never carry an earlier amount backward into a confirming row.
         let resolvedAmount: UInt64? = switch state {
-        case .availableUnconfirmed, .available, .settled:
+        case .awaitingObservers, .availableUnconfirmed, .available, .settled:
             amount ?? existing?.amount
         case .confirming, .needsAttention:
             nil

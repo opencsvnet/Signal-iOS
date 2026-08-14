@@ -407,16 +407,33 @@ class OpenCsvWalletViewController: OWSViewController {
     }
 
     private func refresh() {
+        let persistedSummary = OpenCsvPayments.shared.cachedWalletSummary()
+        if let persistedSummary {
+            // This synchronous database read is deliberately outside the
+            // wallet actor, so even a stalled accelerator cannot replace a
+            // known balance with "Checking wallet…".
+            render(persistedSummary, refreshState: .updating)
+        }
         Task {
             do {
-                // Rendering the persisted account first keeps the wallet
-                // useful while its two independent network views refresh.
-                let cached = try await OpenCsvPayments.shared.walletSummary()
-                self.render(cached, refreshState: .updating)
+                if persistedSummary == nil {
+                    // First launch has no presentation snapshot yet. Status
+                    // is local and persisted immediately before network work.
+                    let initial = try await OpenCsvPayments.shared.walletSummary()
+                    self.render(initial, refreshState: .updating)
+                }
 
                 async let accountSync = try? await OpenCsvPayments.shared.syncAccount()
                 async let scanSync = OpenCsvPayments.shared.scanSyncIfNeeded()
                 let (accountReport, scanSucceeded) = await (accountSync, scanSync)
+
+                if scanSucceeded {
+                    // A required raw observer gates zero-confirmation
+                    // forwarding, but a phone-verified block can settle an
+                    // operation immediately. Do that before rendering the
+                    // refreshed wallet instead of waiting for BGProcessing.
+                    await OpenCsvPayments.shared.refreshOperationSettlementFromVerifiedScan()
+                }
 
                 let updated = try await OpenCsvPayments.shared.walletSummary()
                 // The fee accelerator succeeding does not make the chain
@@ -474,6 +491,9 @@ class OpenCsvWalletViewController: OWSViewController {
                 comment: "Status below the USD balance when this build has no reviewed issuer configured.",
             )
         let confirmingCount = summary.incomingActivities.lazy.filter { $0.state == .confirming }.count
+        let awaitingObserverCount = summary.incomingActivities.lazy
+            .filter { $0.state == .awaitingObservers }
+            .count
         let unconfirmedAvailableCount = summary.incomingActivities.lazy
             .filter { $0.state == .availableUnconfirmed }
             .count
@@ -494,6 +514,15 @@ class OpenCsvWalletViewController: OWSViewController {
                     comment: "Wallet status for incoming OpenCSV payments still being verified. Embeds the count.",
                 ),
                 "\(confirmingCount)",
+            ))
+        }
+        if awaitingObserverCount > 0 {
+            statusLines.append(String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_AWAITING_OBSERVERS_COUNT_FORMAT",
+                    comment: "Wallet status for known incoming OpenCSV payments paused until required network checks agree. Embeds the count.",
+                ),
+                "\(awaitingObserverCount)",
             ))
         }
         statusLines.append(Self.freshnessLine(summary: summary, refreshState: refreshState))
@@ -551,10 +580,26 @@ class OpenCsvWalletViewController: OWSViewController {
         )
 #endif
         feeBumpCandidates = summary.operations.filter {
-            ["broadcast_unobserved", "broadcast", "mempool"].contains($0.state)
+            OpenCsvFeeBumpPolicy.shouldOffer(operation: $0, feeReserve: summary.feeReserve)
         }
-        let incomingActivity = summary.incomingActivities.suffix(8).reversed().map {
-            Self.renderIncomingActivity($0, productName: productName)
+        // Definitively rejected attachments keep their exact per-message
+        // evidence, but the consumer wallet should not let a long archived
+        // history crowd current dollar activity off screen. Show current
+        // activity first and condense all nonspendable rejections to one row.
+        let incomingNewestFirst = summary.incomingActivities.reversed()
+        let hasRejectedIncoming = incomingNewestFirst.contains { $0.state == .needsAttention }
+        let currentIncomingLimit = hasRejectedIncoming ? 7 : 8
+        var incomingActivity = Array(
+            incomingNewestFirst.lazy
+                .filter { $0.state != .needsAttention }
+                .prefix(currentIncomingLimit)
+                .map { Self.renderIncomingActivity($0, productName: productName) },
+        )
+        if hasRejectedIncoming {
+            incomingActivity.append(OWSLocalizedString(
+                "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION",
+                comment: "Incoming wallet activity that failed definitive verification.",
+            ))
         }
         let outgoingActivity = summary.operations.suffix(8).reversed().map {
             let txid = $0.txid.map { String($0.prefix(10)) } ?? "unsigned"
@@ -686,19 +731,13 @@ class OpenCsvWalletViewController: OWSViewController {
         summary: OpenCsvPayments.WalletSummary,
         refreshState: RefreshState,
     ) -> String {
+        let presentationCacheTime = DateFormatter.localizedString(
+            from: summary.cachedAt,
+            dateStyle: .none,
+            timeStyle: .short,
+        )
         guard let receipt = summary.verifiedChainView else {
-            guard let cachedAt = summary.syncProvenance.lastSyncDate else {
-                if refreshState == .failed {
-                    return OWSLocalizedString(
-                        "OPENCSV_WALLET_CACHED_TIME_UNKNOWN_FAILED",
-                        comment: "Wallet freshness when cached data has no timestamp and refresh failed.",
-                    )
-                }
-                return OWSLocalizedString(
-                    "OPENCSV_WALLET_CACHED_TIME_UNKNOWN_UPDATING",
-                    comment: "Wallet freshness when cached data has no timestamp and refresh is active.",
-                )
-            }
+            let cachedAt = summary.syncProvenance.lastSyncDate ?? summary.cachedAt
             let cacheTime = DateFormatter.localizedString(
                 from: cachedAt,
                 dateStyle: .none,
@@ -730,14 +769,13 @@ class OpenCsvWalletViewController: OWSViewController {
                 "\(receipt.tipHeight)",
             )
         }
-        let time = DateFormatter.localizedString(from: receipt.observedAt, dateStyle: .none, timeStyle: .short)
         if refreshState == .updating {
             return String.nonPluralLocalizedStringWithFormat(
                 OWSLocalizedString(
                     "OPENCSV_WALLET_VERIFIED_UPDATING_FORMAT",
                     comment: "Cached wallet freshness while refreshing. Embeds cache time and verified Bitcoin height.",
                 ),
-                time,
+                presentationCacheTime,
                 "\(receipt.tipHeight)",
             )
         }
@@ -746,7 +784,7 @@ class OpenCsvWalletViewController: OWSViewController {
                 "OPENCSV_WALLET_VERIFIED_UPDATE_FAILED_FORMAT",
                 comment: "Cached wallet freshness after refresh failed. Embeds cache time and verified Bitcoin height.",
             ),
-            time,
+            presentationCacheTime,
             "\(receipt.tipHeight)",
         )
     }
@@ -857,6 +895,21 @@ class OpenCsvWalletViewController: OWSViewController {
             return OWSLocalizedString(
                 "OPENCSV_WALLET_ACTIVITY_CONFIRMING",
                 comment: "Incoming wallet activity that is visible but not spendable.",
+            )
+        case .awaitingObservers:
+            guard let amount = activity.amount else {
+                return OWSLocalizedString(
+                    "OPENCSV_WALLET_ACTIVITY_AWAITING_OBSERVERS",
+                    comment: "Incoming wallet activity paused until required network checks agree.",
+                )
+            }
+            return String.nonPluralLocalizedStringWithFormat(
+                OWSLocalizedString(
+                    "OPENCSV_WALLET_ACTIVITY_AWAITING_OBSERVERS_FORMAT",
+                    comment: "Incoming wallet activity paused until required network checks agree. Embeds amount and currency.",
+                ),
+                OpenCsvUsdAmount.format(amount),
+                activity.currency == "USD" ? productName : (activity.currency ?? ""),
             )
         case .availableUnconfirmed:
             guard let amount = activity.amount else {
@@ -1117,6 +1170,10 @@ class OpenCsvWalletViewController: OWSViewController {
                     operationId: operation.operationId,
                     targetSatPerVb: target,
                 )
+                // The replacement has new txid-bound consignment bytes even
+                // though its logical operation is unchanged. Start the same
+                // idempotent attachment path used after an ordinary send.
+                OpenCsvDelivery.processPending()
             }
         })
         present(alert, animated: true)

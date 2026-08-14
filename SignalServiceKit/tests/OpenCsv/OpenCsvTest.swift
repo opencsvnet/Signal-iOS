@@ -34,6 +34,12 @@ struct OpenCsvBackgroundWorkPolicyTest {
             hasInFlightSend: false,
         ) == .immediate)
         #expect(OpenCsvBackgroundWorkPolicy.urgency(
+            activityStates: [.awaitingObservers],
+            hasPendingDelivery: false,
+            hasPendingOperation: false,
+            hasInFlightSend: false,
+        ) == .immediate)
+        #expect(OpenCsvBackgroundWorkPolicy.urgency(
             activityStates: [],
             hasPendingDelivery: true,
             hasPendingOperation: false,
@@ -67,6 +73,108 @@ struct OpenCsvBackgroundWorkPolicyTest {
             hasPendingOperation: false,
             hasInFlightSend: false,
         ) == .never)
+    }
+}
+
+struct OpenCsvBatchReservePolicyTest {
+    private func operation(state: String, feeRate: UInt64?) -> OpenCsvBatchReserveOperation {
+        OpenCsvBatchReserveOperation(
+            maintenanceId: "maintenance",
+            state: state,
+            participantCount: 2,
+            stockCount: 3,
+            feeCellCount: 6,
+            signedTxHex: "00",
+            txid: String(repeating: "00", count: 32),
+            feeRateSatPerVb: feeRate,
+        )
+    }
+
+    @Test
+    func bumpsOnlyLowFeeRelayableMaintenance() {
+        #expect(OpenCsvBatchReservePolicy.targetSatPerVb == 4)
+        #expect(OpenCsvBatchReservePolicy.shouldFeeBump(operation(
+            state: "broadcast_unobserved",
+            feeRate: 2,
+        )))
+        #expect(OpenCsvBatchReservePolicy.shouldFeeBump(operation(
+            state: "mempool",
+            feeRate: nil,
+        )))
+        #expect(!OpenCsvBatchReservePolicy.shouldFeeBump(operation(
+            state: "mempool",
+            feeRate: 4,
+        )))
+        #expect(!OpenCsvBatchReservePolicy.shouldFeeBump(operation(
+            state: "confirmed",
+            feeRate: 2,
+        )))
+        #expect(OpenCsvBatchReservePolicy.shouldFeeBump(
+            state: "broadcast_unobserved",
+            feeRateSatPerVb: nil,
+        ))
+    }
+}
+
+struct OpenCsvFeeBumpPolicyTest {
+    private let txid = String(repeating: "ab", count: 32)
+
+    private func operation(state: String, txid: String?) -> OpenCsvAccountOperationSummary {
+        OpenCsvAccountOperationSummary(
+            operationId: "operation",
+            kind: "transfer",
+            state: state,
+            txid: txid,
+        )
+    }
+
+    private func reserve(
+        confirmed: UInt64,
+        pending: UInt64,
+        includesCandidate: Bool = true,
+    ) -> OpenCsvAccountStatus.FeeReserve {
+        OpenCsvAccountStatus.FeeReserve(
+            confirmedSats: confirmed,
+            trustedPendingSats: pending,
+            untrustedPendingSats: 0,
+            immatureSats: 0,
+            totalSats: confirmed + pending,
+            utxos: includesCandidate ? [
+                .init(
+                    txid: txid,
+                    vout: 2,
+                    valueSats: confirmed + pending,
+                    keychain: "internal",
+                    derivationIndex: 1,
+                    reserved: false,
+                ),
+            ] : [],
+        )
+    }
+
+    @Test
+    func offersRbfOnlyWhileTheCandidateChangeIsPending() {
+        let mempool = operation(state: "mempool", txid: txid)
+        #expect(OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: mempool,
+            feeReserve: reserve(confirmed: 0, pending: 8_316),
+        ))
+        #expect(!OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: mempool,
+            feeReserve: reserve(confirmed: 8_316, pending: 0),
+        ))
+        #expect(!OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: mempool,
+            feeReserve: reserve(confirmed: 0, pending: 8_316, includesCandidate: false),
+        ))
+        #expect(!OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: operation(state: "confirmed", txid: txid),
+            feeReserve: reserve(confirmed: 0, pending: 8_316),
+        ))
+        #expect(!OpenCsvFeeBumpPolicy.shouldOffer(
+            operation: operation(state: "mempool", txid: nil),
+            feeReserve: reserve(confirmed: 0, pending: 8_316),
+        ))
     }
 }
 
@@ -463,6 +571,16 @@ struct OpenCsvAttachmentDetectorTest {
             mimeType: nil,
             bodyText: nil,
         ))
+        #expect(OpenCsvAttachmentDetector.isConsignment(
+            sourceFilename: "test-usd-v2-carol-50-50.opencsv",
+            mimeType: "application/octet-stream",
+            bodyText: nil,
+        ))
+        #expect(OpenCsvAttachmentDetector.isConsignment(
+            sourceFilename: "PAYMENT.OPENCsv",
+            mimeType: nil,
+            bodyText: nil,
+        ))
         #expect(!OpenCsvAttachmentDetector.isConsignment(
             sourceFilename: "vacation.jpg",
             mimeType: "image/jpeg",
@@ -573,6 +691,15 @@ final class OpenCsvWalletStoreTest {
         )
         try db.write { tx in try store.setVerifiedChainView(receipt, tx: tx) }
         db.read { tx in #expect(store.verifiedChainView(tx: tx) == receipt) }
+    }
+
+    @Test
+    func walletPresentationSnapshotBytesSurviveRelaunch() throws {
+        let snapshot = Data(#"{"cached_at":1786579200,"balance":135}"#.utf8)
+        db.write { tx in store.setWalletPresentationSnapshotData(snapshot, tx: tx) }
+        db.read { tx in
+            #expect(store.walletPresentationSnapshotData(tx: tx) == snapshot)
+        }
     }
 
     @Test
@@ -837,6 +964,28 @@ final class OpenCsvWalletStoreTest {
             #expect(activity?.threadUniqueId == "thread-1")
             #expect(activity?.messageUniqueId == "message-1")
             #expect(activity?.firstSeenAt == firstSeen)
+        }
+
+        // A temporary loss of required observer agreement freezes spending
+        // but retains the already verified amount for honest presentation.
+        try db.write { tx in
+            try store.upsertIncomingActivity(
+                attachmentId: 42,
+                threadUniqueId: nil,
+                messageUniqueId: nil,
+                state: .awaitingObservers,
+                detail: "waiting for required network verification",
+                now: Date(timeIntervalSince1970: 25),
+                tx: tx,
+            )
+        }
+        db.read { tx in
+            let activity = store.incomingActivities(tx: tx).first
+            #expect(activity?.state == .awaitingObservers)
+            #expect(activity?.state.isSpendable == false)
+            #expect(activity?.state.isSettled == false)
+            #expect(activity?.amount == 25_000_000)
+            #expect(activity?.currency == "USD")
         }
 
         // Confirmation promotes the same spendable value to settled.
@@ -1240,6 +1389,22 @@ final class OpenCsvWalletStoreTest {
         }
         db.read { tx in
             #expect(store.pendingDeliveries(tx: tx) == [first, replacement])
+            let deliveries = store.pendingDeliveries(tx: tx)
+            #expect(OpenCsvPayments.pendingDelivery(
+                operationId: "operation-1",
+                consignmentId: "consignment-1",
+                in: deliveries,
+            ) == first)
+            #expect(OpenCsvPayments.pendingDelivery(
+                operationId: "operation-1",
+                consignmentId: "consignment-2",
+                in: deliveries,
+            ) == replacement)
+            #expect(OpenCsvPayments.pendingDelivery(
+                operationId: "operation-1",
+                consignmentId: "consignment-3",
+                in: deliveries,
+            ) == nil)
         }
     }
 
@@ -1655,6 +1820,29 @@ struct OpenCsvClientFfiTest {
         #expect(instrument.assetId == OpenCsvReviewedUsdIssuers.signetTestUsdAssetId)
         #expect(instrument.profile == "trusted_test_usd_v2")
         #expect(instrument.trustState == "trusted_configuration")
+    }
+
+    @Test
+    func accountInspectionPreservesStableInvalidConsignmentReason() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("opencsv-invalid-inspection-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let account = try OpenCsvAccountWallet(
+            config: accountConfig(),
+            accountRoot: Data(repeating: 43, count: 32),
+            deviceBinding: Data(repeating: 44, count: 32),
+            databasePath: directory.appendingPathComponent("account.sqlite").path,
+        )
+
+        do {
+            _ = try account.inspect(blob: Data([0, 1, 2]))
+            Issue.record("a malformed consignment must not produce an inspection")
+        } catch let OpenCsvClientError.ffi(message) {
+            #expect(message.hasPrefix("invalid_consignment:"))
+        } catch {
+            Issue.record("unexpected malformed-consignment error: \(error)")
+        }
     }
 
     @Test
@@ -2117,6 +2305,18 @@ struct OpenCsvChainViewTest {
         #expect(OpenCsvPayments.effectiveSpvPeers(configured: [], network: "mainnet").isEmpty)
     }
 
+    /// Required pinned APIs gate zero-confirmation forwarding, not settlement
+    /// after the phone-owned verified scan proves the exact anchor in a block.
+    @Test
+    func verifiedScanRechecksBroadcastUnobservedOperations() {
+        #expect(OpenCsvPayments.shouldRefreshOperationSpv(state: "broadcast_unobserved"))
+        #expect(OpenCsvPayments.shouldRefreshOperationSpv(state: "mempool"))
+        #expect(OpenCsvPayments.shouldRefreshOperationSpv(state: "confirmed"))
+        #expect(OpenCsvPayments.shouldRefreshOperationSpv(state: "consignment_delivered"))
+        #expect(!OpenCsvPayments.shouldRefreshOperationSpv(state: "signed_persisted"))
+        #expect(!OpenCsvPayments.shouldRefreshOperationSpv(state: "cancelled"))
+    }
+
     /// A lagging chain view must never produce a final verdict — found
     /// live when a payment message beat the scan index by seconds and was
     /// permanently rejected with AnchorNotFound.
@@ -2127,6 +2327,31 @@ struct OpenCsvChainViewTest {
         #expect(!OpenCsvPayments.isChainLagReason("NullifierConflict"))
         #expect(!OpenCsvPayments.isChainLagReason("NoOwnedOutput"))
         #expect(!OpenCsvPayments.isChainLagReason(nil))
+    }
+
+    /// A live send found the confirmed spend scan at N while Rust's
+    /// independently verified funding view had just advanced to N+1. Only
+    /// the stable freshness reason may invalidate the cached launch receipt;
+    /// definitive protocol and database failures remain final.
+    @Test
+    func fundingTipRaceIsTheOnlyProofGateRetry() {
+        #expect(OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffi("chain_verification_unavailable"),
+        ))
+        #expect(OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffi(
+                "chain_verification_unavailable: confirmed spend scan tip 10 is behind funding tip 11",
+            ),
+        ))
+        #expect(!OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffi("stale_chain_state: nullifier conflict"),
+        ))
+        #expect(!OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffi("database_error: chain_verification_unavailable in detail"),
+        ))
+        #expect(!OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvPaymentsError.chainVerificationUnavailable,
+        ))
     }
 
     /// Archived or unknown instruments are a final local product-policy
@@ -2174,6 +2399,22 @@ struct OpenCsvChainViewTest {
         #expect(OpenCsvPayments.receiverAssetRejectionReason(contradictory) == "asset_not_reviewed")
     }
 
+    @Test
+    func malformedConsignmentsAreTerminalButInfrastructureFailuresRetry() {
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvClientError.ffi("invalid_consignment: non-canonical digest"),
+        ) == "invalid_consignment")
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvClientError.ffi("invalid_consignment"),
+        ) == "invalid_consignment")
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvClientError.ffi("chain_verification_unavailable: peers offline"),
+        ) == nil)
+        #expect(OpenCsvPayments.terminalIncomingRejectionReason(
+            OpenCsvClientError.ffi("database_error: invalid_consignment appears only in detail"),
+        ) == nil)
+    }
+
     /// Repairs exact live failures without turning every definitive rejection
     /// into an unbounded replay: lagging views and verdicts produced before a
     /// known verifier correction are retried, current bad proofs are not.
@@ -2210,6 +2451,9 @@ struct OpenCsvChainViewTest {
         ))
         #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
             record(status: "rejected", reason: "NoOwnedOutput"),
+        ))
+        #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
+            record(status: "rejected", reason: "invalid_consignment"),
         ))
         #expect(!OpenCsvPayments.shouldRetryStoredVerdict(
             record(status: "verified", reason: nil),

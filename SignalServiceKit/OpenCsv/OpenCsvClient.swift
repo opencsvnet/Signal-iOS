@@ -534,6 +534,7 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
             public let stockCount: UInt8
             public let feeCellCount: UInt16
             public let txid: String
+            public let feeRateSatPerVb: UInt64?
             public let updatedAt: Int64
         }
 
@@ -687,6 +688,46 @@ public struct OpenCsvBatchReserveOperation: Codable, Equatable {
     public let feeCellCount: UInt16
     public let signedTxHex: String
     public let txid: String
+    public let feeRateSatPerVb: UInt64?
+}
+
+enum OpenCsvBatchReservePolicy {
+    /// The live Signet reserve stalled below a broad 3 sat/vB mempool band.
+    /// Four clears that observed floor while keeping the fixed count-2 split
+    /// below the wallet's 2,000-sat maintenance ceiling.
+    static let targetSatPerVb: UInt64 = 4
+
+    static func shouldFeeBump(state: String, feeRateSatPerVb: UInt64?) -> Bool {
+        ["broadcast_unobserved", "mempool"].contains(state)
+            && (feeRateSatPerVb ?? 0) < targetSatPerVb
+    }
+
+    static func shouldFeeBump(_ operation: OpenCsvBatchReserveOperation) -> Bool {
+        shouldFeeBump(state: operation.state, feeRateSatPerVb: operation.feeRateSatPerVb)
+    }
+}
+
+public enum OpenCsvFeeBumpPolicy {
+    /// An OpenCSV operation remains at `mempool` until the phone-owned scan
+    /// reaches the protocol settlement depth. Bitcoin RBF ends earlier: once
+    /// the wallet's change output is confirmed, ordinary peers will not
+    /// accept a replacement. Keep the cached UI conservative by offering the
+    /// action only while the candidate's own change is still present and the
+    /// wallet reports pending value. Rust remains the final authority when
+    /// wallets contain a mixture of confirmed and pending outputs.
+    public static func shouldOffer(
+        operation: OpenCsvAccountOperationSummary,
+        feeReserve: OpenCsvAccountStatus.FeeReserve,
+    ) -> Bool {
+        guard
+            ["broadcast_unobserved", "broadcast", "mempool"].contains(operation.state),
+            let txid = operation.txid,
+            feeReserve.utxos.contains(where: { $0.txid == txid })
+        else {
+            return false
+        }
+        return feeReserve.trustedPendingSats > 0 || feeReserve.untrustedPendingSats > 0
+    }
 }
 
 /// Public, non-secret operation metadata exported in the compact account
@@ -858,6 +899,15 @@ public final class OpenCsvAccountWallet {
     public func resumeBatchReserves(_ maintenanceId: String) throws -> OpenCsvBatchReserveOperation {
         try maintenanceId.withCString {
             try Self.take(opencsv_account_resume_batch_reserves(handle, $0))
+        }
+    }
+
+    public func feeBumpBatchReserves(
+        _ maintenanceId: String,
+        targetSatPerVb: UInt64,
+    ) throws -> OpenCsvBatchReserveOperation {
+        try maintenanceId.withCString {
+            try Self.take(opencsv_account_fee_bump_batch_reserves(handle, $0, targetSatPerVb))
         }
     }
 
@@ -1320,9 +1370,11 @@ public final class OpenCsvAccountWallet {
         let raw = String(cString: pointer)
         struct FfiFailure: Codable {
             let error: String
+            let reason: String?
         }
         if let failure = try? JSONDecoder().decode(FfiFailure.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            let message = failure.reason.map { "\($0): \(failure.error)" } ?? failure.error
+            throw OpenCsvClientError.ffi(message)
         }
         return raw
     }
@@ -1550,9 +1602,13 @@ public final class OpenCsvWallet {
         }
         defer { opencsv_string_free(pointer) }
         let raw = String(cString: pointer)
-        struct FfiFailure: Codable { let error: String }
+        struct FfiFailure: Codable {
+            let error: String
+            let reason: String?
+        }
         if let failure = try? JSONDecoder().decode(FfiFailure.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            let message = failure.reason.map { "\($0): \(failure.error)" } ?? failure.error
+            throw OpenCsvClientError.ffi(message)
         }
         return raw
     }

@@ -68,6 +68,10 @@ public enum OpenCsvPaymentsError: Error {
     /// (AnchorNotFound / InsufficientConfirmations). Nothing is stored;
     /// the sweep retries once the chain view advances.
     case chainViewLagging(reason: String)
+    /// Mandatory phone-owned chain evidence is temporarily unavailable or
+    /// still catching up. The exact durable send remains queued and must be
+    /// retried; this is never a terminal payment failure.
+    case chainVerificationUnavailable
     /// Bitcoin descriptors, checkpoints, and compact-filter caches are all
     /// chain-specific. Changing the network of an existing account would
     /// either strand it behind Rust's network guard or mix test histories.
@@ -174,7 +178,10 @@ public actor OpenCsvPayments {
     }
 
     /// What the settings/send UI needs to render.
-    public struct WalletSummary {
+    public struct WalletSummary: Codable, Equatable {
+        /// When this exact read-only presentation was persisted. It is not a
+        /// chain-verification time and never participates in spend policy.
+        public let cachedAt: Date
         /// The wallet's receiving key (share with senders and external issuers).
         public let owner: String
         public let balances: [OpenCsvCredit]
@@ -413,7 +420,9 @@ public actor OpenCsvPayments {
             )
         } catch {
             lastWithheldReason[attachmentId] = "\(error)"
-            let lostUnconfirmedParent = priorActivityState == .availableUnconfirmed
+            let wasUnconfirmedCredit = priorActivityState == .availableUnconfirmed
+                || priorActivityState == .awaitingObservers
+            let lostUnconfirmedParent = wasUnconfirmedCredit
                 && "\(error)".contains("unconfirmed anchor")
             if
                 let paymentError = error as? OpenCsvPaymentsError,
@@ -424,11 +433,60 @@ public actor OpenCsvPayments {
                         attachmentId: attachmentId,
                         threadUniqueId: candidate.threadUniqueId,
                         messageUniqueId: candidate.messageUniqueId,
-                        state: .confirming,
+                        state: wasUnconfirmedCredit ? .awaitingObservers : .confirming,
                         detail: "awaiting verified chain settlement",
                         tx: tx,
                     )
                 }
+            } else if let rejectionReason = Self.terminalIncomingRejectionReason(error) {
+                var verdict = OpenCsvVerdict(
+                    status: "rejected",
+                    reason: rejectionReason,
+                    credits: nil,
+                    coins: nil,
+                    anchor: nil,
+                )
+                verdict.chainView = "local-consignment-decoder"
+                let record = OpenCsvVerdictRecord(verdict: verdict, date: Date())
+                await db.awaitableWrite { tx in
+                    self.store.setVerdict(
+                        record,
+                        blob: blob,
+                        attachmentId: attachmentId,
+                        messageUniqueId: candidate.messageUniqueId,
+                        tx: tx,
+                    )
+                    do {
+                        try self.store.upsertIncomingActivity(
+                            attachmentId: attachmentId,
+                            threadUniqueId: candidate.threadUniqueId,
+                            messageUniqueId: candidate.messageUniqueId,
+                            state: .needsAttention,
+                            detail: rejectionReason,
+                            tx: tx,
+                        )
+                    } catch {
+                        owsFailDebug("could not persist malformed OpenCSV activity: \(error)")
+                    }
+                    self.touchOwners(attachmentId: attachmentId, tx: tx)
+                }
+                lastWithheldReason[attachmentId] = nil
+                if priorActivityState != .needsAttention {
+                    notifyPaymentStatus(
+                        threadUniqueId: candidate.threadUniqueId,
+                        messageUniqueId: candidate.messageUniqueId,
+                        body: OWSLocalizedString(
+                            "OPENCSV_NOTIFICATION_NEEDS_ATTENTION",
+                            comment: "Notification that an OpenCSV payment could not be accepted.",
+                        ),
+                        wantsSound: false,
+                    )
+                }
+                Logger.info(
+                    "consignment \(attachmentId): rejected (\(rejectionReason))"
+                        + " via local-consignment-decoder",
+                )
+                return
             } else if lostUnconfirmedParent {
                 try? await db.awaitableWrite { tx in
                     try self.store.upsertIncomingActivity(
@@ -449,6 +507,22 @@ public actor OpenCsvPayments {
                     ),
                     wantsSound: false,
                 )
+            } else if wasUnconfirmedCredit {
+                // Required observer evidence is intentionally live, not a
+                // one-time admission token. If a provider is unavailable or
+                // no longer agrees, Rust freezes descendant coin selection.
+                // Mirror that policy in Signal without erasing the already
+                // verified amount or claiming a definitive rejection.
+                try? await db.awaitableWrite { tx in
+                    try self.store.upsertIncomingActivity(
+                        attachmentId: attachmentId,
+                        threadUniqueId: candidate.threadUniqueId,
+                        messageUniqueId: candidate.messageUniqueId,
+                        state: .awaitingObservers,
+                        detail: "waiting for required network verification",
+                        tx: tx,
+                    )
+                }
             }
             Logger.warn("consignment \(attachmentId) not verifiable yet: \(error)")
         }
@@ -670,6 +744,15 @@ public actor OpenCsvPayments {
         return .singleSnapshot
     }
 
+    /// A required raw-transaction observer gates zero-confirmation delivery,
+    /// but it must not strand an operation after the phone-owned CBF scan has
+    /// independently verified the exact transaction in a block. The Rust SPV
+    /// boundary still checks the consignment, headers, PoW, filter match,
+    /// full block, Merkle inclusion, and OpenCSV record before settlement.
+    static func shouldRefreshOperationSpv(state: String) -> Bool {
+        ["broadcast_unobserved", "mempool", "confirmed", "consignment_delivered"].contains(state)
+    }
+
     /// Scan rejections that mean "the chain view hasn't caught up", not
     /// "this payment is bad": never final, always retryable. Pure so the
     /// classification is testable.
@@ -694,6 +777,23 @@ public actor OpenCsvPayments {
             return "asset_not_reviewed"
         }
         return nil
+    }
+
+    /// A canonical decoder failure is immutable input evidence, not chain or
+    /// observer lag. Persist it once so archived pre-v2 payloads do not stay
+    /// in an infinite "verifying" loop. Match the stable Rust reason prefix,
+    /// never arbitrary human-readable detail.
+    static func terminalIncomingRejectionReason(_ error: Error) -> String? {
+        guard
+            let clientError = error as? OpenCsvClientError,
+            case .ffi(let message) = clientError
+        else {
+            return nil
+        }
+        guard message == "invalid_consignment" || message.hasPrefix("invalid_consignment:") else {
+            return nil
+        }
+        return "invalid_consignment"
     }
 
     /// Retry only verdicts produced before a specific verifier correction.
@@ -1000,10 +1100,10 @@ public actor OpenCsvPayments {
         await recoverInterruptedSends()
     }
 
-    private func refreshOperationSettlementFromVerifiedScan() async {
+    public func refreshOperationSettlementFromVerifiedScan() async {
         guard scanSyncedThisLaunch, let account = try? await ensureAccountWallet() else { return }
         guard let operations = try? account.operationSummaries() else { return }
-        for operation in operations where ["mempool", "confirmed", "consignment_delivered"].contains(operation.state) {
+        for operation in operations where Self.shouldRefreshOperationSpv(state: operation.state) {
             do {
                 _ = try account.refreshOperationSpv(operation.operationId)
             } catch {
@@ -1315,7 +1415,10 @@ public actor OpenCsvPayments {
         var operation = try account.operationStatus(operationId)
         if operation.state == "planned" || operation.state == "fee_reserved" {
             await progress?(.generatingProof)
-            let prepared = try account.proveOperation(operationId)
+            let prepared = try await proveOperationWithCurrentChain(
+                account: account,
+                operationId: operationId,
+            )
             return try await signPreparedOperation(
                 account: account,
                 operationId: prepared.operationId,
@@ -1382,7 +1485,10 @@ public actor OpenCsvPayments {
         }
         if batch.state == "frozen" {
             await progress?(.generatingProof)
-            switch try account.proveSendBatch(batchLocalId) {
+            switch try await proveBatchWithCurrentChain(
+                account: account,
+                batchLocalId: batchLocalId,
+            ) {
             case .solo(let operationId):
                 guard let only = pending.first(where: { $0.operationId == operationId }) else {
                     throw OpenCsvClientError.ffi("solo OpenCSV operation lost Signal metadata")
@@ -1430,6 +1536,73 @@ public actor OpenCsvPayments {
             deliveries.append(try await persistDeliveryIfReady(operation: operation, pending: metadata))
         }
         return deliveries
+    }
+
+    /// Cached balances keep the send UI instant, but proof generation cannot
+    /// race the independently verified nullifier scan. A failed sync leaves
+    /// the Rust operation and fee reservation untouched for the next
+    /// foreground/BGProcessing retry.
+    private func requireChainVerificationForProof() async throws {
+        if scanSyncedThisLaunch {
+            return
+        }
+        guard await scanSyncIfNeeded() else {
+            Logger.info("OpenCSV proof remains queued while chain verification catches up")
+            throw OpenCsvPaymentsError.chainVerificationUnavailable
+        }
+    }
+
+    /// Rust independently verifies the selected fee input immediately before
+    /// proving. Its funding view can advance by one block after the phone's
+    /// scan completed but before this call begins. That is a freshness race,
+    /// not a terminal operation result: invalidate the cached launch receipt,
+    /// advance the phone-owned scan, and retry the same durable operation id.
+    /// The retry count is bounded so unavailable peers never become a busy
+    /// loop, while a block arriving during the first refresh still converges.
+    private func proveOperationWithCurrentChain(
+        account: OpenCsvAccountWallet,
+        operationId: String,
+    ) async throws -> OpenCsvPreparedOperation {
+        for retry in 0...2 {
+            try await requireChainVerificationForProof()
+            do {
+                return try account.proveOperation(operationId)
+            } catch {
+                guard Self.isChainVerificationUnavailable(error), retry < 2 else {
+                    throw error
+                }
+                scanSyncedThisLaunch = false
+                Logger.info("funding view advanced; refreshing phone-owned scan before proof retry")
+            }
+        }
+        throw OpenCsvPaymentsError.chainVerificationUnavailable
+    }
+
+    private func proveBatchWithCurrentChain(
+        account: OpenCsvAccountWallet,
+        batchLocalId: String,
+    ) async throws -> OpenCsvSendBatchProofResult {
+        for retry in 0...2 {
+            try await requireChainVerificationForProof()
+            do {
+                return try account.proveSendBatch(batchLocalId)
+            } catch {
+                guard Self.isChainVerificationUnavailable(error), retry < 2 else {
+                    throw error
+                }
+                scanSyncedThisLaunch = false
+                Logger.info("funding view advanced; refreshing phone-owned scan before batch proof retry")
+            }
+        }
+        throw OpenCsvPaymentsError.chainVerificationUnavailable
+    }
+
+    /// Match only Rust's stable reason prefix. Human-readable detail is not
+    /// an API and must never turn a definitive protocol rejection retryable.
+    static func isChainVerificationUnavailable(_ error: Error) -> Bool {
+        guard case OpenCsvClientError.ffi(let message) = error else { return false }
+        return message == "chain_verification_unavailable"
+            || message.hasPrefix("chain_verification_unavailable:")
     }
 
     /// Compatibility call for tests and non-interactive clients that still
@@ -1701,13 +1874,6 @@ public actor OpenCsvPayments {
         operation: OpenCsvAccountOperation,
         pending: OpenCsvWalletStore.PendingAccountOperation,
     ) async throws -> OpenCsvWalletStore.PendingDelivery {
-        if
-            let existing = db.read(block: { tx in
-                self.store.pendingDeliveries(tx: tx).first { $0.operationId == operation.operationId }
-            })
-        {
-            return existing
-        }
         guard
             let receipt = operation.receipt,
             receipt.deliveryReady == true,
@@ -1719,6 +1885,17 @@ public actor OpenCsvPayments {
                 operationId: operation.operationId,
                 state: operation.state,
             )
+        }
+        if
+            let existing = db.read(block: { tx in
+                Self.pendingDelivery(
+                    operationId: operation.operationId,
+                    consignmentId: consignmentId,
+                    in: self.store.pendingDeliveries(tx: tx),
+                )
+            })
+        {
+            return existing
         }
         let account = try await ensureAccountWallet()
         let inspection = try account.inspect(blob: blob)
@@ -1736,11 +1913,11 @@ public actor OpenCsvPayments {
             // re-enter while fetching account status above, and a concurrent
             // recovery pass may have persisted this exact operation meanwhile.
             if
-                let existing = self.store.pendingDeliveries(tx: tx)
-                    .first(where: {
-                        $0.operationId == operation.operationId
-                            && $0.consignmentId == consignmentId
-                    })
+                let existing = Self.pendingDelivery(
+                    operationId: operation.operationId,
+                    consignmentId: consignmentId,
+                    in: self.store.pendingDeliveries(tx: tx),
+                )
             {
                 return existing
             }
@@ -1767,6 +1944,19 @@ public actor OpenCsvPayments {
             )
             try self.store.addPendingDelivery(delivery, tx: tx)
             return delivery
+        }
+    }
+
+    /// A protocol-safe fee replacement keeps the logical operation id but
+    /// rotates its txid-bound canonical consignment. Deduplicate only the
+    /// exact pair so crash recovery can enqueue the replacement attachment.
+    nonisolated static func pendingDelivery(
+        operationId: String,
+        consignmentId: String,
+        in deliveries: [OpenCsvWalletStore.PendingDelivery],
+    ) -> OpenCsvWalletStore.PendingDelivery? {
+        deliveries.first {
+            $0.operationId == operationId && $0.consignmentId == consignmentId
         }
     }
 
@@ -1842,7 +2032,10 @@ public actor OpenCsvPayments {
                         // The exact intent and chat metadata were durable
                         // before this point, so app termination merely causes
                         // the same operation id to re-enter here.
-                        _ = try account.proveOperation(pending.operationId)
+                        _ = try await proveOperationWithCurrentChain(
+                            account: account,
+                            operationId: pending.operationId,
+                        )
                         operation = try account.operationStatus(pending.operationId)
                     }
                     if
@@ -2149,7 +2342,8 @@ public actor OpenCsvPayments {
             ?? UInt32(clamping: observationPolicy.filter {
                 $0.kind == .rawTransactionApi && $0.mode == .require
             }.count)
-        return WalletSummary(
+        let summary = WalletSummary(
+            cachedAt: Date(),
             owner: status.owners.first ?? "",
             balances: status.assets,
             incomingActivities: db.read { self.store.incomingActivities(tx: $0) },
@@ -2178,6 +2372,33 @@ public actor OpenCsvPayments {
             requiredRawObserverQuorum: requiredRawObserverQuorum,
             observationReceipts: status.observationReceipts ?? [],
         )
+        do {
+            let encoded = try JSONEncoder().encode(summary)
+            await db.awaitableWrite { tx in
+                self.store.setWalletPresentationSnapshotData(encoded, tx: tx)
+            }
+        } catch {
+            Logger.warn("could not persist OpenCSV wallet presentation snapshot: \(error)")
+        }
+        return summary
+    }
+
+    /// Read-only presentation cached outside this actor. A blocking wallet
+    /// sync therefore cannot hide a previously known balance or activity.
+    /// All writes still reopen Rust-owned state and re-run mandatory policy.
+    public nonisolated func cachedWalletSummary() -> WalletSummary? {
+        let store = OpenCsvWalletStore(
+            keychainStorage: SSKEnvironment.shared.databaseStorageRef.keychainStorage,
+        )
+        return DependenciesBridge.shared.db.read { tx in
+            guard let data = store.walletPresentationSnapshotData(tx: tx) else { return nil }
+            do {
+                return try JSONDecoder().decode(WalletSummary.self, from: data)
+            } catch {
+                Logger.warn("ignoring invalid OpenCSV wallet presentation snapshot: \(error)")
+                return nil
+            }
+        }
     }
 
     public func setEsploraUrl(_ urlString: String?) async {
@@ -2647,7 +2868,36 @@ public actor OpenCsvPayments {
                     && ["signed_persisted", "broadcast_unobserved", "mempool"].contains(operation.state)
             }
         if let current = maintenance {
-            var resumed = try account.resumeBatchReserves(current.maintenanceId)
+            // Confirmation is stronger than unconfirmed observer evidence and
+            // makes an RBF unnecessary. Ask Rust to verify it first so an API
+            // outage cannot strand already-mined reserve stock behind the
+            // unconfirmed two-observer gate.
+            var refreshed: OpenCsvBatchReserveOperation?
+            do {
+                refreshed = try account.refreshBatchReserves(current.maintenanceId)
+                if refreshed?.state == "confirmed" {
+                    return
+                }
+            } catch {
+                Logger.warn("OpenCSV reserve confirmation check is pending: \(error)")
+            }
+            var resumed: OpenCsvBatchReserveOperation
+            if
+                OpenCsvBatchReservePolicy.shouldFeeBump(
+                    state: refreshed?.state ?? current.state,
+                    feeRateSatPerVb: refreshed?.feeRateSatPerVb ?? current.feeRateSatPerVb,
+                )
+            {
+                resumed = try account.feeBumpBatchReserves(
+                    current.maintenanceId,
+                    targetSatPerVb: OpenCsvBatchReservePolicy.targetSatPerVb,
+                )
+                // The replacement and stock txid remap are already durable
+                // before relay. Preserve that exact recovery point promptly.
+                try await backUpAccountCheckpoint(account: account)
+            } else {
+                resumed = try account.resumeBatchReserves(current.maintenanceId)
+            }
             if resumed.state == "signed_persisted" || resumed.state == "broadcast_unobserved" {
                 resumed = try await observeBatchReserveIfAvailable(account: account, operation: resumed)
             }
@@ -2660,7 +2910,7 @@ public actor OpenCsvPayments {
 
         let prepared = try account.prepareBatchReserves(
             participantCount: participantCount,
-            targetSatPerVb: 2,
+            targetSatPerVb: OpenCsvBatchReservePolicy.targetSatPerVb,
             maxFeeSats: 2_000,
         )
         // The exact signed split is already durable before Rust relays it.
