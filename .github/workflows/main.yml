@@ -24,7 +24,7 @@ jobs:
   build_and_test:
     name: Build and Test
     timeout-minutes: 45
-    runs-on: macos-26-xlarge
+    runs-on: [self-hosted, macOS, x86_64, signal-ios]
     env:
       FASTLANE_XCODEBUILD_SETTINGS_RETRIES: 7
 
@@ -122,7 +122,7 @@ jobs:
   opencsv_recovery_build:
     name: OpenCSV recovery build
     timeout-minutes: 45
-    runs-on: macos-26-xlarge
+    runs-on: [self-hosted, macOS, x86_64, signal-ios]
 
     steps:
       - name: Set Xcode version
