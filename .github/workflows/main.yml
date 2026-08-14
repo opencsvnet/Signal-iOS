@@ -34,9 +34,25 @@ jobs:
         xcode: ["Xcode_26.6"]
 
     steps:
-      - name: Set Xcode version
+      - name: Select installed Xcode 26.6
+        shell: bash
         run: |
-          echo DEVELOPER_DIR=/Applications/${{matrix.xcode}}.app >> "$GITHUB_ENV"
+          shopt -s nullglob
+          expected=$(<.xcode-version)
+          selected=
+          for candidate in /Applications/Xcode*.app; do
+            actual=$(DEVELOPER_DIR="$candidate" xcodebuild -version 2>/dev/null | head -n 1 || true)
+            echo "$candidate: ${actual:-unusable}"
+            if [[ "$actual" == "$expected" ]]; then
+              selected=$candidate
+              break
+            fi
+          done
+          if [[ -z "$selected" ]]; then
+            echo "No installed Xcode matches $expected" >&2
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$selected" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v6
 
@@ -125,8 +141,25 @@ jobs:
     runs-on: [self-hosted, macOS, x86_64, signal-ios]
 
     steps:
-      - name: Set Xcode version
-        run: echo DEVELOPER_DIR=/Applications/Xcode_26.6.app >> "$GITHUB_ENV"
+      - name: Select installed Xcode 26.6
+        shell: bash
+        run: |
+          shopt -s nullglob
+          expected=$(<.xcode-version)
+          selected=
+          for candidate in /Applications/Xcode*.app; do
+            actual=$(DEVELOPER_DIR="$candidate" xcodebuild -version 2>/dev/null | head -n 1 || true)
+            echo "$candidate: ${actual:-unusable}"
+            if [[ "$actual" == "$expected" ]]; then
+              selected=$candidate
+              break
+            fi
+          done
+          if [[ -z "$selected" ]]; then
+            echo "No installed Xcode matches $expected" >&2
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$selected" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v6
 
