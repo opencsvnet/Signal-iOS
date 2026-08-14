@@ -1189,10 +1189,13 @@ final class OpenCsvWalletStoreTest {
                 tx: tx,
             ))
             #expect(store.incomingActivities(tx: tx).isEmpty)
-            #expect(store.replayBlobs(tx: tx).map(\.entry) == [
-                "c:\(originalId)",
-                "c:\(replacementId)",
-            ])
+            let superseded = store.verdict(attachmentId: 50, tx: tx)
+            #expect(superseded?.status == "rejected")
+            #expect(superseded?.reason == "superseded_consignment")
+            #expect(superseded?.finality == "superseded")
+            #expect(superseded?.spendable == false)
+            #expect(!OpenCsvPayments.shouldRetryStoredVerdict(superseded))
+            #expect(store.replayBlobs(tx: tx).map(\.entry) == ["c:\(replacementId)"])
         }
     }
 
