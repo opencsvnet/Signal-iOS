@@ -76,6 +76,46 @@ struct OpenCsvBackgroundWorkPolicyTest {
     }
 }
 
+struct OpenCsvBatchReservePolicyTest {
+    private func operation(state: String, feeRate: UInt64?) -> OpenCsvBatchReserveOperation {
+        OpenCsvBatchReserveOperation(
+            maintenanceId: "maintenance",
+            state: state,
+            participantCount: 2,
+            stockCount: 3,
+            feeCellCount: 6,
+            signedTxHex: "00",
+            txid: String(repeating: "00", count: 32),
+            feeRateSatPerVb: feeRate,
+        )
+    }
+
+    @Test
+    func bumpsOnlyLowFeeRelayableMaintenance() {
+        #expect(OpenCsvBatchReservePolicy.targetSatPerVb == 4)
+        #expect(OpenCsvBatchReservePolicy.shouldFeeBump(operation(
+            state: "broadcast_unobserved",
+            feeRate: 2,
+        )))
+        #expect(OpenCsvBatchReservePolicy.shouldFeeBump(operation(
+            state: "mempool",
+            feeRate: nil,
+        )))
+        #expect(!OpenCsvBatchReservePolicy.shouldFeeBump(operation(
+            state: "mempool",
+            feeRate: 4,
+        )))
+        #expect(!OpenCsvBatchReservePolicy.shouldFeeBump(operation(
+            state: "confirmed",
+            feeRate: 2,
+        )))
+        #expect(OpenCsvBatchReservePolicy.shouldFeeBump(
+            state: "broadcast_unobserved",
+            feeRateSatPerVb: nil,
+        ))
+    }
+}
+
 struct OpenCsvSyncProvenanceTest {
     @Test
     func parsesStableRustTimestampAndTipStrings() {

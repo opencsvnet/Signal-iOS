@@ -534,6 +534,7 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
             public let stockCount: UInt8
             public let feeCellCount: UInt16
             public let txid: String
+            public let feeRateSatPerVb: UInt64?
             public let updatedAt: Int64
         }
 
@@ -687,6 +688,23 @@ public struct OpenCsvBatchReserveOperation: Codable, Equatable {
     public let feeCellCount: UInt16
     public let signedTxHex: String
     public let txid: String
+    public let feeRateSatPerVb: UInt64?
+}
+
+enum OpenCsvBatchReservePolicy {
+    /// The live Signet reserve stalled below a broad 3 sat/vB mempool band.
+    /// Four clears that observed floor while keeping the fixed count-2 split
+    /// below the wallet's 2,000-sat maintenance ceiling.
+    static let targetSatPerVb: UInt64 = 4
+
+    static func shouldFeeBump(state: String, feeRateSatPerVb: UInt64?) -> Bool {
+        ["broadcast_unobserved", "mempool"].contains(state)
+            && (feeRateSatPerVb ?? 0) < targetSatPerVb
+    }
+
+    static func shouldFeeBump(_ operation: OpenCsvBatchReserveOperation) -> Bool {
+        shouldFeeBump(state: operation.state, feeRateSatPerVb: operation.feeRateSatPerVb)
+    }
 }
 
 /// Public, non-secret operation metadata exported in the compact account
@@ -858,6 +876,15 @@ public final class OpenCsvAccountWallet {
     public func resumeBatchReserves(_ maintenanceId: String) throws -> OpenCsvBatchReserveOperation {
         try maintenanceId.withCString {
             try Self.take(opencsv_account_resume_batch_reserves(handle, $0))
+        }
+    }
+
+    public func feeBumpBatchReserves(
+        _ maintenanceId: String,
+        targetSatPerVb: UInt64,
+    ) throws -> OpenCsvBatchReserveOperation {
+        try maintenanceId.withCString {
+            try Self.take(opencsv_account_fee_bump_batch_reserves(handle, $0, targetSatPerVb))
         }
     }
 

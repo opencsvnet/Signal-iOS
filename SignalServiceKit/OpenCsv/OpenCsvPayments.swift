@@ -2851,7 +2851,36 @@ public actor OpenCsvPayments {
                     && ["signed_persisted", "broadcast_unobserved", "mempool"].contains(operation.state)
             }
         if let current = maintenance {
-            var resumed = try account.resumeBatchReserves(current.maintenanceId)
+            // Confirmation is stronger than unconfirmed observer evidence and
+            // makes an RBF unnecessary. Ask Rust to verify it first so an API
+            // outage cannot strand already-mined reserve stock behind the
+            // unconfirmed two-observer gate.
+            var refreshed: OpenCsvBatchReserveOperation?
+            do {
+                refreshed = try account.refreshBatchReserves(current.maintenanceId)
+                if refreshed?.state == "confirmed" {
+                    return
+                }
+            } catch {
+                Logger.warn("OpenCSV reserve confirmation check is pending: \(error)")
+            }
+            var resumed: OpenCsvBatchReserveOperation
+            if
+                OpenCsvBatchReservePolicy.shouldFeeBump(
+                    state: refreshed?.state ?? current.state,
+                    feeRateSatPerVb: refreshed?.feeRateSatPerVb ?? current.feeRateSatPerVb,
+                )
+            {
+                resumed = try account.feeBumpBatchReserves(
+                    current.maintenanceId,
+                    targetSatPerVb: OpenCsvBatchReservePolicy.targetSatPerVb,
+                )
+                // The replacement and stock txid remap are already durable
+                // before relay. Preserve that exact recovery point promptly.
+                try await backUpAccountCheckpoint(account: account)
+            } else {
+                resumed = try account.resumeBatchReserves(current.maintenanceId)
+            }
             if resumed.state == "signed_persisted" || resumed.state == "broadcast_unobserved" {
                 resumed = try await observeBatchReserveIfAvailable(account: account, operation: resumed)
             }
@@ -2864,7 +2893,7 @@ public actor OpenCsvPayments {
 
         let prepared = try account.prepareBatchReserves(
             participantCount: participantCount,
-            targetSatPerVb: 2,
+            targetSatPerVb: OpenCsvBatchReservePolicy.targetSatPerVb,
             maxFeeSats: 2_000,
         )
         // The exact signed split is already durable before Rust relays it.
