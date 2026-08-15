@@ -1306,7 +1306,7 @@ class OpenCsvWalletViewController: OWSViewController {
             } catch OpenCsvPaymentsError.productionUsdNotConfigured {
                 self.networkField.text = "signet"
                 self.presentError(
-                    "Mainnet is locked in this build. It has no reviewed production USD issuer, and Test USD is permanently signet-only.",
+                    "Mainnet is locked in this build. Production needs separately reviewed issuers, wallet and backup namespaces, and Bitcoin derivation; Test USD is permanently signet-only.",
                 )
             } catch {
                 self.refresh()

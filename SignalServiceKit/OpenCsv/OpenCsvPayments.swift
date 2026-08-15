@@ -79,9 +79,9 @@ public enum OpenCsvPaymentsError: Error {
     /// The account wallet supports only chains with authoritative CBF
     /// verification wired through this integration.
     case unsupportedNetwork(String)
-    /// Mainnet remains unavailable until this exact app build contains at
-    /// least one reviewed, non-test USD issuer manifest. Test USD must never
-    /// be reinterpreted as a production instrument.
+    /// Mainnet remains unavailable until a separate production integration
+    /// supplies reviewed issuers, database/backup namespaces, and derivation
+    /// trees. Test USD must never be reinterpreted as production state.
     case productionUsdNotConfigured
 }
 
@@ -2720,15 +2720,13 @@ public actor OpenCsvPayments {
         base.appendingPathComponent("opencsv", isDirectory: true)
     }
 
-    /// The consumer wallet may enter mainnet only when this build carries a
-    /// reviewed production issuer. Regtest remains available to developers;
-    /// signet remains the permanent home of Test USD.
+    /// This integration owns only the permanent signet Test USD namespace.
+    /// A production issuer registry alone must not unlock it on mainnet: the
+    /// database, Secure Backup, Keychain, and derivation namespaces must all
+    /// move together in a separately reviewed production integration.
+    /// Regtest remains available to developers.
     static func isConsumerProductConfigured(for network: String) -> Bool {
-        guard network == "mainnet" else { return true }
-        return OpenCsvReviewedUsdIssuers.policies(for: network).contains { policy in
-            policy.manifest.terms.unitCode == "USD"
-                && !policy.manifest.terms.testOnly
-        }
+        network != "mainnet"
     }
 
     /// A stored verdict, for the conversation cell (main-thread render path).
