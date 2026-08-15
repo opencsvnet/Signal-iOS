@@ -861,8 +861,41 @@ public struct OpenCsvWalletStore {
             )
             let presentationId = record.paymentId ?? consignmentId
             let presentationKey = Self.canonicalPresentationAttachmentPrefix + presentationId
-            let supersedesPrior = record.isVerified
-                && record.supersededConsignmentIds?.isEmpty == false
+            let existingPresentationConsignmentId: String? = {
+                guard
+                    let attachmentId = keyValueStore.getString(presentationKey, transaction: tx)
+                else {
+                    return nil
+                }
+                return keyValueStore.getString(
+                    Self.attachmentConsignmentIdPrefix + attachmentId,
+                    transaction: tx,
+                )
+            }()
+            let settledOriginalWinner: String? = {
+                guard
+                    record.isVerified,
+                    record.finality == "settled",
+                    let priorConsignmentId = existingPresentationConsignmentId,
+                    priorConsignmentId != consignmentId
+                else {
+                    return nil
+                }
+                let prior: OpenCsvVerdictRecord? = try? keyValueStore.getCodableValue(
+                    forKey: Self.canonicalVerdictKey(priorConsignmentId),
+                    transaction: tx,
+                )
+                return prior?.finality == "settled" ? nil : priorConsignmentId
+            }()
+            var supersededIds = Set(record.supersededConsignmentIds ?? [])
+            if let settledOriginalWinner {
+                // A previously replaced transaction can still win by being
+                // mined first. Rust verifies the redelivered original as
+                // settled; that stronger chain fact revives its stable
+                // payment identity and retires the unconfirmed replacement.
+                supersededIds.insert(settledOriginalWinner)
+            }
+            let supersedesPrior = record.isVerified && !supersededIds.isEmpty
             if
                 supersedesPrior
                 || keyValueStore.getString(presentationKey, transaction: tx) == nil
@@ -879,7 +912,6 @@ public struct OpenCsvWalletStore {
                 }
             }
             if supersedesPrior {
-                let supersededIds = Set(record.supersededConsignmentIds ?? [])
                 for supersededId in supersededIds {
                     let supersededVerdictKey = Self.canonicalVerdictKey(supersededId)
                     do {
@@ -1484,6 +1516,26 @@ public struct OpenCsvWalletStore {
         var ids = pendingDeliveryIds(tx: tx)
         ids.removeAll { $0 == id }
         try keyValueStore.setCodable(ids, key: Self.pendingDeliveriesKey, transaction: tx)
+    }
+
+    /// Remove only the exact delivery epoch Rust acknowledged. An older
+    /// Signal callback can share an operation id with a newer RBF
+    /// consignment, but its stale nonce must never sweep that replacement.
+    @discardableResult
+    public func removeAcknowledgedPendingDelivery(
+        operationId: String,
+        deliveryNonce: String,
+        tx: DBWriteTransaction,
+    ) throws -> Bool {
+        guard
+            let delivery = pendingDeliveries(tx: tx).first(where: {
+                $0.operationId == operationId && $0.deliveryNonce == deliveryNonce
+            })
+        else {
+            return false
+        }
+        try removePendingDelivery(id: delivery.id, tx: tx)
+        return true
     }
 
     public func markPendingDeliveryEnqueued(id: String, tx: DBWriteTransaction) throws {
