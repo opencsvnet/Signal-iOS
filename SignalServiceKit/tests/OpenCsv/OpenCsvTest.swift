@@ -1796,6 +1796,15 @@ struct OpenCsvReviewedUsdIssuersTest {
     func productionNetworksDoNotTrustThePreviewIssuer() {
         #expect(OpenCsvReviewedUsdIssuers.policies(for: "mainnet").isEmpty)
         #expect(OpenCsvReviewedUsdIssuers.policies(for: "regtest").isEmpty)
+        #expect(!OpenCsvPayments.isConsumerProductConfigured(for: "mainnet"))
+        #expect(OpenCsvPayments.isConsumerProductConfigured(for: "signet"))
+        #expect(OpenCsvPayments.isConsumerProductConfigured(for: "regtest"))
+    }
+
+    @Test
+    func durableDatabaseDetectionUsesTheActualAccountDirectory() {
+        let base = URL(fileURLWithPath: "/tmp/opencsv-release-gate-test", isDirectory: true)
+        #expect(OpenCsvPayments.accountDatabaseDirectory(base: base).lastPathComponent == "opencsv")
     }
 
     @Test

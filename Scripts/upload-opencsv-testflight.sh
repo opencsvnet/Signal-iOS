@@ -8,6 +8,11 @@ export_options="${OPENCSV_EXPORT_OPTIONS:-$repo_root/Config/OpenCSV-TestFlight-E
 export_path="${OPENCSV_EXPORT_PATH:-$repo_root/build/TestFlightExport}"
 xcode_path="${OPENCSV_XCODE_PATH:-/Applications/Xcode.app}"
 
+if [[ "${OPENCSV_UPLOAD_APPROVED:-}" != "YES" ]]; then
+    echo "Refusing to upload without deliberate OPENCSV_UPLOAD_APPROVED=YES" >&2
+    exit 1
+fi
+
 if [[ ! -d "$archive_path" ]]; then
     echo "Missing archive: $archive_path" >&2
     exit 1

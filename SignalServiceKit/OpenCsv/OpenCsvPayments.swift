@@ -79,6 +79,10 @@ public enum OpenCsvPaymentsError: Error {
     /// The account wallet supports only chains with authoritative CBF
     /// verification wired through this integration.
     case unsupportedNetwork(String)
+    /// Mainnet remains unavailable until this exact app build contains at
+    /// least one reviewed, non-test USD issuer manifest. Test USD must never
+    /// be reinterpreted as a production instrument.
+    case productionUsdNotConfigured
 }
 
 /// One exact issuer instrument selected to satisfy a USD send. The UI shows
@@ -2665,6 +2669,9 @@ public actor OpenCsvPayments {
         guard ["mainnet", "signet", "regtest"].contains(requested) else {
             throw OpenCsvPaymentsError.unsupportedNetwork(network)
         }
+        guard Self.isConsumerProductConfigured(for: requested) else {
+            throw OpenCsvPaymentsError.productionUsdNotConfigured
+        }
         let current = db.read { self.store.network(tx: $0) }
         guard requested != current else { return }
         guard !Self.hasPersistedAccountDatabase() else {
@@ -2689,8 +2696,9 @@ public actor OpenCsvPayments {
     /// account databases and their sibling `.cbf` caches are never deleted or
     /// silently repurposed by a settings edit.
     private static func hasPersistedAccountDatabase() -> Bool {
-        let directory = OWSFileSystem.appSharedDataDirectoryURL()
-            .appendingPathComponent("opencsv-test-usd-v2", isDirectory: true)
+        let directory = accountDatabaseDirectory(
+            base: OWSFileSystem.appSharedDataDirectoryURL(),
+        )
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
                 at: directory,
@@ -2705,6 +2713,21 @@ public actor OpenCsvPayments {
                     url.lastPathComponent.hasPrefix("linked-account-v2-")
                         && url.pathExtension == "sqlite"
                 )
+        }
+    }
+
+    static func accountDatabaseDirectory(base: URL) -> URL {
+        base.appendingPathComponent("opencsv", isDirectory: true)
+    }
+
+    /// The consumer wallet may enter mainnet only when this build carries a
+    /// reviewed production issuer. Regtest remains available to developers;
+    /// signet remains the permanent home of Test USD.
+    static func isConsumerProductConfigured(for network: String) -> Bool {
+        guard network == "mainnet" else { return true }
+        return OpenCsvReviewedUsdIssuers.policies(for: network).contains { policy in
+            policy.manifest.terms.unitCode == "USD"
+                && !policy.manifest.terms.testOnly
         }
     }
 
@@ -2897,6 +2920,9 @@ public actor OpenCsvPayments {
                 try store.linkedWatchAccount(tx: tx),
             )
         }
+        guard Self.isConsumerProductConfigured(for: settings.network) else {
+            throw OpenCsvPaymentsError.productionUsdNotConfigured
+        }
 
         let material: OpenCsvAccountMaterial?
         let role: OpenCsvAccountRole
@@ -2911,8 +2937,9 @@ public actor OpenCsvPayments {
             role = .linked
         }
 
-        let directory = OWSFileSystem.appSharedDataDirectoryURL()
-            .appendingPathComponent("opencsv", isDirectory: true)
+        let directory = Self.accountDatabaseDirectory(
+            base: OWSFileSystem.appSharedDataDirectoryURL(),
+        )
         guard OWSFileSystem.ensureDirectoryExists(directory.path) else {
             throw OpenCsvPaymentsError.couldNotPersistPendingSend(
                 underlying: "could not create OpenCSV account directory",

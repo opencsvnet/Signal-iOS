@@ -1303,6 +1303,11 @@ class OpenCsvWalletViewController: OWSViewController {
             } catch OpenCsvPaymentsError.unsupportedNetwork(let requested) {
                 self.refresh()
                 self.presentError("Unsupported Bitcoin network: \(requested).")
+            } catch OpenCsvPaymentsError.productionUsdNotConfigured {
+                self.networkField.text = "signet"
+                self.presentError(
+                    "Mainnet is locked in this build. It has no reviewed production USD issuer, and Test USD is permanently signet-only.",
+                )
             } catch {
                 self.refresh()
                 self.presentError("\(error)")
