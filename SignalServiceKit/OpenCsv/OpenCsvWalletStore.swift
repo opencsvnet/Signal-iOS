@@ -177,6 +177,34 @@ public struct OpenCsvVerdictRecord: Codable, Equatable {
         self.anchorTxid = verdict.anchorTxid
     }
 
+    /// A protocol-safe fee replacement permanently retires the attachment
+    /// bound to the replaced transaction. Keep a small terminal verdict so
+    /// startup verification cannot resurrect the old attachment as a fresh
+    /// confirming payment after its replay bytes have been removed.
+    fileprivate init(
+        supersededConsignmentId: String,
+        prior record: OpenCsvVerdictRecord?,
+        replacement: OpenCsvVerdictRecord,
+        date: Date,
+    ) {
+        let source = record ?? replacement
+        self.verificationVersion = Self.currentVerificationVersion
+        self.status = "rejected"
+        self.reason = "superseded_consignment"
+        self.amount = source.amount
+        self.currency = source.currency
+        self.assetId = source.assetId
+        self.direction = source.direction
+        self.verifiedAt = date
+        self.chainView = source.chainView
+        self.consignmentId = supersededConsignmentId
+        self.paymentId = replacement.paymentId ?? source.paymentId
+        self.supersededConsignmentIds = nil
+        self.finality = "superseded"
+        self.spendable = false
+        self.anchorTxid = source.anchorTxid
+    }
+
     /// A verdict for a consignment we sent. The amount is what the
     /// recipient receives — the self-ingest only ever credits our change,
     /// so deriving it from credits would show the wrong number.
@@ -853,6 +881,26 @@ public struct OpenCsvWalletStore {
             if supersedesPrior {
                 let supersededIds = Set(record.supersededConsignmentIds ?? [])
                 for supersededId in supersededIds {
+                    let supersededVerdictKey = Self.canonicalVerdictKey(supersededId)
+                    do {
+                        let oldRecord: OpenCsvVerdictRecord? = try keyValueStore.getCodableValue(
+                            forKey: supersededVerdictKey,
+                            transaction: tx,
+                        )
+                        try keyValueStore.setCodable(
+                            OpenCsvVerdictRecord(
+                                supersededConsignmentId: supersededId,
+                                prior: oldRecord,
+                                replacement: record,
+                                date: record.verifiedAt,
+                            ),
+                            key: supersededVerdictKey,
+                            transaction: tx,
+                        )
+                    } catch {
+                        owsFailDebug("could not tombstone superseded OpenCSV verdict: \(error)")
+                    }
+                    removeReplayEntry("c:\(supersededId)", tx: tx)
                     keyValueStore.setString(
                         "\(attachmentId)",
                         key: Self.canonicalPresentationAttachmentPrefix + supersededId,
@@ -1137,6 +1185,16 @@ public struct OpenCsvWalletStore {
                 // replayed, so the coins it credits go missing at restart.
                 owsFailDebug("could not record OpenCSV replay entry \(entry): \(error)")
             }
+        }
+    }
+
+    private func removeReplayEntry(_ entry: String, tx: DBWriteTransaction) {
+        keyValueStore.removeValue(forKey: Self.blobKey(entry), transaction: tx)
+        let order = replayOrder(tx: tx).filter { $0 != entry }
+        do {
+            try keyValueStore.setCodable(order, key: Self.replayOrderKey, transaction: tx)
+        } catch {
+            owsFailDebug("could not remove superseded OpenCSV replay entry \(entry): \(error)")
         }
     }
 
