@@ -7,11 +7,33 @@ import Foundation
 import OpenCsvFFI
 
 /// Errors surfaced by the OpenCSV FFI boundary.
-public enum OpenCsvClientError: Error, Equatable {
+public enum OpenCsvClientError: Error, Equatable, CustomStringConvertible {
     /// The Rust side reported a failure (`{"error": ...}`).
     case ffi(String)
+    /// A structured account-wallet failure. `reason` is the stable API;
+    /// `message` is display/debug detail and must never drive state.
+    case ffiFailure(reason: String, message: String, retryable: Bool?)
     /// The FFI returned JSON we could not decode.
     case decode(String)
+
+    public var ffiReason: String? {
+        guard case .ffiFailure(let reason, _, _) = self else { return nil }
+        return reason
+    }
+
+    public var ffiMessage: String? {
+        switch self {
+        case .ffi(let message), .decode(let message): message
+        case .ffiFailure(_, let message, _): message
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .ffi(let message), .decode(let message): message
+        case .ffiFailure(let reason, let message, _): "\(reason): \(message)"
+        }
+    }
 }
 
 /// One credited (or held) asset total, as reported by the wallet.
@@ -1371,10 +1393,17 @@ public final class OpenCsvAccountWallet {
         struct FfiFailure: Codable {
             let error: String
             let reason: String?
+            let retryable: Bool?
         }
         if let failure = try? JSONDecoder().decode(FfiFailure.self, from: Data(raw.utf8)) {
-            let message = failure.reason.map { "\($0): \(failure.error)" } ?? failure.error
-            throw OpenCsvClientError.ffi(message)
+            if let reason = failure.reason {
+                throw OpenCsvClientError.ffiFailure(
+                    reason: reason,
+                    message: failure.error,
+                    retryable: failure.retryable,
+                )
+            }
+            throw OpenCsvClientError.ffi(failure.error)
         }
         return raw
     }
@@ -1605,10 +1634,17 @@ public final class OpenCsvWallet {
         struct FfiFailure: Codable {
             let error: String
             let reason: String?
+            let retryable: Bool?
         }
         if let failure = try? JSONDecoder().decode(FfiFailure.self, from: Data(raw.utf8)) {
-            let message = failure.reason.map { "\($0): \(failure.error)" } ?? failure.error
-            throw OpenCsvClientError.ffi(message)
+            if let reason = failure.reason {
+                throw OpenCsvClientError.ffiFailure(
+                    reason: reason,
+                    message: failure.error,
+                    retryable: failure.retryable,
+                )
+            }
+            throw OpenCsvClientError.ffi(failure.error)
         }
         return raw
     }

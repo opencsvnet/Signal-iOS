@@ -378,7 +378,7 @@ public enum OpenCsvChainView {
             raw = String(cString: out)
         }
         if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            throw failure.clientError
         }
         return try decoder.decode(ScanSyncResult.self, from: Data(raw.utf8))
     }
@@ -413,7 +413,7 @@ public enum OpenCsvChainView {
         defer { opencsv_string_free(out) }
         let raw = String(cString: out)
         if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            throw failure.clientError
         }
         return raw
     }
@@ -433,7 +433,7 @@ public enum OpenCsvChainView {
             return String(cString: out)
         }
         if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            throw failure.clientError
         }
         return try decoder.decode(ScanVerdict.self, from: Data(raw.utf8))
     }
@@ -453,7 +453,7 @@ public enum OpenCsvChainView {
             return String(cString: out)
         }
         if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            throw failure.clientError
         }
         return try decoder.decode(ScanVerdict.self, from: Data(raw.utf8))
     }
@@ -487,7 +487,7 @@ public enum OpenCsvChainView {
             return String(cString: out)
         }
         if let failure = try? JSONDecoder().decode(FfiFailureJson.self, from: Data(raw.utf8)) {
-            throw OpenCsvClientError.ffi(failure.error)
+            throw failure.clientError
         }
         do {
             return try decoder.decode(T.self, from: Data(raw.utf8))
@@ -500,6 +500,13 @@ public enum OpenCsvChainView {
 /// `{"error": "..."}`, the shape every FFI call uses to report failure.
 private struct FfiFailureJson: Codable {
     let error: String
+    let reason: String?
+    let retryable: Bool?
+
+    var clientError: OpenCsvClientError {
+        guard let reason else { return .ffi(error) }
+        return .ffiFailure(reason: reason, message: error, retryable: retryable)
+    }
 }
 
 /// Minimal passthrough so an inline snapshot can be embedded verbatim.
