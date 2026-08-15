@@ -1,7 +1,16 @@
 name: self-hosted maintenance
 
 on:
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Runner to open for maintenance
+        required: true
+        default: runner-1
+        type: choice
+        options:
+          - runner-1
+          - macvm-0
 
 permissions:
   contents: read
@@ -9,9 +18,13 @@ permissions:
 jobs:
   runner-1:
     name: runner-1 maintenance
+    if: inputs.target == 'runner-1'
     runs-on: [self-hosted, runner-1-signal]
     timeout-minutes: 120
     steps:
+      - name: Clear stale continuation marker
+        run: rm -f "$GITHUB_WORKSPACE/continue"
+
       - name: Actor-restricted maintenance shell
         uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113
         with:
@@ -20,9 +33,13 @@ jobs:
 
   macvm-0:
     name: macvm-0 maintenance
+    if: inputs.target == 'macvm-0'
     runs-on: [self-hosted, macvm-0-signal]
     timeout-minutes: 120
     steps:
+      - name: Clear stale continuation marker
+        run: rm -f "$GITHUB_WORKSPACE/continue"
+
       - name: Actor-restricted maintenance shell
         uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113
         with:
