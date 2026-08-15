@@ -267,6 +267,10 @@ struct OpenCsvPinnedObserverProfileTest {
             try OpenCsvPinnedObserver.validatedProfiles(for: mixed)
         }
 
+        #expect(throws: OpenCsvClientError.self) {
+            try OpenCsvPinnedObserver.validatedProfiles(for: [mainnet[0], mainnet[0]])
+        }
+
         let modified = mainnet.map { check in
             OpenCsvObservationCheck(
                 id: check.id,
@@ -1849,6 +1853,7 @@ struct OpenCsvReviewedUsdIssuersTest {
         #expect(!OpenCsvPayments.isConsumerProductConfigured(for: "mainnet"))
         #expect(OpenCsvPayments.isConsumerProductConfigured(for: "signet"))
         #expect(OpenCsvPayments.isConsumerProductConfigured(for: "regtest"))
+        #expect(!OpenCsvPayments.isConsumerProductConfigured(for: "unknown"))
         #expect(OpenCsvPayments.isConsumerProductConfigured(
             for: "signet",
             distributionNetwork: "signet",

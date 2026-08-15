@@ -2755,7 +2755,7 @@ public actor OpenCsvPayments {
         for network: String,
         distributionNetwork: String?,
     ) -> Bool {
-        network != "mainnet"
+        ["signet", "regtest"].contains(network)
             && (distributionNetwork == nil || distributionNetwork == network)
     }
 

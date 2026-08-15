@@ -125,6 +125,10 @@ public enum OpenCsvPinnedObserver {
         guard !enabledRawChecks.isEmpty else {
             throw OpenCsvClientError.ffi("no pinned raw-transaction observer is enabled")
         }
+        let enabledIds = enabledRawChecks.map(\.id)
+        guard Set(enabledIds).count == enabledIds.count else {
+            throw OpenCsvClientError.ffi("pinned observer policy contains duplicate check ids")
+        }
         let profiles = try enabledRawChecks.map { check in
             guard
                 let profile = profilesById[check.id],
