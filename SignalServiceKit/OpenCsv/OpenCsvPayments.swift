@@ -2609,7 +2609,14 @@ public actor OpenCsvPayments {
         return DependenciesBridge.shared.db.read { tx in
             guard let data = store.walletPresentationSnapshotData(tx: tx) else { return nil }
             do {
-                return try JSONDecoder().decode(WalletSummary.self, from: data)
+                let summary = try JSONDecoder().decode(WalletSummary.self, from: data)
+                guard Self.isConsumerProductConfigured(for: summary.network) else {
+                    Logger.warn(
+                        "ignoring OpenCSV presentation snapshot for a network this distribution cannot open",
+                    )
+                    return nil
+                }
+                return summary
             } catch {
                 Logger.warn("ignoring invalid OpenCSV wallet presentation snapshot: \(error)")
                 return nil
