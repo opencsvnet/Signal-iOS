@@ -78,6 +78,11 @@ jobs:
           fi
           echo "DEVELOPER_DIR=$selected/Contents/Developer" >> "$GITHUB_ENV"
 
+      - name: Add runner toolchains to PATH
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
       - name: Check Xcode version
         run: |
           Scripts/check_xcode_version.py --relaxed
@@ -221,6 +226,11 @@ jobs:
             exit 1
           fi
           echo "DEVELOPER_DIR=$selected/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Add runner toolchains to PATH
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
 
       - name: Check Xcode version
         run: Scripts/check_xcode_version.py --relaxed
