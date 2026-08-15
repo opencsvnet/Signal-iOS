@@ -1799,6 +1799,20 @@ struct OpenCsvReviewedUsdIssuersTest {
         #expect(!OpenCsvPayments.isConsumerProductConfigured(for: "mainnet"))
         #expect(OpenCsvPayments.isConsumerProductConfigured(for: "signet"))
         #expect(OpenCsvPayments.isConsumerProductConfigured(for: "regtest"))
+        #expect(OpenCsvPayments.isConsumerProductConfigured(
+            for: "signet",
+            distributionNetwork: "signet",
+        ))
+        #expect(!OpenCsvPayments.isConsumerProductConfigured(
+            for: "regtest",
+            distributionNetwork: "signet",
+        ))
+        #expect(OpenCsvPayments.embeddedDistributionNetwork(infoDictionary: [
+            "OpenCSVDistributionNetwork": "development",
+        ]) == nil)
+        #expect(OpenCsvPayments.embeddedDistributionNetwork(infoDictionary: [
+            "OpenCSVDistributionNetwork": " Signet ",
+        ]) == "signet")
     }
 
     @Test
