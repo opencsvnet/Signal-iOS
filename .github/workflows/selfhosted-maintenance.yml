@@ -1,0 +1,30 @@
+name: self-hosted maintenance
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  runner-1:
+    name: runner-1 maintenance
+    runs-on: [self-hosted, runner-1-signal]
+    timeout-minutes: 120
+    steps:
+      - name: Actor-restricted maintenance shell
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113
+        with:
+          limit-access-to-actor: true
+          sudo: false
+
+  macvm-0:
+    name: macvm-0 maintenance
+    runs-on: [self-hosted, macvm-0-signal]
+    timeout-minutes: 120
+    steps:
+      - name: Actor-restricted maintenance shell
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113
+        with:
+          limit-access-to-actor: true
+          sudo: false
