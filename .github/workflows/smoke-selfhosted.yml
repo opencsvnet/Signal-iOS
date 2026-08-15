@@ -1,0 +1,12 @@
+name: self-hosted smoke
+on:
+  pull_request:
+jobs:
+  smoke:
+    runs-on: [self-hosted, macos, x86_64]
+    steps:
+      - run: |
+          sw_vers
+          uname -m
+          swift --version
+          brew --version

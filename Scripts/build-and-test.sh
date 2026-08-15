@@ -31,6 +31,12 @@ echo
 echo "Using simulator: $LATEST_IOS_SIM_ID"
 
 echo
+echo "Warming simulator runtime services: $LATEST_IOS_SIM_ID"
+xcrun simctl boot "$LATEST_IOS_SIM_ID" 2>/dev/null || true
+xcrun simctl bootstatus "$LATEST_IOS_SIM_ID" -b
+xcrun simctl shutdown "$LATEST_IOS_SIM_ID"
+
+echo
 set -o pipefail \
 && NSUnbufferedIO=YES TEST_RUNNER_SCHEMA_DUMP_PATH="$SCHEMA_DIR/schema.json" xcodebuild \
   -workspace Signal.xcworkspace \
