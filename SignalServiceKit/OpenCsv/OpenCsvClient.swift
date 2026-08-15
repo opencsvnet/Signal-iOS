@@ -364,12 +364,14 @@ public struct OpenCsvObservationCheck: Codable, Equatable, Sendable {
 
     public static func defaults(for network: String) -> [Self] {
         var checks: [Self] = []
-        if network == "signet" {
+        if network == "signet" || network == "mainnet" {
+            let suffix = network == "mainnet" ? "mainnet" : "signet"
+            let path = network == "mainnet" ? "" : "/signet"
             checks += [
                 Self(
-                    id: "mempool_space_signet",
+                    id: "mempool_space_\(suffix)",
                     kind: .rawTransactionApi,
-                    endpoint: "https://mempool.space/signet/api",
+                    endpoint: "https://mempool.space\(path)/api",
                     mode: .require,
                     pinProfile: "sectigo_r46",
                     chainFingerprintsSha256: [
@@ -378,9 +380,9 @@ public struct OpenCsvObservationCheck: Codable, Equatable, Sendable {
                     ],
                 ),
                 Self(
-                    id: "blockstream_signet",
+                    id: "blockstream_\(suffix)",
                     kind: .rawTransactionApi,
-                    endpoint: "https://blockstream.info/signet/api",
+                    endpoint: "https://blockstream.info\(path)/api",
                     mode: .require,
                     pinProfile: "lets_encrypt_yr",
                     chainFingerprintsSha256: [
@@ -595,6 +597,9 @@ public struct OpenCsvAccountStatus: Codable, Equatable {
     public let watchDescriptors: WatchDescriptors
     public let backupVerified: Bool
     public let writeEnabled: Bool
+    public let writeBlockReason: String?
+    public let productionUsdConfigured: Bool?
+    public let productionObservationPolicyReady: Bool?
     /// Always false for Signal's owner-only wallet boundary.
     public let issuanceEnabled: Bool
     public let deviceBinding: DeviceBinding

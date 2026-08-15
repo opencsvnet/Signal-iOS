@@ -782,7 +782,7 @@ public actor OpenCsvPayments {
                 let observationPolicy = try account.status().observationPolicy
                     ?? db.read { self.store.observationChecks(tx: $0) }
                 let observationSet = try await OpenCsvPinnedObserver
-                    .observeSignetTransaction(
+                    .observeTransaction(
                         txid: inspection.anchorTxid,
                         policy: observationPolicy,
                     )
@@ -2031,7 +2031,7 @@ public actor OpenCsvPayments {
             if status.network == "signet" {
                 let policy = status.observationPolicy
                     ?? db.read { self.store.observationChecks(tx: $0) }
-                let observationSet = try await OpenCsvPinnedObserver.observeSignetTransaction(
+                let observationSet = try await OpenCsvPinnedObserver.observeTransaction(
                     txid: txid,
                     policy: policy,
                 )
@@ -2063,7 +2063,7 @@ public actor OpenCsvPayments {
             if status.network == "signet" {
                 let policy = status.observationPolicy
                     ?? db.read { self.store.observationChecks(tx: $0) }
-                let observationSet = try await OpenCsvPinnedObserver.observeSignetTransaction(
+                let observationSet = try await OpenCsvPinnedObserver.observeTransaction(
                     txid: txid,
                     policy: policy,
                 )
@@ -3220,7 +3220,7 @@ public actor OpenCsvPayments {
         guard status.network == "signet" else { return operation }
         let policy = status.observationPolicy
             ?? db.read { self.store.observationChecks(tx: $0) }
-        let observation = try await OpenCsvPinnedObserver.observeSignetTransaction(
+        let observation = try await OpenCsvPinnedObserver.observeTransaction(
             txid: operation.txid,
             policy: policy,
         )

@@ -388,7 +388,7 @@ class OpenCsvWalletViewController: OWSViewController {
         observationExplanation.font = .dynamicTypeFootnote
         observationExplanation.textColor = Theme.secondaryTextAndIconColor
         observationExplanation.numberOfLines = 0
-        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Every check marked Require must return the exact transaction bytes under its pinned certificate profile. Fresh signet wallets require both pinned APIs. Cryptographic and transaction checks always remain mandatory."
+        observationExplanation.text = "Off skips a check. Observe records it without gating payment. Every check marked Require must return the exact transaction bytes under its pinned certificate profile. Fresh signet and mainnet wallets require both pinned APIs. Cryptographic and transaction checks always remain mandatory."
         advancedStack.addArrangedSubview(observationExplanation)
         advancedStack.addArrangedSubview(observationStack)
         observationReceiptLabel.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -681,8 +681,8 @@ class OpenCsvWalletViewController: OWSViewController {
 
     private static func observationTitle(_ check: OpenCsvObservationCheck) -> String {
         let name = switch check.id {
-        case "mempool_space_signet": "mempool.space transaction bytes"
-        case "blockstream_signet": "Blockstream transaction bytes"
+        case "mempool_space_signet", "mempool_space_mainnet": "mempool.space transaction bytes"
+        case "blockstream_signet", "blockstream_mainnet": "Blockstream transaction bytes"
         case "direct_p2p_relay": "Direct Bitcoin peer relay"
         case "experimental_p2p_mempool_possession": "Experimental peer mempool probe"
         case "multi_peer_spv_confirmation": "Multi-peer SPV confirmation"
