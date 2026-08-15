@@ -71,13 +71,22 @@ jobs:
             exit 1
           }
 
+      - name: Stage Xcode 26.6 without administrator access
+        shell: bash
+        run: |
+          mkdir -p "$HOME/Applications"
+          "$HOME/bin/xcodes" install 26.6 \
+            --directory "$HOME/Applications" \
+            --no-superuser \
+            --experimental-unxip
+
       - name: Select installed Xcode 26.6
         shell: bash
         run: |
           shopt -s nullglob
           expected=$(<.xcode-version)
           selected=
-          for candidate in /Applications/Xcode*.app; do
+          for candidate in /Applications/Xcode*.app "$HOME"/Applications/Xcode*.app; do
             actual=$(DEVELOPER_DIR="$candidate" xcodebuild -version 2>/dev/null | head -n 1 || true)
             echo "$candidate: ${actual:-unusable}"
             if [[ "$actual" == "$expected" ]]; then
@@ -215,13 +224,22 @@ jobs:
             exit 1
           }
 
+      - name: Stage Xcode 26.6 without administrator access
+        shell: bash
+        run: |
+          mkdir -p "$HOME/Applications"
+          "$HOME/bin/xcodes" install 26.6 \
+            --directory "$HOME/Applications" \
+            --no-superuser \
+            --experimental-unxip
+
       - name: Select installed Xcode 26.6
         shell: bash
         run: |
           shopt -s nullglob
           expected=$(<.xcode-version)
           selected=
-          for candidate in /Applications/Xcode*.app; do
+          for candidate in /Applications/Xcode*.app "$HOME"/Applications/Xcode*.app; do
             actual=$(DEVELOPER_DIR="$candidate" xcodebuild -version 2>/dev/null | head -n 1 || true)
             echo "$candidate: ${actual:-unusable}"
             if [[ "$actual" == "$expected" ]]; then
