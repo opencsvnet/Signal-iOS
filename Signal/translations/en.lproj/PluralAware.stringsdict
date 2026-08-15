@@ -979,9 +979,9 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>d</string>
 			<key>one</key>
-			<string>%2$@ invited %d person to the group.</string>
+			<string>%2$@ invited %1$d person to the group.</string>
 			<key>other</key>
-			<string>%2$@ invited %d people to the group.</string>
+			<string>%2$@ invited %1$d people to the group.</string>
 		</dict>
 	</dict>
 	<key>GROUP_REMOTE_USER_INVITE_REVOKED_%d</key>
@@ -1011,9 +1011,9 @@
 			<key>NSStringFormatValueTypeKey</key>
 			<string>d</string>
 			<key>one</key>
-			<string>%2$@ revoked an invitation to the group for %d person.</string>
+			<string>%2$@ revoked an invitation to the group for %1$d person.</string>
 			<key>other</key>
-			<string>%2$@ revoked an invitation to the group for %d people.</string>
+			<string>%2$@ revoked an invitation to the group for %1$d people.</string>
 		</dict>
 	</dict>
 	<key>GROUP_REMOTE_USER_REQUESTED_TO_JOIN_THE_GROUP_AND_CANCELED_%d</key>
@@ -1029,7 +1029,7 @@
 			<key>one</key>
 			<string>%2$@ requested and canceled their request to join via the group link.</string>
 			<key>other</key>
-			<string>%2$@ requested and canceled %d requests to join via the group link.</string>
+			<string>%2$@ requested and canceled %1$d requests to join via the group link.</string>
 		</dict>
 	</dict>
 	<key>GROUP_STORY_VIEWERS_%d</key>
