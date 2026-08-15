@@ -184,6 +184,7 @@ jobs:
 
   opencsv_recovery_build:
     name: OpenCSV recovery build
+    needs: build_and_test
     timeout-minutes: 45
     runs-on: [self-hosted, runner-1-signal]
 
