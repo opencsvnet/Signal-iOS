@@ -49,8 +49,18 @@ jobs:
           echo "xcode_select=$(xcode-select -p 2>/dev/null || echo absent)"
           for root in /Applications /Users/Shared "$HOME/Downloads"; do
             [[ -d "$root" ]] || continue
-            find "$root" -maxdepth 2 \( -name 'Xcode*.app' -o -name 'Xcode*.xip' -o -name 'Xcode*.dmg' \) -print
+            find "$root" -maxdepth 2 \( -name 'Xcode*.app' -o -name 'Xcode*.xip' -o -name 'Xcode*.dmg' \) -print 2>/dev/null || true
           done
+
+      - name: Install Xcode downloader
+        shell: bash
+        run: |
+          brew install aria2 xcodesorg/made/xcodes
+          xcodes version
+          xcodes list --architecture universal | grep -E '^26\.6([[:space:]]|$)' || {
+            echo "Universal Xcode 26.6 was not found in the current catalog" >&2
+            exit 1
+          }
 
       - name: Select installed Xcode 26.6
         shell: bash
@@ -174,8 +184,18 @@ jobs:
           echo "xcode_select=$(xcode-select -p 2>/dev/null || echo absent)"
           for root in /Applications /Users/Shared "$HOME/Downloads"; do
             [[ -d "$root" ]] || continue
-            find "$root" -maxdepth 2 \( -name 'Xcode*.app' -o -name 'Xcode*.xip' -o -name 'Xcode*.dmg' \) -print
+            find "$root" -maxdepth 2 \( -name 'Xcode*.app' -o -name 'Xcode*.xip' -o -name 'Xcode*.dmg' \) -print 2>/dev/null || true
           done
+
+      - name: Install Xcode downloader
+        shell: bash
+        run: |
+          brew install aria2 xcodesorg/made/xcodes
+          xcodes version
+          xcodes list --architecture universal | grep -E '^26\.6([[:space:]]|$)' || {
+            echo "Universal Xcode 26.6 was not found in the current catalog" >&2
+            exit 1
+          }
 
       - name: Select installed Xcode 26.6
         shell: bash
