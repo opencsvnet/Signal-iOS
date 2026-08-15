@@ -83,6 +83,11 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo "/usr/local/bin" >> "$GITHUB_PATH"
 
+      - name: Check runner build tools
+        run: |
+          cargo --version
+          xcbeautify --version
+
       - name: Check Xcode version
         run: |
           Scripts/check_xcode_version.py --relaxed
@@ -231,6 +236,11 @@ jobs:
         run: |
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+      - name: Check runner build tools
+        run: |
+          cargo --version
+          xcbeautify --version
 
       - name: Check Xcode version
         run: Scripts/check_xcode_version.py --relaxed

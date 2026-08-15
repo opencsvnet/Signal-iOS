@@ -490,7 +490,7 @@ public enum DisplayableGroupUpdateItem {
                     comment: "Message indicating that some members were invited after the group was migrated. Embeds {{ %1$@ the number of invited users }}.",
                 ),
                 groupUpdateFormatArgs: [
-                    .raw(count),
+                    .raw(Int32(clamping: count)),
                 ],
             )
         case .otherUsersDroppedAfterMigration(let count):
@@ -501,7 +501,7 @@ public enum DisplayableGroupUpdateItem {
                     comment: "Message indicating that some members were dropped after the group was migrated. Embeds {{ %1$@ the number of dropped users }}.",
                 ),
                 groupUpdateFormatArgs: [
-                    .raw(count),
+                    .raw(Int32(clamping: count)),
                 ],
             )
         case .localUserWasGrantedAdministratorByLocalUser:
@@ -680,7 +680,7 @@ public enum DisplayableGroupUpdateItem {
                     tableName: "PluralAware",
                     comment: "Message indicating that a group of remote users were invited to the group. Embeds {{number of invited users}}.",
                 ),
-                groupUpdateFormatArgs: [.raw(count)],
+                groupUpdateFormatArgs: [.raw(Int32(clamping: count))],
             )
         case let .unnamedUsersWereInvitedByOtherUser(updaterName, updaterAddress, count):
             return NSAttributedString.make(
@@ -689,7 +689,7 @@ public enum DisplayableGroupUpdateItem {
                     tableName: "PluralAware",
                     comment: "Message indicating that a group of remote users were invited to the group by the local user. Embeds {{ %1$@ number of invited users, %2$@ user who invited the user }}.",
                 ),
-                groupUpdateFormatArgs: [.raw(count), .name(updaterName, updaterAddress)],
+                groupUpdateFormatArgs: [.raw(Int32(clamping: count)), .name(updaterName, updaterAddress)],
             )
         case let .unnamedUsersWereInvitedByUnknownUser(count):
             return NSAttributedString.make(
@@ -698,7 +698,7 @@ public enum DisplayableGroupUpdateItem {
                     tableName: "PluralAware",
                     comment: "Message indicating that a group of remote users were invited to the group. Embeds {{number of invited users}}.",
                 ),
-                groupUpdateFormatArgs: [.raw(count)],
+                groupUpdateFormatArgs: [.raw(Int32(clamping: count))],
             )
         case let .localUserAcceptedInviteFromInviter(inviterName, inviterAddress):
             return NSAttributedString.make(
@@ -860,7 +860,7 @@ public enum DisplayableGroupUpdateItem {
                     tableName: "PluralAware",
                     comment: "Message indicating that a group of remote users' invites were revoked. Embeds {{ number of users }}.",
                 ),
-                groupUpdateFormatArgs: [.raw(count)],
+                groupUpdateFormatArgs: [.raw(Int32(clamping: count))],
             )
         case let .unnamedUserInvitesWereRevokedByOtherUser(updaterName, updaterAddress, count):
             return NSAttributedString.make(
@@ -870,7 +870,7 @@ public enum DisplayableGroupUpdateItem {
                     comment: "Message indicating that a group of remote users' invites were revoked by a remote user. Embeds {{ %1$@ number of users, %2$@ user who revoked the invite }}.",
                 ),
                 groupUpdateFormatArgs: [
-                    .raw(count),
+                    .raw(Int32(clamping: count)),
                     .name(updaterName, updaterAddress),
                 ],
             )
@@ -881,7 +881,7 @@ public enum DisplayableGroupUpdateItem {
                     tableName: "PluralAware",
                     comment: "Message indicating that a group of remote users' invites were revoked. Embeds {{ number of users }}.",
                 ),
-                groupUpdateFormatArgs: [.raw(count)],
+                groupUpdateFormatArgs: [.raw(Int32(clamping: count))],
             )
         case .localUserRequestedToJoin:
             return OWSLocalizedString(
@@ -1157,7 +1157,7 @@ public enum DisplayableGroupUpdateItem {
                     comment: "Message indicating that a remote user requested to join the group and then canceled, some number of times. Embeds {{ %1$@ the number of times, %2$@ the requesting user's name }}.",
                 ),
                 groupUpdateFormatArgs: [
-                    .raw(count),
+                    .raw(Int32(clamping: count)),
                     .name(userName, userAddress),
                 ],
             )
