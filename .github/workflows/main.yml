@@ -34,6 +34,24 @@ jobs:
         xcode: ["Xcode_26.6"]
 
     steps:
+      - name: Probe Xcode installation prerequisites
+        shell: bash
+        run: |
+          id
+          sw_vers
+          df -h / /Applications
+          if sudo -n true; then
+            echo "passwordless_sudo=yes"
+          else
+            echo "passwordless_sudo=no"
+          fi
+          echo "xcodes=$(command -v xcodes || echo absent)"
+          echo "xcode_select=$(xcode-select -p 2>/dev/null || echo absent)"
+          for root in /Applications /Users/Shared "$HOME/Downloads"; do
+            [[ -d "$root" ]] || continue
+            find "$root" -maxdepth 2 \( -name 'Xcode*.app' -o -name 'Xcode*.xip' -o -name 'Xcode*.dmg' \) -print
+          done
+
       - name: Select installed Xcode 26.6
         shell: bash
         run: |
@@ -141,6 +159,24 @@ jobs:
     runs-on: [self-hosted, macOS, x86_64, signal-ios]
 
     steps:
+      - name: Probe Xcode installation prerequisites
+        shell: bash
+        run: |
+          id
+          sw_vers
+          df -h / /Applications
+          if sudo -n true; then
+            echo "passwordless_sudo=yes"
+          else
+            echo "passwordless_sudo=no"
+          fi
+          echo "xcodes=$(command -v xcodes || echo absent)"
+          echo "xcode_select=$(xcode-select -p 2>/dev/null || echo absent)"
+          for root in /Applications /Users/Shared "$HOME/Downloads"; do
+            [[ -d "$root" ]] || continue
+            find "$root" -maxdepth 2 \( -name 'Xcode*.app' -o -name 'Xcode*.xip' -o -name 'Xcode*.dmg' \) -print
+          done
+
       - name: Select installed Xcode 26.6
         shell: bash
         run: |
