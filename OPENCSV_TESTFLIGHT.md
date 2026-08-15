@@ -40,9 +40,11 @@ OPENCSV_UPLOAD_APPROVED=YES Scripts/upload-opencsv-testflight.sh
 
 `OPENCSV_UPLOAD_APPROVED=YES` is a deliberate owner release gate, not a CI
 default. The archive itself carries and verifies `signet` plus the immutable
-`opencsv-test-usd-v2` deployment identity. This demo build refuses to open a
-mainnet wallet until a future reviewed build contains a non-test production
-USD issuer manifest and separate production namespaces.
+`opencsv-test-usd-v2` deployment identity, and the upload command independently
+re-verifies that identity, the bundle ID, build number, and exact source SHA.
+This demo build refuses to open a mainnet wallet until a future reviewed build
+contains a non-test production USD issuer manifest and separate production
+namespaces.
 
 This uses automatic App Store Connect distribution signing for team
 `2858MX5336`. An App Store Connect app record for `net.ultravie.signal` must
