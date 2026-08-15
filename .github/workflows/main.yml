@@ -94,8 +94,14 @@ jobs:
           fi
 
       - name: Download iOS runtime
+        shell: bash
         run: |
-          xcodebuild -downloadPlatform iOS -architectureVariant universal
+          if ! xcrun simctl list runtimes \
+            | grep -Eq '^iOS .* - com\.apple\.CoreSimulator\.SimRuntime\.iOS-'; then
+            xcodebuild -downloadPlatform iOS -architectureVariant universal
+          fi
+          xcrun simctl list runtimes \
+            | grep -E '^iOS .* - com\.apple\.CoreSimulator\.SimRuntime\.iOS-'
 
       - uses: ./.github/actions/clone-everything
         with:
