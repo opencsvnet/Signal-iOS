@@ -18,7 +18,7 @@ concurrency:
 
 env:
   # Path format pulled from https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md#xcode
-  DEVELOPER_DIR: /Applications/Xcode_26.6.app
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
   build_and_test:
@@ -64,7 +64,7 @@ jobs:
           for candidate in /Applications/Xcode*.app "$HOME"/Applications/Xcode*.app; do
             executable="$candidate/Contents/Developer/usr/bin/xcodebuild"
             archs=$(/usr/bin/lipo -archs "$executable" 2>/dev/null || true)
-            actual=$(DEVELOPER_DIR="$candidate" /usr/bin/xcodebuild -version 2>/dev/null | head -n 1 || true)
+            actual=$(DEVELOPER_DIR="$candidate/Contents/Developer" /usr/bin/xcodebuild -version 2>/dev/null | head -n 1 || true)
             echo "$candidate: ${actual:-unusable}; architectures=${archs:-unknown}"
             if [[ "$actual" == "$expected" && " $archs " == *" $runner_arch "* ]]; then
               selected=$candidate
@@ -76,7 +76,7 @@ jobs:
             echo "Provision the signed universal Xcode bundle through the targeted maintenance workflow." >&2
             exit 1
           fi
-          echo "DEVELOPER_DIR=$selected" >> "$GITHUB_ENV"
+          echo "DEVELOPER_DIR=$selected/Contents/Developer" >> "$GITHUB_ENV"
 
       - name: Check Xcode version
         run: |
@@ -109,6 +109,8 @@ jobs:
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1 # Reads .ruby-version file by default
+        env:
+          SDKROOT: /Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
         with:
           bundler-cache: true
 
@@ -206,7 +208,7 @@ jobs:
           for candidate in /Applications/Xcode*.app "$HOME"/Applications/Xcode*.app; do
             executable="$candidate/Contents/Developer/usr/bin/xcodebuild"
             archs=$(/usr/bin/lipo -archs "$executable" 2>/dev/null || true)
-            actual=$(DEVELOPER_DIR="$candidate" /usr/bin/xcodebuild -version 2>/dev/null | head -n 1 || true)
+            actual=$(DEVELOPER_DIR="$candidate/Contents/Developer" /usr/bin/xcodebuild -version 2>/dev/null | head -n 1 || true)
             echo "$candidate: ${actual:-unusable}; architectures=${archs:-unknown}"
             if [[ "$actual" == "$expected" && " $archs " == *" $runner_arch "* ]]; then
               selected=$candidate
@@ -218,7 +220,7 @@ jobs:
             echo "Provision the signed universal Xcode bundle through the targeted maintenance workflow." >&2
             exit 1
           fi
-          echo "DEVELOPER_DIR=$selected" >> "$GITHUB_ENV"
+          echo "DEVELOPER_DIR=$selected/Contents/Developer" >> "$GITHUB_ENV"
 
       - name: Check Xcode version
         run: Scripts/check_xcode_version.py --relaxed
@@ -240,6 +242,8 @@ jobs:
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
+        env:
+          SDKROOT: /Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
         with:
           bundler-cache: true
 
