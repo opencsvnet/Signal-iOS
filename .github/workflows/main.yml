@@ -55,9 +55,18 @@ jobs:
       - name: Install Xcode downloader
         shell: bash
         run: |
-          brew install aria2 xcodesorg/made/xcodes
-          xcodes version
-          xcodes list --architecture universal | grep -E '^26\.6([[:space:]]|$)' || {
+          brew install aria2
+          mkdir -p "$HOME/bin" "$RUNNER_TEMP/xcodes-bootstrap"
+          archive="$RUNNER_TEMP/xcodes-bootstrap/xcodes.zip"
+          curl --fail --location --silent --show-error \
+            https://github.com/XcodesOrg/xcodes/releases/download/2.0.3/xcodes.zip \
+            --output "$archive"
+          echo "9ccb3398dc72aca17174b705ee1657c69747fec25663fc85d2dffb8702ff37aa  $archive" | shasum -a 256 --check
+          unzip -jo "$archive" xcodes -d "$HOME/bin"
+          chmod 755 "$HOME/bin/xcodes"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          "$HOME/bin/xcodes" version
+          "$HOME/bin/xcodes" list --architecture universal | grep -E '^26\.6([[:space:]]|$)' || {
             echo "Universal Xcode 26.6 was not found in the current catalog" >&2
             exit 1
           }
@@ -190,9 +199,18 @@ jobs:
       - name: Install Xcode downloader
         shell: bash
         run: |
-          brew install aria2 xcodesorg/made/xcodes
-          xcodes version
-          xcodes list --architecture universal | grep -E '^26\.6([[:space:]]|$)' || {
+          brew install aria2
+          mkdir -p "$HOME/bin" "$RUNNER_TEMP/xcodes-bootstrap"
+          archive="$RUNNER_TEMP/xcodes-bootstrap/xcodes.zip"
+          curl --fail --location --silent --show-error \
+            https://github.com/XcodesOrg/xcodes/releases/download/2.0.3/xcodes.zip \
+            --output "$archive"
+          echo "9ccb3398dc72aca17174b705ee1657c69747fec25663fc85d2dffb8702ff37aa  $archive" | shasum -a 256 --check
+          unzip -jo "$archive" xcodes -d "$HOME/bin"
+          chmod 755 "$HOME/bin/xcodes"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          "$HOME/bin/xcodes" version
+          "$HOME/bin/xcodes" list --architecture universal | grep -E '^26\.6([[:space:]]|$)' || {
             echo "Universal Xcode 26.6 was not found in the current catalog" >&2
             exit 1
           }
