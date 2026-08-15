@@ -228,7 +228,7 @@ private extension NSAttributedString {
         return mutable
     }()
 
-    static func make(user: ReferencedUser, invitedNPeople: Int) -> NSAttributedString {
+    static func make(user: ReferencedUser, invitedNPeople: Int32) -> NSAttributedString {
         make(
             fromFormat: .xInvitedNPeopleFormat,
             groupUpdateFormatArgs: [.raw(invitedNPeople), .name(user.name, user.address)],

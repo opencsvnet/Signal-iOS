@@ -18,13 +18,13 @@ concurrency:
 
 env:
   # Path format pulled from https://github.com/actions/runner-images/blob/main/images/macos/macos-26-arm64-Readme.md#xcode
-  DEVELOPER_DIR: /Applications/Xcode_26.6.app
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
   build_and_test:
     name: Build and Test
     timeout-minutes: 45
-    runs-on: macos-26-xlarge
+    runs-on: [self-hosted, runner-1-signal]
     env:
       FASTLANE_XCODEBUILD_SETTINGS_RETRIES: 7
 
@@ -34,23 +34,84 @@ jobs:
         xcode: ["Xcode_26.6"]
 
     steps:
-      - name: Set Xcode version
-        run: |
-          echo DEVELOPER_DIR=/Applications/${{matrix.xcode}}.app >> "$GITHUB_ENV"
-
       - uses: actions/checkout@v6
+
+      - name: Probe Xcode installation prerequisites
+        shell: bash
+        run: |
+          id
+          sw_vers
+          df -h / /Applications
+          if sudo -n true; then
+            echo "passwordless_sudo=yes"
+          else
+            echo "passwordless_sudo=no"
+          fi
+          echo "xcodes=$(command -v xcodes || echo absent)"
+          echo "xcode_select=$(xcode-select -p 2>/dev/null || echo absent)"
+          for root in /Applications /Users/Shared "$HOME/Downloads"; do
+            [[ -d "$root" ]] || continue
+            find "$root" -maxdepth 2 \( -name 'Xcode*.app' -o -name 'Xcode*.xip' -o -name 'Xcode*.dmg' \) -print 2>/dev/null || true
+          done
+
+      - name: Select preinstalled Xcode 26.6
+        shell: bash
+        run: |
+          shopt -s nullglob
+          expected=$(<.xcode-version)
+          runner_arch=$(uname -m)
+          selected=
+          for candidate in /Applications/Xcode*.app "$HOME"/Applications/Xcode*.app; do
+            executable="$candidate/Contents/Developer/usr/bin/xcodebuild"
+            archs=$(/usr/bin/lipo -archs "$executable" 2>/dev/null || true)
+            actual=$(DEVELOPER_DIR="$candidate/Contents/Developer" /usr/bin/xcodebuild -version 2>/dev/null | head -n 1 || true)
+            echo "$candidate: ${actual:-unusable}; architectures=${archs:-unknown}"
+            if [[ "$actual" == "$expected" && " $archs " == *" $runner_arch "* ]]; then
+              selected=$candidate
+              break
+            fi
+          done
+          if [[ -z "$selected" ]]; then
+            echo "No preinstalled $expected supports runner architecture $runner_arch" >&2
+            echo "Provision the signed universal Xcode bundle through the targeted maintenance workflow." >&2
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$selected/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Add runner toolchains to PATH
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+      - name: Check runner build tools
+        run: |
+          cargo --version
+          xcbeautify --version
 
       - name: Check Xcode version
         run: |
           Scripts/check_xcode_version.py --relaxed
 
       - name: Download Metal toolchain
+        shell: bash
         run: |
-          xcodebuild -downloadComponent MetalToolchain
+          if ! xcrun metal --version; then
+            component_json=$(xcodebuild -showComponent MetalToolchain -json)
+            component_build=$(plutil -extract buildVersion raw -o - - <<<"$component_json")
+            echo "Installing Metal toolchain build $component_build"
+            xcodebuild -downloadComponent MetalToolchain -buildVersion "$component_build"
+            xcrun metal --version
+          fi
 
       - name: Download iOS runtime
+        shell: bash
         run: |
-          xcodebuild -downloadPlatform iOS
+          if ! xcrun simctl list runtimes \
+            | grep -Eq '^iOS .* - com\.apple\.CoreSimulator\.SimRuntime\.iOS-'; then
+            xcodebuild -downloadPlatform iOS -architectureVariant universal
+          fi
+          xcrun simctl list runtimes \
+            | grep -E '^iOS .* - com\.apple\.CoreSimulator\.SimRuntime\.iOS-'
 
       - uses: ./.github/actions/clone-everything
         with:
@@ -58,6 +119,8 @@ jobs:
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1 # Reads .ruby-version file by default
+        env:
+          SDKROOT: /Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
         with:
           bundler-cache: true
 
@@ -121,20 +184,78 @@ jobs:
 
   opencsv_recovery_build:
     name: OpenCSV recovery build
+    needs: build_and_test
     timeout-minutes: 45
-    runs-on: macos-26-xlarge
+    runs-on: [self-hosted, runner-1-signal]
 
     steps:
-      - name: Set Xcode version
-        run: echo DEVELOPER_DIR=/Applications/Xcode_26.6.app >> "$GITHUB_ENV"
-
       - uses: actions/checkout@v6
+
+      - name: Probe Xcode installation prerequisites
+        shell: bash
+        run: |
+          id
+          sw_vers
+          df -h / /Applications
+          if sudo -n true; then
+            echo "passwordless_sudo=yes"
+          else
+            echo "passwordless_sudo=no"
+          fi
+          echo "xcodes=$(command -v xcodes || echo absent)"
+          echo "xcode_select=$(xcode-select -p 2>/dev/null || echo absent)"
+          for root in /Applications /Users/Shared "$HOME/Downloads"; do
+            [[ -d "$root" ]] || continue
+            find "$root" -maxdepth 2 \( -name 'Xcode*.app' -o -name 'Xcode*.xip' -o -name 'Xcode*.dmg' \) -print 2>/dev/null || true
+          done
+
+      - name: Select preinstalled Xcode 26.6
+        shell: bash
+        run: |
+          shopt -s nullglob
+          expected=$(<.xcode-version)
+          runner_arch=$(uname -m)
+          selected=
+          for candidate in /Applications/Xcode*.app "$HOME"/Applications/Xcode*.app; do
+            executable="$candidate/Contents/Developer/usr/bin/xcodebuild"
+            archs=$(/usr/bin/lipo -archs "$executable" 2>/dev/null || true)
+            actual=$(DEVELOPER_DIR="$candidate/Contents/Developer" /usr/bin/xcodebuild -version 2>/dev/null | head -n 1 || true)
+            echo "$candidate: ${actual:-unusable}; architectures=${archs:-unknown}"
+            if [[ "$actual" == "$expected" && " $archs " == *" $runner_arch "* ]]; then
+              selected=$candidate
+              break
+            fi
+          done
+          if [[ -z "$selected" ]]; then
+            echo "No preinstalled $expected supports runner architecture $runner_arch" >&2
+            echo "Provision the signed universal Xcode bundle through the targeted maintenance workflow." >&2
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$selected/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Add runner toolchains to PATH
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+
+      - name: Check runner build tools
+        run: |
+          cargo --version
+          xcbeautify --version
 
       - name: Check Xcode version
         run: Scripts/check_xcode_version.py --relaxed
 
       - name: Download Metal toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
+        shell: bash
+        run: |
+          if ! xcrun metal --version; then
+            component_json=$(xcodebuild -showComponent MetalToolchain -json)
+            component_build=$(plutil -extract buildVersion raw -o - - <<<"$component_json")
+            echo "Installing Metal toolchain build $component_build"
+            xcodebuild -downloadComponent MetalToolchain -buildVersion "$component_build"
+            xcrun metal --version
+          fi
 
       - uses: ./.github/actions/clone-everything
         with:
@@ -142,6 +263,8 @@ jobs:
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
+        env:
+          SDKROOT: /Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
         with:
           bundler-cache: true
 

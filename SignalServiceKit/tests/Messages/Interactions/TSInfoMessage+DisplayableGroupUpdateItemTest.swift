@@ -63,6 +63,9 @@ final class DisplayableGroupUpdateItemCopyTest: XCTestCase {
         .announcementOnlyDisabledByUnknownUser,
 
         .wasMigrated,
+        .localUserInvitedAfterMigration,
+        .otherUsersInvitedAfterMigration(count: 4),
+        .otherUsersDroppedAfterMigration(count: 4),
 
         .localUserWasGrantedAdministratorByLocalUser,
         .localUserWasGrantedAdministratorByOtherUser(updaterName: .otherUser1, updaterAddress: .otherUser1),
