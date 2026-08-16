@@ -79,6 +79,13 @@ public enum OpenCsvPaymentsError: Error {
     /// The account wallet supports only chains with authoritative CBF
     /// verification wired through this integration.
     case unsupportedNetwork(String)
+    /// Mainnet remains unavailable until a separate production integration
+    /// supplies reviewed issuers, database/backup namespaces, and derivation
+    /// trees. Test USD must never be reinterpreted as production state.
+    case productionUsdNotConfigured
+    /// A distribution archive is bound to the Bitcoin network embedded in
+    /// its signed Info.plist. Development builds do not carry this binding.
+    case distributionNetworkMismatch(expected: String, requested: String)
 }
 
 /// One exact issuer instrument selected to satisfy a USD send. The UI shows
@@ -775,7 +782,7 @@ public actor OpenCsvPayments {
                 let observationPolicy = try account.status().observationPolicy
                     ?? db.read { self.store.observationChecks(tx: $0) }
                 let observationSet = try await OpenCsvPinnedObserver
-                    .observeSignetTransaction(
+                    .observeTransaction(
                         txid: inspection.anchorTxid,
                         policy: observationPolicy,
                     )
@@ -2024,7 +2031,7 @@ public actor OpenCsvPayments {
             if status.network == "signet" {
                 let policy = status.observationPolicy
                     ?? db.read { self.store.observationChecks(tx: $0) }
-                let observationSet = try await OpenCsvPinnedObserver.observeSignetTransaction(
+                let observationSet = try await OpenCsvPinnedObserver.observeTransaction(
                     txid: txid,
                     policy: policy,
                 )
@@ -2056,7 +2063,7 @@ public actor OpenCsvPayments {
             if status.network == "signet" {
                 let policy = status.observationPolicy
                     ?? db.read { self.store.observationChecks(tx: $0) }
-                let observationSet = try await OpenCsvPinnedObserver.observeSignetTransaction(
+                let observationSet = try await OpenCsvPinnedObserver.observeTransaction(
                     txid: txid,
                     policy: policy,
                 )
@@ -2602,7 +2609,14 @@ public actor OpenCsvPayments {
         return DependenciesBridge.shared.db.read { tx in
             guard let data = store.walletPresentationSnapshotData(tx: tx) else { return nil }
             do {
-                return try JSONDecoder().decode(WalletSummary.self, from: data)
+                let summary = try JSONDecoder().decode(WalletSummary.self, from: data)
+                guard Self.isConsumerProductConfigured(for: summary.network) else {
+                    Logger.warn(
+                        "ignoring OpenCSV presentation snapshot for a network this distribution cannot open",
+                    )
+                    return nil
+                }
+                return summary
             } catch {
                 Logger.warn("ignoring invalid OpenCSV wallet presentation snapshot: \(error)")
                 return nil
@@ -2665,6 +2679,18 @@ public actor OpenCsvPayments {
         guard ["mainnet", "signet", "regtest"].contains(requested) else {
             throw OpenCsvPaymentsError.unsupportedNetwork(network)
         }
+        if
+            let expected = Self.embeddedDistributionNetwork(),
+            requested != expected
+        {
+            throw OpenCsvPaymentsError.distributionNetworkMismatch(
+                expected: expected,
+                requested: requested,
+            )
+        }
+        guard Self.isConsumerProductConfigured(for: requested) else {
+            throw OpenCsvPaymentsError.productionUsdNotConfigured
+        }
         let current = db.read { self.store.network(tx: $0) }
         guard requested != current else { return }
         guard !Self.hasPersistedAccountDatabase() else {
@@ -2689,8 +2715,9 @@ public actor OpenCsvPayments {
     /// account databases and their sibling `.cbf` caches are never deleted or
     /// silently repurposed by a settings edit.
     private static func hasPersistedAccountDatabase() -> Bool {
-        let directory = OWSFileSystem.appSharedDataDirectoryURL()
-            .appendingPathComponent("opencsv-test-usd-v2", isDirectory: true)
+        let directory = accountDatabaseDirectory(
+            base: OWSFileSystem.appSharedDataDirectoryURL(),
+        )
         guard
             let entries = try? FileManager.default.contentsOfDirectory(
                 at: directory,
@@ -2706,6 +2733,44 @@ public actor OpenCsvPayments {
                         && url.pathExtension == "sqlite"
                 )
         }
+    }
+
+    static func accountDatabaseDirectory(base: URL) -> URL {
+        base.appendingPathComponent("opencsv", isDirectory: true)
+    }
+
+    /// This integration owns only the permanent signet Test USD namespace.
+    /// A production issuer registry alone must not unlock it on mainnet: the
+    /// database, Secure Backup, Keychain, and derivation namespaces must all
+    /// move together in a separately reviewed production integration.
+    /// Regtest remains available to developers.
+    static func isConsumerProductConfigured(for network: String) -> Bool {
+        isConsumerProductConfigured(
+            for: network,
+            distributionNetwork: embeddedDistributionNetwork(),
+        )
+    }
+
+    static func isConsumerProductConfigured(
+        for network: String,
+        distributionNetwork: String?,
+    ) -> Bool {
+        ["signet", "regtest"].contains(network)
+            && (distributionNetwork == nil || distributionNetwork == network)
+    }
+
+    /// Archive builds stamp an immutable network into the signed Info.plist.
+    /// The project default `development` deliberately leaves local builds
+    /// flexible for signet/regtest testing, but any other non-empty value is
+    /// enforced exactly and fails closed even if it was misconfigured.
+    static func embeddedDistributionNetwork(
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary,
+    ) -> String? {
+        guard
+            let value = infoDictionary?["OpenCSVDistributionNetwork"] as? String
+        else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty || normalized == "development" ? nil : normalized
     }
 
     /// A stored verdict, for the conversation cell (main-thread render path).
@@ -2897,6 +2962,15 @@ public actor OpenCsvPayments {
                 try store.linkedWatchAccount(tx: tx),
             )
         }
+        guard Self.isConsumerProductConfigured(for: settings.network) else {
+            if let expected = Self.embeddedDistributionNetwork(), settings.network != expected {
+                throw OpenCsvPaymentsError.distributionNetworkMismatch(
+                    expected: expected,
+                    requested: settings.network,
+                )
+            }
+            throw OpenCsvPaymentsError.productionUsdNotConfigured
+        }
 
         let material: OpenCsvAccountMaterial?
         let role: OpenCsvAccountRole
@@ -2911,8 +2985,9 @@ public actor OpenCsvPayments {
             role = .linked
         }
 
-        let directory = OWSFileSystem.appSharedDataDirectoryURL()
-            .appendingPathComponent("opencsv", isDirectory: true)
+        let directory = Self.accountDatabaseDirectory(
+            base: OWSFileSystem.appSharedDataDirectoryURL(),
+        )
         guard OWSFileSystem.ensureDirectoryExists(directory.path) else {
             throw OpenCsvPaymentsError.couldNotPersistPendingSend(
                 underlying: "could not create OpenCSV account directory",
@@ -3145,7 +3220,7 @@ public actor OpenCsvPayments {
         guard status.network == "signet" else { return operation }
         let policy = status.observationPolicy
             ?? db.read { self.store.observationChecks(tx: $0) }
-        let observation = try await OpenCsvPinnedObserver.observeSignetTransaction(
+        let observation = try await OpenCsvPinnedObserver.observeTransaction(
             txid: operation.txid,
             policy: policy,
         )

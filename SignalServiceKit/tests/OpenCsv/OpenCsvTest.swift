@@ -243,6 +243,50 @@ struct OpenCsvPinnedObserverProfileTest {
         let policy = OpenCsvObservationCheck.defaults(for: "signet")
         #expect(Set(policy[0].chainFingerprintsSha256) == mempool.chainPins)
         #expect(Set(policy[1].chainFingerprintsSha256) == blockstream.chainPins)
+
+        let mainnet = OpenCsvObservationCheck.defaults(for: "mainnet")
+        #expect(mainnet[0].id == "mempool_space_mainnet")
+        #expect(mainnet[0].endpoint == "https://mempool.space/api")
+        #expect(Set(mainnet[0].chainFingerprintsSha256) == OpenCsvPinnedObserver.mempoolSpaceMainnet.chainPins)
+        #expect(mainnet[1].id == "blockstream_mainnet")
+        #expect(mainnet[1].endpoint == "https://blockstream.info/api")
+        #expect(Set(mainnet[1].chainFingerprintsSha256) == OpenCsvPinnedObserver.blockstreamMainnet.chainPins)
+        #expect(OpenCsvPinnedObserver.mempoolSpaceMainnet.network == "mainnet")
+        #expect(OpenCsvPinnedObserver.blockstreamMainnet.network == "mainnet")
+    }
+
+    @Test
+    func profileSelectionRejectsMutationAndMixedNetworksBeforeNetworkIo() throws {
+        let mainnet = OpenCsvObservationCheck.defaults(for: "mainnet")
+        let profiles = try OpenCsvPinnedObserver.validatedProfiles(for: mainnet)
+        #expect(Set(profiles.map(\.checkId)) == ["mempool_space_mainnet", "blockstream_mainnet"])
+
+        var mixed = OpenCsvObservationCheck.defaults(for: "signet")
+        mixed.append(mainnet[0])
+        #expect(throws: OpenCsvClientError.self) {
+            try OpenCsvPinnedObserver.validatedProfiles(for: mixed)
+        }
+
+        #expect(throws: OpenCsvClientError.self) {
+            try OpenCsvPinnedObserver.validatedProfiles(for: [mainnet[0], mainnet[0]])
+        }
+
+        let modified = mainnet.map { check in
+            OpenCsvObservationCheck(
+                id: check.id,
+                kind: check.kind,
+                endpoint: check.id == "mempool_space_mainnet"
+                    ? "https://attacker.example/api"
+                    : check.endpoint,
+                mode: check.mode,
+                pinProfile: check.pinProfile,
+                chainFingerprintsSha256: check.chainFingerprintsSha256,
+                maxAgeSeconds: check.maxAgeSeconds,
+            )
+        }
+        #expect(throws: OpenCsvClientError.self) {
+            try OpenCsvPinnedObserver.validatedProfiles(for: modified)
+        }
     }
 
     @Test
@@ -256,6 +300,16 @@ struct OpenCsvPinnedObserverProfileTest {
             backupVerified: false,
         )
         #expect(signet.requiredRawObserverQuorum == 2)
+
+        let mainnet = OpenCsvAccountConfig(
+            network: "mainnet",
+            esploraUrl: "https://mempool.space/api",
+            peers: ["peer-one.example:8333", "peer-two.example:8333"],
+            verificationPeers: ["peer-one.example:8333", "peer-two.example:8333"],
+            role: .primary,
+            backupVerified: false,
+        )
+        #expect(mainnet.requiredRawObserverQuorum == 2)
 
         let oneRequired = OpenCsvObservationCheck.defaults(for: "signet").map { check in
             OpenCsvObservationCheck(
@@ -297,7 +351,7 @@ struct OpenCsvPinnedObserverProfileTest {
         let oldContext = CurrentAppContext()
         await MockSSKEnvironment.activate()
         do {
-            let observation = try await OpenCsvPinnedObserver.observeSignetTransaction(
+            let observation = try await OpenCsvPinnedObserver.observeTransaction(
                 txid: txid,
                 policy: OpenCsvObservationCheck.defaults(for: "signet"),
             )
@@ -1796,6 +1850,30 @@ struct OpenCsvReviewedUsdIssuersTest {
     func productionNetworksDoNotTrustThePreviewIssuer() {
         #expect(OpenCsvReviewedUsdIssuers.policies(for: "mainnet").isEmpty)
         #expect(OpenCsvReviewedUsdIssuers.policies(for: "regtest").isEmpty)
+        #expect(!OpenCsvPayments.isConsumerProductConfigured(for: "mainnet"))
+        #expect(OpenCsvPayments.isConsumerProductConfigured(for: "signet"))
+        #expect(OpenCsvPayments.isConsumerProductConfigured(for: "regtest"))
+        #expect(!OpenCsvPayments.isConsumerProductConfigured(for: "unknown"))
+        #expect(OpenCsvPayments.isConsumerProductConfigured(
+            for: "signet",
+            distributionNetwork: "signet",
+        ))
+        #expect(!OpenCsvPayments.isConsumerProductConfigured(
+            for: "regtest",
+            distributionNetwork: "signet",
+        ))
+        #expect(OpenCsvPayments.embeddedDistributionNetwork(infoDictionary: [
+            "OpenCSVDistributionNetwork": "development",
+        ]) == nil)
+        #expect(OpenCsvPayments.embeddedDistributionNetwork(infoDictionary: [
+            "OpenCSVDistributionNetwork": " Signet ",
+        ]) == "signet")
+    }
+
+    @Test
+    func durableDatabaseDetectionUsesTheActualAccountDirectory() {
+        let base = URL(fileURLWithPath: "/tmp/opencsv-release-gate-test", isDirectory: true)
+        #expect(OpenCsvPayments.accountDatabaseDirectory(base: base).lastPathComponent == "opencsv")
     }
 
     @Test

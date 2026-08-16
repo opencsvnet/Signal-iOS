@@ -111,6 +111,10 @@
 	<string>$(SIGNAL_MERCHANTID)</string>
 	<key>OpenCSVSourceCommit</key>
 	<string>$(OPENCSV_SOURCE_COMMIT)</string>
+	<key>OpenCSVDistributionNetwork</key>
+	<string>$(OPENCSV_DISTRIBUTION_NETWORK)</string>
+	<key>OpenCSVProductDeployment</key>
+	<string>$(OPENCSV_PRODUCT_DEPLOYMENT)</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<key>UIBackgroundModes</key>

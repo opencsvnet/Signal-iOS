@@ -5,12 +5,13 @@
 
 import Foundation
 
-/// Pinned, read-only observation of exact signet transaction bytes. Each
+/// Pinned, read-only observation of exact transaction bytes. Each
 /// provider gets its own ephemeral `OWSURLSession`; a pin failure cancels the
 /// TLS challenge and is returned as failed evidence. There is deliberately no
 /// fallback through an ordinary system-trust session.
 public enum OpenCsvPinnedObserver {
     struct Profile: Sendable {
+        let network: String
         let checkId: String
         let endpoint: String
         let host: String
@@ -32,6 +33,7 @@ public enum OpenCsvPinnedObserver {
     // entries cover the currently served cross-chains and routine YR1/YR2
     // intermediate rotation.
     static let mempoolSpace = Profile(
+        network: "signet",
         checkId: "mempool_space_signet",
         endpoint: "https://mempool.space/signet/api",
         host: "mempool.space",
@@ -45,6 +47,7 @@ public enum OpenCsvPinnedObserver {
     )
 
     static let blockstream = Profile(
+        network: "signet",
         checkId: "blockstream_signet",
         endpoint: "https://blockstream.info/signet/api",
         host: "blockstream.info",
@@ -59,27 +62,53 @@ public enum OpenCsvPinnedObserver {
         ],
     )
 
-    public static func observeSignetTransaction(
+    static let mempoolSpaceMainnet = Profile(
+        network: "mainnet",
+        checkId: "mempool_space_mainnet",
+        endpoint: "https://mempool.space/api",
+        host: "mempool.space",
+        certificateProfile: "sectigo_r46",
+        chainPins: mempoolSpace.chainPins,
+    )
+
+    static let blockstreamMainnet = Profile(
+        network: "mainnet",
+        checkId: "blockstream_mainnet",
+        endpoint: "https://blockstream.info/api",
+        host: "blockstream.info",
+        certificateProfile: "lets_encrypt_yr",
+        chainPins: blockstream.chainPins,
+    )
+
+    private static let profilesById = Dictionary(
+        uniqueKeysWithValues: [
+            mempoolSpace,
+            blockstream,
+            mempoolSpaceMainnet,
+            blockstreamMainnet,
+        ].map { ($0.checkId, $0) },
+    )
+
+    public static func observeTransaction(
         txid: String,
         policy: [OpenCsvObservationCheck],
     ) async throws -> ObservationSet {
         guard txid.count == 64, txid.allSatisfy(\.isHexDigit) else {
-            throw OpenCsvClientError.ffi("invalid signet transaction id")
+            throw OpenCsvClientError.ffi("invalid transaction id")
         }
-        let modes = Dictionary(uniqueKeysWithValues: policy.map { ($0.id, $0.mode) })
-        async let mempool = fetchIfEnabled(
-            txid: txid,
-            profile: mempoolSpace,
-            mode: modes[mempoolSpace.checkId],
-        )
-        async let blockstream = fetchIfEnabled(
-            txid: txid,
-            profile: blockstream,
-            mode: modes[blockstream.checkId],
-        )
-        let results = await [mempool, blockstream].compactMap { $0 }
+        let profiles = try validatedProfiles(for: policy)
+        let results = await withTaskGroup(of: FetchResult.self) { group in
+            for profile in profiles {
+                group.addTask { await fetch(txid: txid, profile: profile) }
+            }
+            var results: [FetchResult] = []
+            for await result in group {
+                results.append(result)
+            }
+            return results.sorted { $0.evidence.checkId < $1.evidence.checkId }
+        }
         guard let rawTransaction = results.lazy.compactMap(\.rawTransaction).first else {
-            throw OpenCsvClientError.ffi("enabled signet observers returned no transaction bytes")
+            throw OpenCsvClientError.ffi("enabled pinned observers returned no transaction bytes")
         }
         return ObservationSet(
             rawTransaction: rawTransaction,
@@ -87,13 +116,36 @@ public enum OpenCsvPinnedObserver {
         )
     }
 
-    private static func fetchIfEnabled(
-        txid: String,
-        profile: Profile,
-        mode: OpenCsvObservationMode?,
-    ) async -> FetchResult? {
-        guard let mode, mode != .off else { return nil }
-        return await fetch(txid: txid, profile: profile)
+    static func validatedProfiles(
+        for policy: [OpenCsvObservationCheck],
+    ) throws -> [Profile] {
+        let enabledRawChecks = policy.filter {
+            $0.kind == .rawTransactionApi && $0.mode != .off
+        }
+        guard !enabledRawChecks.isEmpty else {
+            throw OpenCsvClientError.ffi("no pinned raw-transaction observer is enabled")
+        }
+        let enabledIds = enabledRawChecks.map(\.id)
+        guard Set(enabledIds).count == enabledIds.count else {
+            throw OpenCsvClientError.ffi("pinned observer policy contains duplicate check ids")
+        }
+        let profiles = try enabledRawChecks.map { check in
+            guard
+                let profile = profilesById[check.id],
+                check.endpoint == profile.endpoint,
+                check.pinProfile == profile.certificateProfile,
+                Set(check.chainFingerprintsSha256) == profile.chainPins
+            else {
+                throw OpenCsvClientError.ffi(
+                    "unsupported or modified pinned observer: \(check.id)",
+                )
+            }
+            return profile
+        }
+        guard Set(profiles.map(\.network)).count == 1 else {
+            throw OpenCsvClientError.ffi("pinned observer policy mixes Bitcoin networks")
+        }
+        return profiles
     }
 
     private static func fetch(txid: String, profile: Profile) async -> FetchResult {
