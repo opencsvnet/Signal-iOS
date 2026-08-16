@@ -731,7 +731,7 @@ class OpenCsvSendPaymentSheet: OWSViewController {
                 "OPENCSV_SEND_ERROR_IN_PROGRESS",
                 comment: "Error shown when a payment is already being sent.",
             )
-        case OpenCsvClientError.ffi(let message) where message.contains("asset_not_reviewed"):
+        case let error as OpenCsvClientError where error.ffiReason == "asset_not_reviewed":
             return OWSLocalizedString(
                 "OPENCSV_SEND_ERROR_ASSET_NOT_REVIEWED",
                 comment: "Error shown when an issuer instrument is no longer approved for new sends.",

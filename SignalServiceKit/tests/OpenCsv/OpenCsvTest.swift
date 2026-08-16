@@ -1954,8 +1954,9 @@ struct OpenCsvClientFfiTest {
         do {
             _ = try account.inspect(blob: Data([0, 1, 2]))
             Issue.record("a malformed consignment must not produce an inspection")
-        } catch let OpenCsvClientError.ffi(message) {
-            #expect(message.hasPrefix("invalid_consignment:"))
+        } catch let error as OpenCsvClientError {
+            #expect(error.ffiReason == "invalid_consignment")
+            #expect(error.ffiMessage?.isEmpty == false)
         } catch {
             Issue.record("unexpected malformed-consignment error: \(error)")
         }
@@ -2074,8 +2075,11 @@ struct OpenCsvClientFfiTest {
                 databasePath: databasePath,
             )
             Issue.record("a durable account database must never change Bitcoin networks")
-        } catch let OpenCsvClientError.ffi(message) {
-            #expect(message.contains("database deployment opencsv-test-usd-v2 cannot open as opencsv-mainnet"))
+        } catch let error as OpenCsvClientError {
+            #expect(error.ffiReason == "deployment_mismatch")
+            #expect(error.ffiMessage?.contains(
+                "database deployment opencsv-test-usd-v2 cannot open as opencsv-mainnet",
+            ) == true)
         } catch {
             Issue.record("unexpected network-reuse error: \(error)")
         }
@@ -2452,6 +2456,13 @@ struct OpenCsvChainViewTest {
     @Test
     func fundingTipRaceIsTheOnlyProofGateRetry() {
         #expect(OpenCsvPayments.isChainVerificationUnavailable(
+            OpenCsvClientError.ffiFailure(
+                reason: "chain_verification_unavailable",
+                message: "confirmed spend scan is behind",
+                retryable: true,
+            ),
+        ))
+        #expect(OpenCsvPayments.isChainVerificationUnavailable(
             OpenCsvClientError.ffi("chain_verification_unavailable"),
         ))
         #expect(OpenCsvPayments.isChainVerificationUnavailable(
@@ -2467,6 +2478,34 @@ struct OpenCsvChainViewTest {
         ))
         #expect(!OpenCsvPayments.isChainVerificationUnavailable(
             OpenCsvPaymentsError.chainVerificationUnavailable,
+        ))
+    }
+
+    @Test
+    func unconfirmedParentStateUsesOnlyStructuredRustReasons() {
+        #expect(OpenCsvPayments.isUnconfirmedParentFailure(
+            OpenCsvClientError.ffiFailure(
+                reason: "unconfirmed_anchor_missing",
+                message: "parent is absent",
+                retryable: false,
+            ),
+        ))
+        #expect(OpenCsvPayments.isUnconfirmedParentFailure(
+            OpenCsvClientError.ffiFailure(
+                reason: "observer_transaction_conflict",
+                message: "required observers disagree",
+                retryable: false,
+            ),
+        ))
+        #expect(!OpenCsvPayments.isUnconfirmedParentFailure(
+            OpenCsvClientError.ffi("unconfirmed anchor appears only in display text"),
+        ))
+        #expect(!OpenCsvPayments.isUnconfirmedParentFailure(
+            OpenCsvClientError.ffiFailure(
+                reason: "mempool_observation_failed",
+                message: "unconfirmed anchor is temporarily unavailable",
+                retryable: true,
+            ),
         ))
     }
 
@@ -2923,8 +2962,9 @@ struct OpenCsvZeroConfirmationSimulatorTest {
         do {
             _ = try wallet!.verifyUnconfirmed(blob: consignment, confirmedSnapshotJson: snapshotJson)
             Issue.record("a missing exact parent must freeze rather than re-credit")
-        } catch let OpenCsvClientError.ffi(message) {
-            #expect(message.contains("not currently observed"))
+        } catch let error as OpenCsvClientError {
+            #expect(error.ffiReason == "unconfirmed_anchor_missing")
+            #expect(error.ffiMessage?.contains("not currently observed") == true)
         }
         #expect(try wallet!.status().assets.isEmpty)
 

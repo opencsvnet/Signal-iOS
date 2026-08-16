@@ -496,7 +496,7 @@ public actor OpenCsvPayments {
             let wasUnconfirmedCredit = priorActivityState == .availableUnconfirmed
                 || priorActivityState == .awaitingObservers
             let lostUnconfirmedParent = wasUnconfirmedCredit
-                && "\(error)".contains("unconfirmed anchor")
+                && Self.isUnconfirmedParentFailure(error)
             if
                 let paymentError = error as? OpenCsvPaymentsError,
                 case .chainViewLagging = paymentError
@@ -871,16 +871,17 @@ public actor OpenCsvPayments {
         {
             return "consignment_size_rejected"
         }
-        guard
-            let clientError = error as? OpenCsvClientError,
-            case .ffi(let message) = clientError
-        else {
-            return nil
+        guard let clientError = error as? OpenCsvClientError else { return nil }
+        if clientError.ffiReason == "invalid_consignment" {
+            return "invalid_consignment"
         }
-        guard message == "invalid_consignment" || message.hasPrefix("invalid_consignment:") else {
-            return nil
-        }
-        return "invalid_consignment"
+        // Compatibility-only errors from the older in-memory FFI do not
+        // carry a structured reason. Match their exact stable prefix, never
+        // arbitrary detail.
+        guard case .ffi(let message) = clientError else { return nil }
+        return message == "invalid_consignment" || message.hasPrefix("invalid_consignment:")
+            ? "invalid_consignment"
+            : nil
     }
 
     private func rejectIncomingAttachment(
@@ -1411,8 +1412,8 @@ public actor OpenCsvPayments {
                 toOwner: recipient,
                 amount: amount,
             )
-        } catch OpenCsvClientError.ffi(let message)
-            where message.contains("no confirmed, unreserved fee UTXO")
+        } catch let error as OpenCsvClientError
+            where error.ffiReason == "insufficient_fees"
         {
             throw OpenCsvPaymentsError.feeReserveRequired(
                 minimumSats: Self.minimumFeeReserveSats,
@@ -1785,9 +1786,28 @@ public actor OpenCsvPayments {
     /// Match only Rust's stable reason prefix. Human-readable detail is not
     /// an API and must never turn a definitive protocol rejection retryable.
     static func isChainVerificationUnavailable(_ error: Error) -> Bool {
-        guard case OpenCsvClientError.ffi(let message) = error else { return false }
+        guard let clientError = error as? OpenCsvClientError else { return false }
+        if clientError.ffiReason == "chain_verification_unavailable" {
+            return true
+        }
+        guard case .ffi(let message) = clientError else { return false }
         return message == "chain_verification_unavailable"
             || message.hasPrefix("chain_verification_unavailable:")
+    }
+
+    /// A previously admitted zero-confirmation payment becomes nonspendable
+    /// only on Rust's stable dependency-conflict reasons. Human-readable
+    /// error text must never decide whether Signal freezes a payment.
+    static func isUnconfirmedParentFailure(_ error: Error) -> Bool {
+        guard
+            let clientError = error as? OpenCsvClientError,
+            let reason = clientError.ffiReason
+        else { return false }
+        return [
+            "unconfirmed_anchor_missing",
+            "unconfirmed_anchor_mismatch",
+            "observer_transaction_conflict",
+        ].contains(reason)
     }
 
     /// Compatibility call for tests and non-interactive clients that still

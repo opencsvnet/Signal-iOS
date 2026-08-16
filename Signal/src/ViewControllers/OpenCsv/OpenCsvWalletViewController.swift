@@ -446,10 +446,7 @@ class OpenCsvWalletViewController: OWSViewController {
                 // because its refresh failed. The placeholder is only for a
                 // wallet that could not be opened at all.
                 if self.balanceLabel.text == "—" {
-                    if
-                        case OpenCsvClientError.ffi(let message) = error,
-                        message.contains("testnet_reset_required")
-                    {
+                    if (error as? OpenCsvClientError)?.ffiReason == "testnet_reset_required" {
                         self.balanceStatusLabel.text = OWSLocalizedString(
                             "OPENCSV_WALLET_TESTNET_RESET_REQUIRED",
                             comment: "Status shown when archived Test USD v1 state cannot be opened as v2.",
@@ -587,18 +584,18 @@ class OpenCsvWalletViewController: OWSViewController {
         // history crowd current dollar activity off screen. Show current
         // activity first and condense all nonspendable rejections to one row.
         let incomingNewestFirst = summary.incomingActivities.reversed()
-        let hasRejectedIncoming = incomingNewestFirst.contains { $0.state == .needsAttention }
-        let currentIncomingLimit = hasRejectedIncoming ? 7 : 8
+        let latestRejectedIncoming = incomingNewestFirst.first { $0.state == .needsAttention }
+        let currentIncomingLimit = latestRejectedIncoming == nil ? 8 : 7
         var incomingActivity = Array(
             incomingNewestFirst.lazy
                 .filter { $0.state != .needsAttention }
                 .prefix(currentIncomingLimit)
                 .map { Self.renderIncomingActivity($0, productName: productName) },
         )
-        if hasRejectedIncoming {
-            incomingActivity.append(OWSLocalizedString(
-                "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION",
-                comment: "Incoming wallet activity that failed definitive verification.",
+        if let latestRejectedIncoming {
+            incomingActivity.append(Self.renderIncomingActivity(
+                latestRejectedIncoming,
+                productName: productName,
             ))
         }
         let outgoingActivity = summary.operations.suffix(8).reversed().map {
@@ -942,10 +939,14 @@ class OpenCsvWalletViewController: OWSViewController {
                 activity.currency == "USD" ? productName : (activity.currency ?? ""),
             )
         case .needsAttention:
-            return OWSLocalizedString(
+            let summary = OWSLocalizedString(
                 "OPENCSV_WALLET_ACTIVITY_NEEDS_ATTENTION",
                 comment: "Incoming wallet activity that failed definitive verification.",
             )
+            guard let detail = activity.detail?.ows_stripped(), !detail.isEmpty else {
+                return summary
+            }
+            return "\(summary) · \(detail)"
         }
     }
 
